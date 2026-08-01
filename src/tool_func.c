@@ -1,6 +1,5 @@
-#include "tool_base.h"
-#include "tools.h"
-#include "utils.h"
+#include "tool_func.h"
+
 
 static rt_err_t init_flag = RT_FALSE;
 
