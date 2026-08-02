@@ -46,7 +46,7 @@ static void CLI_push_history(void)
     // 和最新一条历史重复，不存入
     if (handle.history_count > 0)
     {
-        if (rt_strncmp(handle.CLI_history[handle.history_count - 1], handle.line, CLI_CMD_BUFFER_SIZE) == 0)
+        if (rt_rt_strncmp(handle.CLI_history[handle.history_count - 1], handle.line, CLI_CMD_BUFFER_SIZE) == 0)
         {
             handle.history_current = handle.history_count;
             return;

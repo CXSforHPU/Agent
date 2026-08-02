@@ -156,7 +156,7 @@ ChatResponse_t chat(
             if (ch == '\n')
             {
                 stream_buffer[stream_len] = '\0';
-                if (strncmp(stream_buffer, "data: ", 6) == 0)
+                if (rt_strncmp(stream_buffer, "data: ", 6) == 0)
                 {
                     char* json_str = stream_buffer + 6;
                     if (strcmp(json_str, "[DONE]") == 0)
