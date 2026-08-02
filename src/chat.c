@@ -187,7 +187,7 @@ ChatResponse_t chat(
                                     if (remain > 0)
                                     {
                                         if ((int)seg_len > remain) seg_len = remain;
-                                        strncpy(reasoning + reasoning_len, seg, seg_len);
+                                        rt_strncpy(reasoning + reasoning_len, seg, seg_len);
                                         reasoning_len += seg_len;
                                         reasoning[reasoning_len] = '\0';
                                         if (on_reasoning)
@@ -210,7 +210,7 @@ ChatResponse_t chat(
                                     if (remain > 0)
                                     {
                                         if ((int)seg_len > remain) seg_len = remain;
-                                        strncpy(content + content_len, seg, seg_len);
+                                        rt_strncpy(content + content_len, seg, seg_len);
                                         content_len += seg_len;
                                         content[content_len] = '\0';
                                         if (on_context)
