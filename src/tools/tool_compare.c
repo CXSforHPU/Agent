@@ -16,15 +16,15 @@ void tool_compare(cJSON* args_obj, AgentToolNode_t node)
 
     if (a > b)
     {
-        snprintf(node->ret.content, sizeof(node->ret.content), "%f is greater than %f", a, b);
+        rt_snprintf(node->ret.content, sizeof(node->ret.content), "%f is greater than %f", a, b);
     }
     else if (a < b)
     {
-        snprintf(node->ret.content, sizeof(node->ret.content), "%f is greater than %f", b, a);
+        rt_snprintf(node->ret.content, sizeof(node->ret.content), "%f is greater than %f", b, a);
     }
     else
     {
-        snprintf(node->ret.content, sizeof(node->ret.content), "%f is equal to %f", a, b);
+        rt_snprintf(node->ret.content, sizeof(node->ret.content), "%f is equal to %f", a, b);
     }
     node->ret.ret = RT_EOK;
     return;

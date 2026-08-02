@@ -13,7 +13,7 @@ void tool_mul(cJSON* args_obj, AgentToolNode_t node)
     }
     double a = a_json->valuedouble;
     double b = b_json->valuedouble;
-    snprintf(node->ret.content, sizeof(node->ret.content), "%f", a * b);
+    rt_snprintf(node->ret.content, sizeof(node->ret.content), "%f", a * b);
     node->ret.ret = RT_EOK;
     return;
 }

@@ -2,7 +2,6 @@
 #define __AGENT_UTILS_H__
 #include <rtthread.h>
 #include "cJSON.h"
-#include "string.h"
 
 #define LOG_TAG "Agent.utils"
 #define LOG_LVL LOG_LVL_INFO

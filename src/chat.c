@@ -134,7 +134,7 @@ ChatResponse_t chat(
 
     // 6. 请求头（局部数组，线程安全）
     char authHeader[256] = {0};
-    rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", api_key);
+    rt_rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", api_key);
     webclient_header_fields_add(webSession, "Content-Type: application/json\r\n");
     webclient_header_fields_add(webSession, authHeader);
     webclient_header_fields_add(webSession, "Content-Length: %d\r\n", payload_len);
@@ -182,7 +182,7 @@ ChatResponse_t chat(
                                 if (reasoning_field && cJSON_IsString(reasoning_field))
                                 {
                                     const char* seg = reasoning_field->valuestring;
-                                    size_t seg_len = strlen(seg);
+                                    size_t seg_len = rt_strlen(seg);
                                     int remain = MAX_REASONING_LEN - reasoning_len - 1;
                                     if (remain > 0)
                                     {
@@ -200,7 +200,7 @@ ChatResponse_t chat(
                                 if (content_field && cJSON_IsString(content_field))
                                 {
                                     const char* seg = content_field->valuestring;
-                                    size_t seg_len = strlen(seg);
+                                    size_t seg_len = rt_strlen(seg);
                                     if (!is_answering)
                                     {
                                         rt_kprintf("\n");
@@ -237,7 +237,7 @@ ChatResponse_t chat(
                                             continue;
 
                                         char key_buf[32] = {0};
-                                        rt_snprintf(key_buf, sizeof(key_buf), "%d", idx_node->valueint);
+                                        rt_rt_snprintf(key_buf, sizeof(key_buf), "%d", idx_node->valueint);
                                         cJSON* map_entry = cJSON_GetObjectItemCaseSensitive(tool_call_map, key_buf);
                                         // 不存在该id工具，新建缓存对象
                                         if (!map_entry)
@@ -268,7 +268,7 @@ ChatResponse_t chat(
                                         if (args_node && cJSON_IsString(args_node))
                                         {
                                             const char* append_str = args_node->valuestring;
-                                            size_t append_len = strlen(append_str);
+                                            size_t append_len = rt_strlen(append_str);
                                             // 跳过空分片，避免覆盖已有参数
                                             if (append_len == 0)
                                                 continue;
@@ -283,7 +283,7 @@ ChatResponse_t chat(
                                             {
                                                 // 存在历史参数，拼接分片
                                                 const char* old_str = exist_args->valuestring;
-                                                size_t old_len = strlen(old_str);
+                                                size_t old_len = rt_strlen(old_str);
                                                 size_t total_len = old_len + append_len;
 
                                                 // 超长截断保护
