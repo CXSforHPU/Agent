@@ -14,7 +14,7 @@ rt_err_t AgentToolListCreate(){
     }
 
     head->ret.ret=RT_NULL;
-    memset(head->ret.content,0,sizeof(head->ret.content));
+    rt_memset(head->ret.content,0,sizeof(head->ret.content));
     head->tool_obj=RT_NULL;
     head->execute_func=RT_NULL;
     head->next = RT_NULL;
@@ -32,7 +32,7 @@ rt_err_t AppendTool(cJSON* tool_obj, void(*execute_func)(cJSON* param,struct Age
     }
     
     node->tool_obj = tool_obj;
-    memset(node->ret.content,0,sizeof(node->ret.content));
+    rt_memset(node->ret.content,0,sizeof(node->ret.content));
     if (!node)
     {
         /* code */

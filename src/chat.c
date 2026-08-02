@@ -91,8 +91,8 @@ ChatResponse_t chat(
         LOG_E("chat: Failed to allocate reasoning/content buf\n");
         goto __cleanup;
     }
-    memset(reasoning, 0, MAX_REASONING_LEN);
-    memset(content, 0, MAX_CONTENT_LEN);
+    rt_memset(reasoning, 0, MAX_REASONING_LEN);
+    rt_memset(content, 0, MAX_CONTENT_LEN);
 
     // 3. 工具调用临时缓存map、最终存储数组
     tool_calls = cJSON_CreateArray();
@@ -320,7 +320,7 @@ ChatResponse_t chat(
                     cJSON_Delete(json);
                 }
                 stream_len = 0;
-                memset(stream_buffer, 0, sizeof(stream_buffer));
+                rt_memset(stream_buffer, 0, sizeof(stream_buffer));
             }
             else
             {
@@ -332,7 +332,7 @@ ChatResponse_t chat(
                 else
                 {
                     stream_len = 0;
-                    memset(stream_buffer, 0, sizeof(stream_buffer));
+                    rt_memset(stream_buffer, 0, sizeof(stream_buffer));
                 }
             }
         }
