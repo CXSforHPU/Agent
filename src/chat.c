@@ -159,7 +159,7 @@ ChatResponse_t chat(
                 if (rt_strncmp(stream_buffer, "data: ", 6) == 0)
                 {
                     char* json_str = stream_buffer + 6;
-                    if (strcmp(json_str, "[DONE]") == 0)
+                    if (rt_strcmp(json_str, "[DONE]") == 0)
                     {
                         goto __success; // 流式结束，走成功返回逻辑
                     }
