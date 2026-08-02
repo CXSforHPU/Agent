@@ -8,10 +8,6 @@
 #define LOG_LVL LOG_LVL_INFO
 #include <ulog.h>
 
-#ifdef RT_USING_DFS_ELMFAT
-#include <dfs_posix.h>
-#endif
-
 cJSON* format_text(const char* text);
 cJSON* create_content_array();
 cJSON* to_content(cJSON* content_array, const char* text);
