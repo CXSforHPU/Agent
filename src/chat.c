@@ -134,7 +134,7 @@ ChatResponse_t chat(
 
     // 6. 请求头（局部数组，线程安全）
     char authHeader[256] = {0};
-    rt_rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", api_key);
+    rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", api_key);
     webclient_header_fields_add(webSession, "Content-Type: application/json\r\n");
     webclient_header_fields_add(webSession, authHeader);
     webclient_header_fields_add(webSession, "Content-Length: %d\r\n", payload_len);
@@ -237,7 +237,7 @@ ChatResponse_t chat(
                                             continue;
 
                                         char key_buf[32] = {0};
-                                        rt_rt_snprintf(key_buf, sizeof(key_buf), "%d", idx_node->valueint);
+                                        rt_snprintf(key_buf, sizeof(key_buf), "%d", idx_node->valueint);
                                         cJSON* map_entry = cJSON_GetObjectItemCaseSensitive(tool_call_map, key_buf);
                                         // 不存在该id工具，新建缓存对象
                                         if (!map_entry)
