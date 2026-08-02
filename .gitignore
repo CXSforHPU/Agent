@@ -1,3 +1,4 @@
 src/*.o
 src/channels/*.o
 src/tools/*.o
+.vscode/

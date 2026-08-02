@@ -1,7 +1,0 @@
-{
-    "files.associations": {
-        "utils.h": "c",
-        "tool_add.h": "c",
-        "tool_base.h": "c"
-    }
-}
