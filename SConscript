@@ -20,11 +20,14 @@ for file in os.listdir(os.path.join(cwd, 'src',"tools")):
     if file.endswith('.c') and os.path.isfile(file_path):
         src.append(file_path)
 
+# add config
+src.append(os.path.join(cwd, 'config', 'AgentConfig.c'))
+
 
 CPPPATH.append(os.path.join(cwd, 'include'))
 CPPPATH.append(os.path.join(cwd,"include","channels"))
 CPPPATH.append(os.path.join(cwd,"include","tools"))
-
+CPPPATH.append(os.path.join(cwd,"config"))
 group = DefineGroup('Agent',
                     src,
                     depend=["PKG_USING_AGENT"],

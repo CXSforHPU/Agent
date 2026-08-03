@@ -4,20 +4,11 @@
 #include <rtthread.h>
 #include "utils.h"
 #include "webclient.h"
+#include "AgentConfig.h"
 
 #define LOG_TAG "Agent.chat"
 #define LOG_LVL LOG_LVL_INFO
 #include <ulog.h>
-
-#ifdef PKG_AGENT_API_KEY
-#define API_KEY PKG_AGENT_API_KEY
-#define API_URL PKG_AGENT_API_URL
-#define API_MODEL PKG_AGENT_MODEL_NAME
-#else
-#define API_KEY NULL
-#define API_URL NULL
-#define API_MODEL NULL
-#endif
 
 typedef struct ChatResponse
 {
