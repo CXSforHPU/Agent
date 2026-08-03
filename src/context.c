@@ -173,6 +173,13 @@ static rt_err_t __append_tool_message(Context_t self,const char* tool_call_id,co
     return RT_EOK;
 }
 
+static rt_err_t __clear_message(Context_t self){
+    if(self->message){
+        cJSON_Delete(self->message);
+        self->message = cJSON_CreateArray();
+    }
+    return RT_EOK;
+}
 
 Context_t AgentContextCreate(){
     Context_t context = (Context_t)rt_malloc(sizeof(Context));
@@ -188,6 +195,7 @@ Context_t AgentContextCreate(){
     context->append_user_message = __append_user_message;
     context->append_tool_message = __append_tool_message;
     context->append_assistant_message = __append_assistant_message;
+    context->clear_message = __clear_message;
     
 
     context->build_system_prompt(context);

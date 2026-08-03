@@ -29,5 +29,7 @@ typedef struct agent_runtime_config
 
 agent_runtime_config_t *agent_config_get(void);
 void agent_config_set(const char *api_key, const char *model_name, const char *api_url);
-
+const char *get_dynamic_agent_api_key(void);
+const char *get_dynamic_agent_model_name(void);
+const char *get_dynamic_agent_api_url(void);
 #endif /* __AGENT_CONFIG_H__ */

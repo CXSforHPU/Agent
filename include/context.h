@@ -29,6 +29,7 @@ typedef struct Context
     rt_err_t (*append_user_message)(struct Context* self,Message_t message);
     rt_err_t (*append_assistant_message)(struct Context* self,ChatResponse_t resp);
     rt_err_t (*append_tool_message)(struct Context* self,const char* tool_call_id,const char* content);
+    rt_err_t (*clear_message)(struct Context* self);
 }Context,*Context_t;
 
 

@@ -10,35 +10,6 @@
 #define cJSON_ObjectForEach(key, val, obj) \
     for ((key) = (obj)->child; (key) != NULL; (key) = (key)->next, (val) = (key))
 
-static const char *get_dynamic_api_key(void)
-{
-    const agent_runtime_config_t *cfg = agent_config_get();
-    if (cfg && cfg->is_configured && cfg->api_key[0])
-    {
-        return cfg->api_key;
-    }
-    return PKG_AGENT_API_KEY;
-}
-
-static const char *get_dynamic_model_name(void)
-{
-    const agent_runtime_config_t *cfg = agent_config_get();
-    if (cfg && cfg->is_configured && cfg->model_name[0])
-    {
-        return cfg->model_name;
-    }
-    return PKG_AGENT_MODEL_NAME;
-}
-
-static const char *get_dynamic_api_url(void)
-{
-    const agent_runtime_config_t *cfg = agent_config_get();
-    if (cfg && cfg->is_configured && cfg->api_url[0])
-    {
-        return cfg->api_url;
-    }
-    return PKG_AGENT_API_URL;
-}
 
 
 
@@ -140,7 +111,7 @@ ChatResponse_t chat(
 
     // 5. 构造请求JSON
     cJSON* payload_json = cJSON_CreateObject();
-    cJSON_AddStringToObject(payload_json, "model", get_dynamic_model_name());
+    cJSON_AddStringToObject(payload_json, "model", get_dynamic_agent_model_name());
     // 复制副本，防止外部传入messages/tools被cJSON_Delete销毁
     cJSON_AddItemToObject(payload_json, "messages", cJSON_Duplicate(messages, cJSON_True));
     if (tools != RT_NULL)
@@ -161,13 +132,13 @@ ChatResponse_t chat(
 
     // 6. 请求头（局部数组，线程安全）
     char authHeader[256] = {0};
-    rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", get_dynamic_api_key());
+    rt_snprintf(authHeader, sizeof(authHeader), "Authorization: Bearer %s\r\n", get_dynamic_agent_api_key());
     webclient_header_fields_add(webSession, "Content-Type: application/json\r\n");
     webclient_header_fields_add(webSession, authHeader);
     webclient_header_fields_add(webSession, "Content-Length: %d\r\n", payload_len);
 
     // 7. 发送POST请求
-    resp_status = webclient_post(webSession, get_dynamic_api_url(), payload, payload_len);
+    resp_status = webclient_post(webSession, get_dynamic_agent_api_url(), payload, payload_len);
     if (resp_status != 200)
     {
         LOG_E("chat: POST failed, http status=%d\n", resp_status);

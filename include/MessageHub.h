@@ -16,7 +16,7 @@
 typedef enum MessageChannelType
 {
     CHANNEL_CLI,
-    CHANNRL_WEBNET,
+    CHANNEL_WEBNET,
     ASSITANT
 } MessageChannelType;
 
