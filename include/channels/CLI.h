@@ -2,6 +2,7 @@
 #define __AGENT_CHANNELS
 #include "rtthread.h"
 #include "MessageHub.h"
+#include "context.h"
 #include "shell.h"
 
 #define LOG_TAG "Agent.Channels.CLI"
@@ -45,5 +46,5 @@ typedef struct CLI_channel
     rt_bool_t thread_running; // 线程运行标志
 } CLI_channel, *CLI_channel_t;
 
-int AgentCLIChannel(MessageHub_t message_hub);
+int AgentCLIChannel(MessageHub_t message_hub, Context_t context);
 #endif

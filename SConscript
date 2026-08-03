@@ -10,11 +10,14 @@ for file in os.listdir(os.path.join(cwd, 'src')):
     if file.endswith('.c') and os.path.isfile(file_path):
         src.append(file_path)
 
-for file in os.listdir(os.path.join(cwd, 'src',"channels")):
-    file_path = os.path.join(cwd, 'src', "channels",file)
-    if file.endswith('.c') and os.path.isfile(file_path):
-        src.append(file_path)
 
+# add channels
+if GetDepend(['PKG_AGENT_CLI_CHANNEL']):
+    src += [os.path.join(cwd, 'src', "channels", "CLI.c")]
+if GetDepend(['PKG_AGENT_WEBNET_CHANNEL']):
+    src += [os.path.join(cwd, 'src', "channels", "AgentWebChannel.c")]
+
+#add tools
 for file in os.listdir(os.path.join(cwd, 'src',"tools")):
     file_path = os.path.join(cwd, 'src', "tools",file)
     if file.endswith('.c') and os.path.isfile(file_path):

@@ -310,7 +310,7 @@ static void CLI_run(void *p)
     handle.thread_running = RT_FALSE;
 }
 
-int AgentCLIChannel(MessageHub_t message_hub)
+int AgentCLIChannel(MessageHub_t message_hub, Context_t context)
 {
     // 如果线程已经运行，禁止重复启动
     if (handle.thread_running == RT_TRUE)

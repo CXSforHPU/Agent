@@ -3,8 +3,7 @@
 #include "MessageHub.h"
 #include "tool_func.h"
 #include "utils.h"
-#include "CLI.h"
-#include "AgentWebChannel.h"
+#include "AgentChannels.h"
 
 #define LOG_TAG "Agent.AgentLoop"
 #define LOG_LVL LOG_LVL_INFO
@@ -18,11 +17,7 @@ static void InitAgent(){
     message_hub = MessageHub_create();
     context = AgentContextCreate();
 
-    #if defined(PKG_AGENT_CLI_CHANNEL)
-    AgentCLIChannel(message_hub);
-    #elif defined(PKG_AGENT_WEBNET_CHANNEL)
-    webnet_agent_mode(message_hub,context);
-    #endif
+    AGENT_CHANNEL_IMPL(message_hub,context);
 }
 
 
