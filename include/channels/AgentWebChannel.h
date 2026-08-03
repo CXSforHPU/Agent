@@ -17,6 +17,6 @@
 
 
 
-
+void webnet_agent_mode(MessageHub_t hub, Context_t ctx);
 
 #endif /* __AGENT_WEBNET_H__ */

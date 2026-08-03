@@ -4,6 +4,7 @@
 #include "tool_func.h"
 #include "utils.h"
 #include "CLI.h"
+#include "AgentWebChannel.h"
 
 #define LOG_TAG "Agent.AgentLoop"
 #define LOG_LVL LOG_LVL_INFO
@@ -19,8 +20,9 @@ static void InitAgent(){
 
     #if defined(PKG_AGENT_CLI_CHANNEL)
     AgentCLIChannel(message_hub);
+    #elif defined(PKG_AGENT_WEBNET_CHANNEL)
+    webnet_agent_mode(message_hub,context);
     #endif
-
 }
 
 
