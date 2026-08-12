@@ -16,12 +16,7 @@ void print_tool_call(const char *text)
 
 void print_context(const char *text)
 {
-    int len = rt_strlen(text);
-
-    for (int i = 0; i < len; i++)
-    {
-        rt_kprintf("%c", text[i]);
-    }
+    rt_kprintf("%s", text);
     return;
 }
 

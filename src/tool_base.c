@@ -5,7 +5,7 @@ static cJSON* AgentTools = RT_NULL;
 
 
 rt_err_t AgentToolListCreate(){
-    head = (AgentToolNode_t)rt_malloc(sizeof(AgentToolNode));
+    head = (AgentToolNode_t)rt_malloc(sizeof(AgentToolList));
     if (!head)
     {
         /* code */
@@ -23,24 +23,28 @@ rt_err_t AgentToolListCreate(){
 }
 
 rt_err_t AppendTool(cJSON* tool_obj, void(*execute_func)(cJSON* param,struct AgentToolList* node)){
-    AgentToolNode_t node = (AgentToolNode_t)rt_malloc(sizeof(AgentToolNode));
-    AgentToolNode_t p = head;
-    while (p->next!=RT_NULL)
+    if (!head)
     {
-        /* code */
-        p=p->next;
+        LOG_E("tool list not initialized, call AgentToolListCreate first");
+        return RT_ERROR;
     }
-    
-    node->tool_obj = tool_obj;
-    rt_memset(node->ret.content,0,sizeof(node->ret.content));
+
+    AgentToolNode_t node = (AgentToolNode_t)rt_malloc(sizeof(AgentToolList));
     if (!node)
     {
-        /* code */
         LOG_E("node malloc failed.");
         return RT_ERROR;
     }
-    node->ret.ret = RT_ERROR;
 
+    AgentToolNode_t p = head;
+    while (p->next != RT_NULL)
+    {
+        p = p->next;
+    }
+
+    node->tool_obj = tool_obj;
+    rt_memset(node->ret.content, 0, sizeof(node->ret.content));
+    node->ret.ret = RT_ERROR;
     node->execute_func = execute_func;
     node->next = RT_NULL;
 
@@ -80,6 +84,11 @@ static const char* GetFuncName(cJSON* tool_obj)
  */
 AgentToolNode_t SearchAgentToolNode(cJSON* tool_obj)
 {
+    if (!head)
+    {
+        return RT_NULL;
+    }
+
     const char* target_name = GetFuncName(tool_obj);
     if (!target_name)
     {
@@ -103,17 +112,31 @@ AgentToolNode_t SearchAgentToolNode(cJSON* tool_obj)
 
 cJSON* BulitToolsJson()
 {
-    AgentToolNode_t p = head->next;
+    AgentToolNode_t p;
+
+    if (!head)
+    {
+        LOG_E("tool list not initialized, call AgentToolListCreate first");
+        return RT_NULL;
+    }
+
+    /* 如果已构建过，直接返回，避免重复添加导致工具列表膨胀 */
+    if (cJSON_IsArray(AgentTools) && cJSON_GetArraySize(AgentTools) > 0)
+    {
+        return AgentTools;
+    }
+
     /* 初次初始化 */
     if (!cJSON_IsArray(AgentTools))
     {
         AgentTools = cJSON_CreateArray();
     }
 
-    while (p!=RT_NULL)
+    p = head->next;
+    while (p != RT_NULL)
     {
-        cJSON_AddItemToArray(AgentTools,p->tool_obj);
-        p=p->next;
+        cJSON_AddItemToArray(AgentTools, p->tool_obj);
+        p = p->next;
     }
 
     return AgentTools;
@@ -125,7 +148,6 @@ cJSON* GetAgentTools(){
 
 void FreeAgentToolNode(AgentToolNode_t node)
 {
-    rt_free(node->ret.content);
     cJSON_Delete(node->tool_obj);
     rt_free(node);
 }

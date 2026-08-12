@@ -11,6 +11,10 @@
 static MessageHub_t message_hub = RT_NULL;
 static Context_t context = RT_NULL;
 static rt_thread_t main_agent_loop = RT_NULL;
+static rt_bool_t agent_running = RT_FALSE;
+
+
+static void CleanupAgent(void);
 
 static void InitAgent(){
     init_tools();
@@ -30,6 +34,7 @@ static void AgentLoop(Context_t context,
     const int loop_max = 10;
     int loop_cnt = 0;
     ChatResponse_t resp = RT_NULL;
+    Message_t assistant_message = RT_NULL;
 
     while (loop_cnt < loop_max)
     {
@@ -38,6 +43,7 @@ static void AgentLoop(Context_t context,
         if (resp == RT_NULL)
         {
             LOG_E("Chat request failed, terminating this case");
+            break;
         }
         /* save assistant message */
         if (cJSON_GetArraySize(resp->tool_call) == 0)
@@ -45,9 +51,14 @@ static void AgentLoop(Context_t context,
             // Store assistant text message
             context->append_assistant_message(context,resp);
 
-            /* 发送 agent文本信息邮件，在channel 中进行销毁 */
-            Message_t assistant_message = message_create(ASSITANT,resp->context,RT_FALSE);
-            message_hub->put_message(message_hub,assistant_message,message_hub->output_mailbox);
+            /* 复制内容到新消息，避免resp释放后悬空指针 */
+            assistant_message = message_create(ASSITANT, resp->context, RT_FALSE);
+            if (assistant_message)
+            {
+                message_hub->put_message(message_hub, assistant_message, message_hub->output_mailbox);
+            }
+            chat_response_free(resp);
+            resp = RT_NULL;
             break;
         }
 
@@ -59,7 +70,7 @@ static void AgentLoop(Context_t context,
 
             cJSON* tc_item = cJSON_GetArrayItem(resp->tool_call, t);
             AgentToolNode_t tool_node =  SearchAgentToolNode(tc_item);
-           
+
             if (!tc_item || !tool_node) continue;
 
             cJSON* tc_func = cJSON_GetObjectItemCaseSensitive(tc_item, "function");
@@ -109,8 +120,8 @@ static void AgentLoop(Context_t context,
 
     if(loop_cnt >= loop_max){
         LOG_E("Maximum tool loop count %d reached, forced termination\n", loop_max);
+        chat_response_free(resp);
     }
-    chat_response_free(resp);
     return;
 }
 
@@ -118,16 +129,36 @@ static void AgentLoop(Context_t context,
 
 static void MainLoop(void* param){
     InitAgent();
-    while (RT_TRUE)
+    agent_running = RT_TRUE;
+    while (agent_running)
     {
         Message_t message = message_hub->get_message(message_hub,message_hub->input_mailbox);
+        /* RT_NULL 为 CleanupAgent 发出的唤醒信号，回 while 检查 agent_running */
+        if (message == RT_NULL)
+        {
+            continue;
+        }
+        /* 消息由channel创建，context内部会cJSON_AddStringToObject复制内容，需释放原消息 */
         context->append_user_message(context,message);
+
         AgentLoop(context,GetAgentTools(),print_reasoning,print_tool_call,print_context);
+        /* 裁剪上下文，保留system prompt + 最近6条消息，防止无限膨胀 */
+        if (context->trim_context)
+        {
+            context->trim_context(context, 6);
+        }
 
     }
+    /* 主循环退出后清理资源 */
+    CleanupAgent();
 }
 
 static int MainLoop_entry(){
+    if (main_agent_loop != RT_NULL)
+    {
+        LOG_W("Agent main loop already running");
+        return 0;
+    }
     main_agent_loop = rt_thread_create("AgentLoop",MainLoop,RT_NULL,10240,10,10);
     if (!main_agent_loop)
     {
@@ -138,6 +169,43 @@ static int MainLoop_entry(){
     return 0;
 }
 
+/* 清理线程不直接销毁，设置退出信号并唤醒 mailbox */
+static void SignalAgentStop(void)
+{
+    agent_running = RT_FALSE;
+    if (message_hub != RT_NULL && message_hub->input_mailbox != RT_NULL)
+    {
+        /* 发送一个RT_NULL哨兵唤醒主循环 */
+        rt_mb_send(message_hub->input_mailbox, (rt_ubase_t)RT_NULL);
+    }
+}
 
+static void CleanupAgent(void)
+{
+    if (message_hub)
+    {
+        MessageHub_destroy(message_hub);
+        message_hub = RT_NULL;
+    }
+    if (context)
+    {
+        AgentContextDestroy(context);
+        context = RT_NULL;
+    }
+    main_agent_loop = RT_NULL;
+}
 
-MSH_CMD_EXPORT(MainLoop_entry,MainLoop_entry)
+static int CleanupAgent_entry(void)
+{
+    if (main_agent_loop == RT_NULL)
+    {
+        LOG_W("Agent not running, nothing to clean up");
+        return 0;
+    }
+    LOG_I("Signaling agent to stop...");
+    SignalAgentStop();
+    return 0;
+}
+
+MSH_CMD_EXPORT(MainLoop_entry,MainLoop_entry);
+MSH_CMD_EXPORT(CleanupAgent_entry,CleanupAgent_entry)

@@ -64,6 +64,7 @@ ChatResponse_t chat(
     cJSON* tool_calls = RT_NULL;
     cJSON* tool_call_map = RT_NULL;
     char* payload = RT_NULL;
+    ChatResponse_t response = RT_NULL;
 
     
     int bytes_read, resp_status;
@@ -367,7 +368,7 @@ __success:
         }
     }
     
-    ChatResponse_t response = (ChatResponse_t)rt_malloc(sizeof(ChatResponse));
+    response = (ChatResponse_t)rt_malloc(sizeof(ChatResponse));
     if (response==RT_NULL)
     {
         /* code */

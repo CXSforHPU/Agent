@@ -54,7 +54,7 @@ self->payload
 static rt_err_t __append_user_message(Context_t self,Message_t message){
     cJSON* user_message = cJSON_CreateObject();
     cJSON_AddStringToObject(user_message,"role",Role(ROLE_USER));
-    cJSON_AddStringToObject(user_message,"content",rt_strdup(message->content));
+    cJSON_AddStringToObject(user_message,"content",message->content);
 
     cJSON_AddItemToArray(self->message,user_message);
 
@@ -166,8 +166,8 @@ self->payload
 static rt_err_t __append_tool_message(Context_t self,const char* tool_call_id,const char* content){
     cJSON* tool_msg = cJSON_CreateObject();
     cJSON_AddStringToObject(tool_msg, "role", Role(ROLE_TOOL));
-    cJSON_AddStringToObject(tool_msg, "tool_call_id",rt_strdup(tool_call_id));
-    cJSON_AddStringToObject(tool_msg, "content", rt_strdup(content));
+    cJSON_AddStringToObject(tool_msg, "tool_call_id", tool_call_id);
+    cJSON_AddStringToObject(tool_msg, "content", content);
     cJSON_AddItemToArray(self->message, tool_msg);
 
     return RT_EOK;
@@ -178,6 +178,30 @@ static rt_err_t __clear_message(Context_t self){
         cJSON_Delete(self->message);
         self->message = cJSON_CreateArray();
     }
+    return RT_EOK;
+}
+
+/* 裁剪上下文：保留 system prompt + 最近 keep_items 条消息，
+   防止 message 数组无限增长导致内存耗尽 */
+static rt_err_t __trim_context(Context_t self, int keep_items)
+{
+    int total = cJSON_GetArraySize(self->message);
+    if (total <= 1)  // 只有system prompt，无需裁剪
+        return RT_EOK;
+
+    /* 保留 system prompt（index 0），从 index 1 开始计算 */
+    int history = total - 1;
+    if (history <= keep_items)
+        return RT_EOK;
+
+    int remove_count = history - keep_items;
+    /* 反复删除 index 1，后面的元素会自动前移 */
+    for (int i = 0; i < remove_count; i++)
+    {
+        cJSON* item = cJSON_DetachItemFromArray(self->message, 1);
+        cJSON_Delete(item);
+    }
+    LOG_D("Trimmed %d old messages, keeping last %d items", remove_count, keep_items);
     return RT_EOK;
 }
 
@@ -196,8 +220,23 @@ Context_t AgentContextCreate(){
     context->append_tool_message = __append_tool_message;
     context->append_assistant_message = __append_assistant_message;
     context->clear_message = __clear_message;
+    context->trim_context = __trim_context;
     
 
     context->build_system_prompt(context);
     return context;
+}
+
+void AgentContextDestroy(Context_t context)
+{
+    if (context == RT_NULL)
+    {
+        return;
+    }
+    if (context->message)
+    {
+        cJSON_Delete(context->message);
+        context->message = RT_NULL;
+    }
+    rt_free(context);
 }
