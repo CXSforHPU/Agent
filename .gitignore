@@ -1,6 +1,30 @@
+# 编译产物
 src/*.o
 src/channels/*.o
 src/tools/*.o
-.vscode/
 config/*.o
-src/channels/*.o
+
+# IDE / AI工具目录
+.vscode/
+.claude/
+
+# file_server 环境与运行生成文件
+resource/file_server/.venv/
+resource/file_server/upload_files/
+resource/file_server/file_db.sqlite
+
+# test目录：忽略test下所有，只保留 *.py
+resource/file_server/test/*
+!resource/file_server/test/*.py
+
+# python缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# 系统杂项
+*.bin
+*.elf
+*.log
+.DS_Store

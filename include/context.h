@@ -1,6 +1,6 @@
 #ifndef __AGENT_CONTEXT_H__
 #define __AGENT_CONTEXT_H__
-
+#include "rtconfig.h"
 #include <rtthread.h>
 #include "prompt.h"
 #include "MessageHub.h"
@@ -28,7 +28,7 @@ typedef struct Context
     rt_err_t (*build_system_prompt)(struct Context* self);
     rt_err_t (*append_user_message)(struct Context* self,Message_t message);
     rt_err_t (*append_assistant_message)(struct Context* self,ChatResponse_t resp);
-    rt_err_t (*append_tool_message)(struct Context* self,const char* tool_call_id,const char* content);
+    rt_err_t (*append_tool_message)(struct Context* self,const char* tool_call_id,Message_t message);
     rt_err_t (*clear_message)(struct Context* self);
     rt_err_t (*trim_context)(struct Context* self, int keep_rounds);
 }Context,*Context_t;

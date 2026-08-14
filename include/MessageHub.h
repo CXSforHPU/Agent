@@ -13,18 +13,21 @@
 #define MessageHub_OUTPUT_NAME "AgentOutMb"
 
 /* 消息通道类型 */
-typedef enum MessageChannelType
+typedef enum MessageType
 {
-    CHANNEL_CLI,
-    CHANNEL_WEBNET,
-    ASSITANT
-} MessageChannelType;
+    TYPE_TEXT,
+    TYPE_AUDIO,
+    TYPE_IMAGE,
+    TYPE_VIDEO,
+    TYPE_NULL
+} MessageType;
 
 /* 消息结构 */
 typedef struct Message
 {
-    MessageChannelType channel_type;
+    MessageType message_type;
     char *content;
+    int size; //多模态使用数组时，计数使用
 } Message, *Message_t;
 
 /* 消息中心结构 */
@@ -46,8 +49,9 @@ rt_err_t MessageHub_put(MessageHub_t hub, Message_t message,rt_mailbox_t mb);
 Message_t MessageHub_get(MessageHub_t hub,rt_mailbox_t mb);
 
 /* 创建消息 */
-Message_t message_create(MessageChannelType channel_type,char *content,rt_err_t is_free_content);
+Message_t message_create(MessageType message_type,char *content,int size);
 void message_destroy(Message_t message);
-
+/* 获取消息类型 */
+char* get_agent_content_type(MessageType message_type);
 
 #endif /* __AGENT_MessageHub_H__ */

@@ -1,5 +1,5 @@
-#ifndef __AGENT_CHANNELS
-#define __AGENT_CHANNELS
+#ifndef __AGENT_CLI_H__
+#define __AGENT_CLI_H__
 #include "rtthread.h"
 #include "MessageHub.h"
 #include "context.h"
@@ -47,4 +47,4 @@ typedef struct CLI_channel
 } CLI_channel, *CLI_channel_t;
 
 int AgentCLIChannel(MessageHub_t message_hub, Context_t context);
-#endif
+#endif /* __AGENT_CLI_H__ */

@@ -8,24 +8,31 @@
 #define LOG_TAG "Agent.AgentLoop"
 #define LOG_LVL LOG_LVL_INFO
 #include <ulog.h>
-static MessageHub_t message_hub = RT_NULL;
-static Context_t context = RT_NULL;
-static rt_thread_t main_agent_loop = RT_NULL;
-static rt_bool_t agent_running = RT_FALSE;
+static MessageHub_t g_message_hub = RT_NULL;
+static Context_t g_context = RT_NULL;
+static rt_thread_t g_main_agent_loop = RT_NULL;
+static rt_bool_t g_agent_running = RT_FALSE;
 
+#ifdef PKG_AGENT_MULTIMODAL_ENABLE
+static rt_thread_t g_file_op_thread = RT_NULL;
+#endif
 
 static void CleanupAgent(void);
 
 static void InitAgent(){
     init_tools();
-    message_hub = MessageHub_create();
-    context = AgentContextCreate();
+    g_message_hub = MessageHub_create();
+    g_context = AgentContextCreate();
 
-    AGENT_CHANNEL_IMPL(message_hub,context);
+#ifdef PKG_AGENT_MULTIMODAL_ENABLE
+    g_file_op_thread = agent_file_op_init();
+#endif
+
+    AGENT_CHANNEL_IMPL(g_message_hub,g_context);
 }
 
 
-static void AgentLoop(Context_t context,
+static void AgentLoop(Context_t g_context,
     cJSON* tools,
     void (*on_reasoning)(const char* text),
     void (*on_tool_call)(const char* text),
@@ -39,7 +46,7 @@ static void AgentLoop(Context_t context,
     while (loop_cnt < loop_max)
     {
         loop_cnt++;
-        resp = chat(context->message,tools,32*1024,on_reasoning,on_tool_call,on_context);
+        resp = chat(g_context->message,tools,32*1024,on_reasoning,on_tool_call,on_context);
         if (resp == RT_NULL)
         {
             LOG_E("Chat request failed, terminating this case");
@@ -49,13 +56,13 @@ static void AgentLoop(Context_t context,
         if (cJSON_GetArraySize(resp->tool_call) == 0)
         {
             // Store assistant text message
-            context->append_assistant_message(context,resp);
+            g_context->append_assistant_message(g_context,resp);
 
             /* 复制内容到新消息，避免resp释放后悬空指针 */
-            assistant_message = message_create(ASSITANT, resp->context, RT_FALSE);
+            assistant_message = message_create(TYPE_TEXT, resp->context, 1);
             if (assistant_message)
             {
-                message_hub->put_message(message_hub, assistant_message, message_hub->output_mailbox);
+                g_message_hub->put_message(g_message_hub, assistant_message, g_message_hub->output_mailbox);
             }
             chat_response_free(resp);
             resp = RT_NULL;
@@ -94,6 +101,7 @@ static void AgentLoop(Context_t context,
             const char* func_name = name_node->valuestring;
             const char* args_str = args_node->valuestring;
             const char* id_str = id_node->valuestring;
+            int message_size = 0;
 
             // Parse tool arguments
             cJSON* args_json = cJSON_Parse(args_str);
@@ -105,11 +113,18 @@ static void AgentLoop(Context_t context,
 
             tool_node->execute_func(args_json,tool_node);
 
-            LOG_I("[Local Tool %s Execution Result] %s\n", func_name, tool_node->ret.content);
+            message_size = tool_node->ret.message->size;
+            for (int i = 0; i < message_size;i++)
+            {
+                Message_t item = &tool_node->ret.message[i];
+                char* result_str = item->content;
+                char* type = get_agent_content_type(item->message_type);
+                LOG_I("[Local Tool %s Execution Result] type %s,result %s\n", func_name,type,result_str);
+            }
 
             // Append tool response message
 
-            context->append_tool_message(context,id_str,tool_node->ret.content);
+            g_context->append_tool_message(g_context,id_str,tool_node->ret.message);
 
 
             cJSON_Delete(args_json);
@@ -129,23 +144,23 @@ static void AgentLoop(Context_t context,
 
 static void MainLoop(void* param){
     InitAgent();
-    agent_running = RT_TRUE;
-    while (agent_running)
+    g_agent_running = RT_TRUE;
+    while (g_agent_running)
     {
-        Message_t message = message_hub->get_message(message_hub,message_hub->input_mailbox);
-        /* RT_NULL 为 CleanupAgent 发出的唤醒信号，回 while 检查 agent_running */
+        Message_t message = g_message_hub->get_message(g_message_hub,g_message_hub->input_mailbox);
+        /* RT_NULL 为 CleanupAgent 发出的唤醒信号，回 while 检查 g_agent_running */
         if (message == RT_NULL)
         {
             continue;
         }
-        /* 消息由channel创建，context内部会cJSON_AddStringToObject复制内容，需释放原消息 */
-        context->append_user_message(context,message);
+        /* 消息由channel创建，context内部会复制内容，channel负责释放原消息 */
+        g_context->append_user_message(g_context,message);
 
-        AgentLoop(context,GetAgentTools(),print_reasoning,print_tool_call,print_context);
+        AgentLoop(g_context,GetAgentTools(),print_reasoning,print_tool_call,print_context);
         /* 裁剪上下文，保留system prompt + 最近6条消息，防止无限膨胀 */
-        if (context->trim_context)
+        if (g_context->trim_context)
         {
-            context->trim_context(context, 6);
+            g_context->trim_context(g_context, PKG_AGENT_MESSAGE_TRIM);
         }
 
     }
@@ -154,50 +169,57 @@ static void MainLoop(void* param){
 }
 
 static int MainLoop_entry(){
-    if (main_agent_loop != RT_NULL)
+    if (g_main_agent_loop != RT_NULL)
     {
         LOG_W("Agent main loop already running");
         return 0;
     }
-    main_agent_loop = rt_thread_create("AgentLoop",MainLoop,RT_NULL,10240,10,10);
-    if (!main_agent_loop)
+    g_main_agent_loop = rt_thread_create("AgentLoop",MainLoop,RT_NULL,10240,10,10);
+    if (!g_main_agent_loop)
     {
-        LOG_E("main_agent_loop thread create failed");
+        LOG_E("g_main_agent_loop thread create failed");
         return 1;
     }
-    rt_thread_startup(main_agent_loop);
+    rt_thread_startup(g_main_agent_loop);
     return 0;
 }
 
 /* 清理线程不直接销毁，设置退出信号并唤醒 mailbox */
 static void SignalAgentStop(void)
 {
-    agent_running = RT_FALSE;
-    if (message_hub != RT_NULL && message_hub->input_mailbox != RT_NULL)
+    g_agent_running = RT_FALSE;
+    if (g_message_hub != RT_NULL && g_message_hub->input_mailbox != RT_NULL)
     {
         /* 发送一个RT_NULL哨兵唤醒主循环 */
-        rt_mb_send(message_hub->input_mailbox, (rt_ubase_t)RT_NULL);
+        rt_mb_send(g_message_hub->input_mailbox, (rt_ubase_t)RT_NULL);
     }
 }
 
 static void CleanupAgent(void)
 {
-    if (message_hub)
+    if (g_message_hub)
     {
-        MessageHub_destroy(message_hub);
-        message_hub = RT_NULL;
+        MessageHub_destroy(g_message_hub);
+        g_message_hub = RT_NULL;
     }
-    if (context)
+    if (g_context)
     {
-        AgentContextDestroy(context);
-        context = RT_NULL;
+        AgentContextDestroy(g_context);
+        g_context = RT_NULL;
     }
-    main_agent_loop = RT_NULL;
+    g_main_agent_loop = RT_NULL;
+#ifdef PKG_AGENT_MULTIMODAL_ENABLE
+    if(g_file_op_thread)
+    {
+        agent_file_op_deinit();
+    }
+    g_file_op_thread = RT_NULL;
+#endif
 }
 
 static int CleanupAgent_entry(void)
 {
-    if (main_agent_loop == RT_NULL)
+    if (g_main_agent_loop == RT_NULL)
     {
         LOG_W("Agent not running, nothing to clean up");
         return 0;

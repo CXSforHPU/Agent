@@ -50,20 +50,72 @@ self->payload
         "content":"xxx"
     }
 ]
+多模态-单条信息
+{
+    "role": "user",
+    "content": [
+        {
+            "type": "video_url",
+            "video_url": {
+                "url": "https://example.com/video.mp4",
+                "detail": "high",
+                "max_frames": 16,
+                "fps": 1
+            }
+        },
+        {
+            "type": "image_url",
+            "image_url": {"url": "https://example.com/thumbnail.jpg"}
+        },
+        {
+            "type": "text",
+            "text": "基于视频和缩略图，分析这个视频的主题和受众群体"
+        }
+    ]
+}
+{
+    "role": "user",
+    "content": [
+        {
+            "type": "image_url",
+            "image_url": { 
+                "url": "data:application/pdf;base64," + base64.b64encode(
+                            open("xxx.pdf", "rb").read()).decode("utf-8")
+                            }
+        },
+        {
+            "type": "text",
+            "text": "<image>\n<|grounding|>Convert the document to markdown. "
+        }
+    ]
+}
 */
-static rt_err_t __append_user_message(Context_t self,Message_t message){
-    cJSON* user_message = cJSON_CreateObject();
-    cJSON_AddStringToObject(user_message,"role",Role(ROLE_USER));
-    cJSON_AddStringToObject(user_message,"content",message->content);
+static rt_err_t __append_user_message(Context_t self, Message_t message)
+{
+    cJSON* user_message = RT_NULL;
+    cJSON* content_obj = RT_NULL;
+    rt_err_t rc = RT_EOK;
 
-    cJSON_AddItemToArray(self->message,user_message);
+    if (!self || !message || !self->message) {
+        return -RT_EINVAL;
+    }
 
-    // /* 销毁input message */
-    // 由channel 方面删除
-    // message_destroy(message);
+    user_message = cJSON_CreateObject();
+    if (!user_message) {
+        return -RT_ENOMEM;
+    }
+    cJSON_AddStringToObject(user_message, "role", Role(ROLE_USER));
+
+    content_obj = to_content(message);
+
+    cJSON_AddItemToObject(user_message,"content",content_obj);
+
+    cJSON_AddItemToArray(self->message, user_message);
+
+    user_message = RT_NULL;   // 所有权已转移
+    content_obj = RT_NULL;
     return RT_EOK;
 }
-
 /*
 @function: __append_assistant_message
 @description: 添加ai信息
@@ -163,13 +215,19 @@ self->payload
     }
 ]
 */
-static rt_err_t __append_tool_message(Context_t self,const char* tool_call_id,const char* content){
+static rt_err_t __append_tool_message(Context_t self,const char* tool_call_id,Message_t message){
     cJSON* tool_msg = cJSON_CreateObject();
+    cJSON* content_obj = RT_NULL;
     cJSON_AddStringToObject(tool_msg, "role", Role(ROLE_TOOL));
     cJSON_AddStringToObject(tool_msg, "tool_call_id", tool_call_id);
-    cJSON_AddStringToObject(tool_msg, "content", content);
+
+    content_obj = to_content(message);
+
+    cJSON_AddItemToObject(tool_msg, "content", content_obj);
     cJSON_AddItemToArray(self->message, tool_msg);
 
+    tool_msg = RT_NULL;
+    content_obj = RT_NULL;
     return RT_EOK;
 }
 

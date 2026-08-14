@@ -272,7 +272,7 @@ static void CLI_run(void *p)
         else if (length > 0)
         {
 
-            input_message = message_create(CHANNEL_CLI, input_buffer,RT_FALSE);
+            input_message = message_create(TYPE_TEXT, input_buffer,1);
 
             if (input_message == RT_NULL)
             {

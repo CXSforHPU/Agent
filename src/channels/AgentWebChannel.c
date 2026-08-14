@@ -489,7 +489,7 @@ static void cgi_chat_handler(struct webnet_session *session)
         goto cleanup;
     }
 
-    input_message = message_create(CHANNEL_WEBNET, user_message, RT_FALSE);
+    input_message = message_create(TYPE_TEXT, user_message, 1);
     if (input_message == RT_NULL)
     {
         send_simple_json(session, 500, "Internal Server Error", RT_FALSE,

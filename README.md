@@ -91,7 +91,7 @@ classDiagram
     class Message {
         -uint8_t channel_type
         char* content
-        +message_create(MessageChannelType channel_type,char *content,rt_err_t is_free_content)
+        +message_create(MessageType channel_type,char *content,rt_err_t is_free_content)
         +message_destroy(Message_t message)
     }
     class ChatResponse {

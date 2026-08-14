@@ -1,11 +1,21 @@
 #include "MessageHub.h"
 
+
+static char agent_content_type[4][16]={"text","audio_url","image_url","video_url"};
+
 /* 静态函数声明 */
 static rt_err_t _put_message(MessageHub_t self, Message_t message,rt_mailbox_t mb);
 static Message_t _get_message(MessageHub_t self,rt_mailbox_t mb);
 
+
+char* get_agent_content_type(MessageType message_type)
+{
+    return agent_content_type[message_type];
+}
+
+
 /* 创建消息 */
-Message_t message_create(MessageChannelType channel_type,char *content,rt_err_t is_free_content)
+Message_t message_create(MessageType message_type,char *content,int size)
 {
     Message_t message = (Message_t)rt_malloc(sizeof(Message));
     if (message == RT_NULL) {
@@ -13,14 +23,17 @@ Message_t message_create(MessageChannelType channel_type,char *content,rt_err_t 
         return RT_NULL;
     }
 
-    message->channel_type = channel_type;
-    message->content = rt_strdup(content);
-
-    if (is_free_content)
+    message->message_type = message_type;
+    if (content)
     {
-        rt_free(content);
+        message->content = rt_strdup(content);
+    }
+    else{
+        message->content = RT_NULL;
     }
     
+
+    message->size = size;
 
     return message;
 }
@@ -36,6 +49,7 @@ void message_destroy(Message_t message)
     }
 
     rt_free(message);
+    return;
 }
 
 /* 发送消息 */
