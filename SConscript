@@ -16,7 +16,8 @@ if GetDepend(['PKG_AGENT_CLI_CHANNEL']):
     src += [os.path.join(cwd, 'src', "channels", "CLI.c")]
 if GetDepend(['PKG_AGENT_WEBNET_CHANNEL']):
     src += [os.path.join(cwd, 'src', "channels", "AgentWebChannel.c")]
-
+if GetDepend(['PKG_AGENT_DEBUG_CHANNEL']):
+    src += [os.path.join(cwd, 'src', "channels", "AgentDebugChannel.c")]
 #add tools
 for file in os.listdir(os.path.join(cwd, 'src',"tools")):
     file_path = os.path.join(cwd, 'src', "tools",file)

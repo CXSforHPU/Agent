@@ -609,8 +609,7 @@ static void file_operation_work_thread(void *arg)
 
     while (1) {
         rt_memset(&req, 0, sizeof(req));
-        if (rt_mq_recv(g_file_op_mq_input, &req, sizeof(req), RT_WAITING_FOREVER) != RT_EOK)
-            continue;
+        rt_mq_recv(g_file_op_mq_input, &req, sizeof(req), RT_WAITING_FOREVER);
 
         if (req.op == CMD_AGENT_FILE_EXIT) {
             LOG_I("[fileop] exit thread");
@@ -683,7 +682,7 @@ rt_thread_t agent_file_op_init(void)
                                         file_operation_work_thread,
                                         RT_NULL,
                                         PKG_AGENT_FILE_OP_THREAD_SIZE,
-                                        12,
+                                        9,
                                         20);
     if (g_file_op_thread == RT_NULL) {
         rt_mq_delete(g_file_op_mq_input);
@@ -773,12 +772,7 @@ char* agent_up_load(const char* path)
         return RT_NULL;
     }
 
-    if (rt_mq_recv(g_file_op_mq_output, &req_output, sizeof(req_output), RT_WAITING_FOREVER) != RT_EOK) {
-        LOG_E("recv upload result failed");
-        return RT_NULL;
-    }
-
-
+    rt_mq_recv(g_file_op_mq_output, &req_output, sizeof(req_output), RT_WAITING_FOREVER);
 
     rt_strncpy(result_url, req_output.path, sizeof(result_url) - 1);
     result_url[sizeof(result_url) - 1] = '\0';

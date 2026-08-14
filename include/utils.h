@@ -67,8 +67,8 @@ typedef enum
 typedef struct
 {
     file_op_type_t op;
-    char path[64];
-    char file_id[64];
+    char path[128];
+    char file_id[128];
 }file_op_req;
 
 // rt_mq_t get_agent_file_op_mq_input(void);

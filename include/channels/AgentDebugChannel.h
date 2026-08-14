@@ -9,7 +9,7 @@
 #include <ulog.h>
 
 
-
+int AgentDebugChannel(MessageHub_t message_hub, Context_t context);
 
 
 
