@@ -4,19 +4,17 @@
 #include "MessageHub.h"
 #include "context.h"
 
-
 #ifdef PKG_AGENT_CLI_CHANNEL
     #include "CLI.h"
-    #define AGENT_CHANNEL_IMPL  AgentCLIChannel
+    #define AGENT_CHANNEL_IMPL  agent_cli_channel
 #elif defined(PKG_AGENT_WEBNET_CHANNEL)
     #include "AgentWebChannel.h"
     #define AGENT_CHANNEL_IMPL  webnet_agent_mode
 #elif defined(PKG_AGENT_DEBUG_CHANNEL)
     #include "AgentDebugChannel.h"
-    #define AGENT_CHANNEL_IMPL AgentDebugChannel
+    #define AGENT_CHANNEL_IMPL  agent_debug_channel
 #else
-#define AGENT_CHANNEL_IMPL  RT_NULL
+    #define AGENT_CHANNEL_IMPL  RT_NULL
 #endif
 
-
-#endif /* __AGENT_CHANNELS_H__ */ 
+#endif /* __AGENT_CHANNELS_H__ */

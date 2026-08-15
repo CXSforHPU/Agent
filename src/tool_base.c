@@ -1,32 +1,42 @@
 #include "tool_base.h"
 
-static AgentToolList* head=RT_NULL;
-static cJSON* AgentTools = RT_NULL;
+static AgentToolList *head = RT_NULL;
+static cJSON *AgentTools = RT_NULL;
 
-
-rt_err_t AgentToolListCreate(){
+/*
+ * @brief 创建工具链表头节点
+ * @return RT_EOK 成功，RT_ERROR 失败
+ */
+rt_err_t agent_tool_list_create(void)
+{
     head = (AgentToolNode_t)rt_malloc(sizeof(AgentToolList));
     if (!head)
     {
-        /* code */
         LOG_E("head malloc failed.");
         return RT_ERROR;
     }
 
-    head->ret.ret=RT_NULL;
+    head->ret.ret = RT_EOK;
     head->ret.messages = messages_create(0);
 
-    head->tool_obj=RT_NULL;
-    head->execute_func=RT_NULL;
+    head->tool_obj = RT_NULL;
+    head->execute_func = RT_NULL;
     head->next = RT_NULL;
 
     return RT_EOK;
 }
 
-rt_err_t AppendTool(cJSON* tool_obj, void(*execute_func)(cJSON* param,struct AgentToolList* node)){
+/*
+ * @brief 追加工具到链表尾部
+ * @param tool_obj      工具 JSON 对象
+ * @param execute_func  工具执行函数
+ * @return RT_EOK 成功，RT_ERROR 失败
+ */
+rt_err_t append_tool(cJSON *tool_obj, void (*execute_func)(cJSON *param, struct AgentToolList *node))
+{
     if (!head)
     {
-        LOG_E("tool list not initialized, call AgentToolListCreate first");
+        LOG_E("tool list not initialized, call agent_tool_list_create first");
         return RT_ERROR;
     }
 
@@ -44,10 +54,8 @@ rt_err_t AppendTool(cJSON* tool_obj, void(*execute_func)(cJSON* param,struct Age
     }
 
     node->tool_obj = tool_obj;
-
     node->ret.messages = messages_create(0);
     node->ret.ret = RT_ERROR;
-
     node->execute_func = execute_func;
     node->next = RT_NULL;
 
@@ -55,23 +63,23 @@ rt_err_t AppendTool(cJSON* tool_obj, void(*execute_func)(cJSON* param,struct Age
     return RT_EOK;
 }
 
-/**
- * @brief 从tool对象中获取function.name字符串，安全空保护
- * @param tool_obj 入参cJSON对象
- * @return 成功返回函数字符串；失败返回NULL
+/*
+ * @brief 从 tool_obj 中获取 function.name 字符串
+ * @param tool_obj 工具 JSON 对象
+ * @return 函数名字符串，失败返回 NULL
  */
-static const char* GetFuncName(cJSON* tool_obj)
+static const char *get_func_name(cJSON *tool_obj)
 {
     if (!tool_obj)
     {
         return RT_NULL;
     }
-    cJSON* func_obj = cJSON_GetObjectItemCaseSensitive(tool_obj, "function");
+    cJSON *func_obj = cJSON_GetObjectItemCaseSensitive(tool_obj, "function");
     if (!func_obj)
     {
         return RT_NULL;
     }
-    cJSON* name_item = cJSON_GetObjectItemCaseSensitive(func_obj, "name");
+    cJSON *name_item = cJSON_GetObjectItemCaseSensitive(func_obj, "name");
     if (!name_item || !cJSON_IsString(name_item))
     {
         return RT_NULL;
@@ -79,20 +87,19 @@ static const char* GetFuncName(cJSON* tool_obj)
     return name_item->valuestring;
 }
 
-
-/**
- * @brief 根据tool_obj内function.name查找注册的工具节点
- * @param tool_obj 待匹配工具JSON对象
- * @return 找到返回节点指针，未找到返回RT_NULL
+/*
+ * @brief 根据 tool_obj 内 function.name 查找注册的工具节点
+ * @param tool_obj 待匹配工具 JSON 对象
+ * @return 找到返回节点指针，未找到返回 NULL
  */
-AgentToolNode_t SearchAgentToolNode(cJSON* tool_obj)
+AgentToolNode_t search_agent_tool_node(cJSON *tool_obj)
 {
     if (!head)
     {
         return RT_NULL;
     }
 
-    const char* target_name = GetFuncName(tool_obj);
+    const char *target_name = get_func_name(tool_obj);
     if (!target_name)
     {
         return RT_NULL;
@@ -101,8 +108,7 @@ AgentToolNode_t SearchAgentToolNode(cJSON* tool_obj)
     AgentToolNode_t p = head;
     while (p != RT_NULL)
     {
-        const char* node_name = GetFuncName(p->tool_obj);
-        /* node_name为NULL直接跳过该节点 */
+        const char *node_name = get_func_name(p->tool_obj);
         if (node_name && (rt_strcmp(node_name, target_name) == 0))
         {
             return p;
@@ -112,18 +118,21 @@ AgentToolNode_t SearchAgentToolNode(cJSON* tool_obj)
     return RT_NULL;
 }
 
-
-cJSON* BulitToolsJson()
+/*
+ * @brief 构建所有工具的 JSON 数组
+ * @return 工具 JSON 数组指针，失败返回 NULL
+ */
+cJSON *build_tools_json(void)
 {
     AgentToolNode_t p;
 
     if (!head)
     {
-        LOG_E("tool list not initialized, call AgentToolListCreate first");
+        LOG_E("tool list not initialized, call agent_tool_list_create first");
         return RT_NULL;
     }
 
-    /* 如果已构建过，直接返回，避免重复添加导致工具列表膨胀 */
+    /* 如果已构建过，直接返回 */
     if (cJSON_IsArray(AgentTools) && cJSON_GetArraySize(AgentTools) > 0)
     {
         return AgentTools;
@@ -145,13 +154,21 @@ cJSON* BulitToolsJson()
     return AgentTools;
 }
 
-cJSON* GetAgentTools(){
+/*
+ * @brief 获取已构建的工具 JSON 数组
+ * @return 工具 JSON 数组指针
+ */
+cJSON *get_agent_tools(void)
+{
     return AgentTools;
 }
 
-void FreeAgentToolNode(AgentToolNode_t node)
+/*
+ * @brief 释放工具节点
+ * @param node 要释放的节点
+ */
+void free_agent_tool_node(AgentToolNode_t node)
 {
     cJSON_Delete(node->tool_obj);
     rt_free(node);
 }
-

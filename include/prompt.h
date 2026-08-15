@@ -1,10 +1,10 @@
-#ifndef __AGENT_PROMPT
-#define __AGENT_PROMPT
+#ifndef __AGENT_PROMPT_H__
+#define __AGENT_PROMPT_H__
 
+/*
+ * @brief 获取系统提示词
+ * @return 系统提示词字符串
+ */
+char *get_system_prompt(void);
 
-char* get_system_prompt();
-
-
-
-
-#endif
+#endif /* __AGENT_PROMPT_H__ */

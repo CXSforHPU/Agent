@@ -8,6 +8,7 @@
 #define LOG_TAG "Agent.AgentLoop"
 #define LOG_LVL LOG_LVL_INFO
 #include <ulog.h>
+
 static MessageHub_t g_message_hub = RT_NULL;
 static Context_t g_context = RT_NULL;
 static rt_thread_t g_main_agent_loop = RT_NULL;
@@ -17,26 +18,37 @@ static rt_bool_t g_agent_running = RT_FALSE;
 static rt_thread_t g_file_op_thread = RT_NULL;
 #endif
 
-static void CleanupAgent(void);
+static void cleanup_agent(void);
 
-static void InitAgent(){
+/*
+ * @brief 初始化 agent（工具、消息中心、上下文、通道）
+ */
+static void init_agent(void)
+{
     init_tools();
-    g_message_hub = MessageHub_create();
-    g_context = AgentContextCreate();
+    g_message_hub = message_hub_create();
+    g_context = agent_context_create();
 
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
     g_file_op_thread = agent_file_op_init();
 #endif
 
-    AGENT_CHANNEL_IMPL(g_message_hub,g_context);
+    AGENT_CHANNEL_IMPL(g_message_hub, g_context);
 }
 
-
-static void AgentLoop(Context_t g_context,
-    cJSON* tools,
-    void (*on_reasoning)(const char* text),
-    void (*on_tool_call)(const char* text),
-    void (*on_context)(const char* text))
+/*
+ * @brief Agent 工具调用循环（最大 loop_max 轮）
+ * @param g_context     上下文管理器
+ * @param tools         工具定义 JSON 数组
+ * @param on_reasoning  思考过程回调
+ * @param on_tool_call  工具调用回调
+ * @param on_context    回复内容回调
+ */
+static void agent_loop(Context_t g_context,
+                       cJSON *tools,
+                       void (*on_reasoning)(const char *text),
+                       void (*on_tool_call)(const char *text),
+                       void (*on_context)(const char *text))
 {
     const int loop_max = 10;
     int loop_cnt = 0;
@@ -46,21 +58,20 @@ static void AgentLoop(Context_t g_context,
     while (loop_cnt < loop_max)
     {
         loop_cnt++;
-        resp = chat(g_context->message,tools,32*1024,on_reasoning,on_tool_call,on_context);
+        resp = chat(g_context->message, tools, 32 * 1024, on_reasoning, on_tool_call, on_context);
         if (resp == RT_NULL)
         {
             LOG_E("Chat request failed, terminating this case");
             break;
         }
-        /* save assistant message */
+
+        /* 无 tool_calls：最终回答 */
         if (cJSON_GetArraySize(resp->tool_call) == 0)
         {
-            // Store assistant text message
-            g_context->append_assistant_message(g_context,resp);
+            g_context->append_assistant_message(g_context, resp);
 
-            /* 复制内容到新消息，避免resp释放后悬空指针 */
             assistant_messages = messages_create(1);
-            messages_append(assistant_messages,TYPE_TEXT,resp->context);
+            messages_append(assistant_messages, TYPE_TEXT, resp->context);
             if (assistant_messages)
             {
                 g_message_hub->put_message(g_message_hub, assistant_messages, g_message_hub->output_mailbox);
@@ -70,59 +81,54 @@ static void AgentLoop(Context_t g_context,
             break;
         }
 
-        /* Execute all tool calls */
+        /* 执行所有 tool_calls */
         int tool_count = cJSON_GetArraySize(resp->tool_call);
         LOG_I("\nDetected %d tool invocation(s)\n", tool_count);
         for (int t = 0; t < tool_count; t++)
         {
-
-            cJSON* tc_item = cJSON_GetArrayItem(resp->tool_call, t);
-            AgentToolNode_t tool_node =  SearchAgentToolNode(tc_item);
+            cJSON *tc_item = cJSON_GetArrayItem(resp->tool_call, t);
+            AgentToolNode_t tool_node = search_agent_tool_node(tc_item);
 
             if (!tc_item || !tool_node) continue;
 
-            cJSON* tc_func = cJSON_GetObjectItemCaseSensitive(tc_item, "function");
-
-            // Validate function node
+            cJSON *tc_func = cJSON_GetObjectItemCaseSensitive(tc_item, "function");
             if (!tc_func || !cJSON_IsObject(tc_func))
             {
                 LOG_I("Tool call %d missing function field, skip\n", t);
                 continue;
             }
 
-            cJSON* name_node = cJSON_GetObjectItemCaseSensitive(tc_func, "name");
-            cJSON* args_node = cJSON_GetObjectItemCaseSensitive(tc_func, "arguments");
-            cJSON* id_node = cJSON_GetObjectItem(tc_item,"id");
+            cJSON *name_node = cJSON_GetObjectItemCaseSensitive(tc_func, "name");
+            cJSON *args_node = cJSON_GetObjectItemCaseSensitive(tc_func, "arguments");
+            cJSON *id_node = cJSON_GetObjectItem(tc_item, "id");
             if (!name_node || !cJSON_IsString(name_node) || !args_node || !cJSON_IsString(args_node))
             {
                 LOG_I("Tool call %d invalid name/arguments, skip\n", t);
                 continue;
             }
 
-            const char* func_name = name_node->valuestring;
-            const char* args_str = args_node->valuestring;
-            const char* id_str = id_node->valuestring;
+            const char *func_name = name_node->valuestring;
+            const char *args_str = args_node->valuestring;
+            const char *id_str = id_node->valuestring;
 
-            // Parse tool arguments
-            cJSON* args_json = cJSON_Parse(args_str);
+            cJSON *args_json = cJSON_Parse(args_str);
             if (!args_json)
             {
                 LOG_I("Tool %s parse arguments failed, skip execution\n", func_name);
                 continue;
             }
 
-            tool_node->execute_func(args_json,tool_node);
+            tool_node->execute_func(args_json, tool_node);
 
             Messages_t tool_ret_messages = tool_node->ret.messages;
-            for (int i = 0; i < tool_ret_messages->max_size;i++)
+            for (int i = 0; i < tool_ret_messages->current_size; i++)
             {
-                LOG_I("[Local Tool %s Execution Result] type %s,result %s\n", func_name,messages_get_type_idx(tool_ret_messages,i),messages_get_content_idx(tool_ret_messages,i));
+                LOG_I("[Local Tool %s Execution Result] type %s, result %s\n", func_name,
+                      messages_get_type_idx(tool_ret_messages, i),
+                      messages_get_content_idx(tool_ret_messages, i));
             }
 
-            // Append tool response message
-
-            g_context->append_tool_message(g_context,id_str,tool_ret_messages);
-
+            g_context->append_tool_message(g_context, id_str, tool_ret_messages);
 
             cJSON_Delete(args_json);
         }
@@ -130,48 +136,55 @@ static void AgentLoop(Context_t g_context,
         resp = RT_NULL;
     }
 
-    if(loop_cnt >= loop_max){
+    if (loop_cnt >= loop_max)
+    {
         LOG_E("Maximum tool loop count %d reached, forced termination\n", loop_max);
         chat_response_free(resp);
     }
-    return;
 }
 
-
-
-static void MainLoop(void* param){
-    InitAgent();
+/*
+ * @brief 主循环线程：接收消息 -> 调用 LLM -> 执行工具 -> 返回结果
+ * @param param 线程参数（未使用）
+ */
+static void main_loop(void *param)
+{
+    init_agent();
     g_agent_running = RT_TRUE;
     while (g_agent_running)
     {
-        Messages_t messages = g_message_hub->get_message(g_message_hub,g_message_hub->input_mailbox);
-        /* RT_NULL 为 CleanupAgent 发出的唤醒信号，回 while 检查 g_agent_running */
+        Messages_t messages = g_message_hub->get_message(g_message_hub, g_message_hub->input_mailbox);
+        /* RT_NULL 为 cleanup_agent 发出的唤醒信号 */
         if (messages == RT_NULL)
         {
             continue;
         }
-        /* 消息由channel创建，context内部会复制内容，channel负责释放原消息 */
-        g_context->append_user_message(g_context,messages);
 
-        AgentLoop(g_context,GetAgentTools(),print_reasoning,print_tool_call,print_context);
-        /* 裁剪上下文，保留system prompt + 最近6条消息，防止无限膨胀 */
+        g_context->append_user_message(g_context, messages);
+
+        agent_loop(g_context, get_agent_tools(), print_reasoning, print_tool_call, print_context);
+
+        /* 裁剪上下文，防止无限膨胀 */
         if (g_context->trim_context)
         {
             g_context->trim_context(g_context, PKG_AGENT_MESSAGE_TRIM);
         }
-
     }
-    /* 主循环退出后清理资源 */
-    CleanupAgent();
+    cleanup_agent();
 }
 
-static int MainLoop_entry(){
+/*
+ * @brief 主循环入口（MSH 命令）
+ * @return 0 成功，1 失败
+ */
+static int main_loop_entry(void)
+{
     if (g_main_agent_loop != RT_NULL)
     {
         LOG_W("Agent main loop already running");
         return 0;
     }
-    g_main_agent_loop = rt_thread_create("AgentLoop",MainLoop,RT_NULL,10240,10,10);
+    g_main_agent_loop = rt_thread_create("AgentLoop", main_loop, RT_NULL, 10240, 10, 10);
     if (!g_main_agent_loop)
     {
         LOG_E("g_main_agent_loop thread create failed");
@@ -181,32 +194,36 @@ static int MainLoop_entry(){
     return 0;
 }
 
-/* 清理线程不直接销毁，设置退出信号并唤醒 mailbox */
-static void SignalAgentStop(void)
+/*
+ * @brief 发送停止信号唤醒主循环退出
+ */
+static void signal_agent_stop(void)
 {
     g_agent_running = RT_FALSE;
     if (g_message_hub != RT_NULL && g_message_hub->input_mailbox != RT_NULL)
     {
-        /* 发送一个RT_NULL哨兵唤醒主循环 */
         rt_mb_send(g_message_hub->input_mailbox, (rt_ubase_t)RT_NULL);
     }
 }
 
-static void CleanupAgent(void)
+/*
+ * @brief 清理 agent 资源（消息中心、上下文、多模态线程）
+ */
+static void cleanup_agent(void)
 {
     if (g_message_hub)
     {
-        MessageHub_destroy(g_message_hub);
+        message_hub_destroy(g_message_hub);
         g_message_hub = RT_NULL;
     }
     if (g_context)
     {
-        AgentContextDestroy(g_context);
+        agent_context_destroy(g_context);
         g_context = RT_NULL;
     }
     g_main_agent_loop = RT_NULL;
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
-    if(g_file_op_thread)
+    if (g_file_op_thread)
     {
         agent_file_op_deinit();
     }
@@ -214,7 +231,11 @@ static void CleanupAgent(void)
 #endif
 }
 
-static int CleanupAgent_entry(void)
+/*
+ * @brief 清理 agent 入口（MSH 命令）
+ * @return 0 成功
+ */
+static int cleanup_agent_entry(void)
 {
     if (g_main_agent_loop == RT_NULL)
     {
@@ -222,9 +243,9 @@ static int CleanupAgent_entry(void)
         return 0;
     }
     LOG_I("Signaling agent to stop...");
-    SignalAgentStop();
+    signal_agent_stop();
     return 0;
 }
 
-MSH_CMD_EXPORT(MainLoop_entry,MainLoop_entry);
-MSH_CMD_EXPORT(CleanupAgent_entry,CleanupAgent_entry)
+MSH_CMD_EXPORT(main_loop_entry, main_loop_entry);
+MSH_CMD_EXPORT(cleanup_agent_entry, cleanup_agent_entry);

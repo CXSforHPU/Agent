@@ -7,11 +7,17 @@ static MessageHub_t message_hub = RT_NULL;
 static Context_t context = RT_NULL;
 static rt_bool_t webnet_started = RT_FALSE;
 
+/*
+ * @brief 安全获取字符串（NULL 时返回空串）
+ */
 static const char *safe_string(const char *value)
 {
     return value != RT_NULL ? value : "";
 }
 
+/*
+ * @brief 发送原始 JSON 响应
+ */
 static void send_raw_json(struct webnet_session *session,
                           int status_code,
                           const char *reason,
@@ -31,6 +37,9 @@ static void send_raw_json(struct webnet_session *session,
     webnet_session_write(session, (const rt_uint8_t *)body, body_len);
 }
 
+/*
+ * @brief 发送 cJSON 对象作为响应
+ */
 static rt_err_t send_json_object(struct webnet_session *session,
                                  int status_code,
                                  const char *reason,
@@ -54,6 +63,9 @@ static rt_err_t send_json_object(struct webnet_session *session,
     return RT_EOK;
 }
 
+/*
+ * @brief 发送简单 JSON 响应 { success, [field]: message }
+ */
 static void send_simple_json(struct webnet_session *session,
                              int status_code,
                              const char *reason,
@@ -85,23 +97,9 @@ static void send_simple_json(struct webnet_session *session,
     cJSON_Delete(json);
 }
 
-static char *duplicate_string(const char *value)
-{
-    char *copy;
-    rt_size_t length;
-
-    value = safe_string(value);
-    length = strlen(value);
-    copy = rt_malloc(length + 1);
-    if (copy == RT_NULL)
-    {
-        return RT_NULL;
-    }
-
-    rt_memcpy(copy, value, length + 1);
-    return copy;
-}
-
+/*
+ * @brief 复制请求体
+ */
 static char *copy_request_body(struct webnet_session *session,
                                rt_size_t max_size)
 {
@@ -132,6 +130,9 @@ static char *copy_request_body(struct webnet_session *session,
     return body;
 }
 
+/*
+ * @brief 判断 JSON 值是否为 true
+ */
 static rt_bool_t json_value_is_true(const cJSON *item)
 {
     const char *value;
@@ -167,6 +168,9 @@ static rt_bool_t json_value_is_true(const cJSON *item)
            strcmp(value, "1") == 0;
 }
 
+/*
+ * @brief SSE 流式发送事件
+ */
 static void agent_webnet_stream_send_event(struct webnet_session *session,
                                            const char *event,
                                            const char *data)
@@ -216,6 +220,9 @@ static void agent_webnet_stream_send_event(struct webnet_session *session,
     webnet_session_write(session, (const rt_uint8_t *)"\n", 1);
 }
 
+/*
+ * @brief 获取 LLM 配置（GET）
+ */
 static void cgi_get_config_handler(struct webnet_session *session)
 {
     cJSON *json;
@@ -251,6 +258,9 @@ static void cgi_get_config_handler(struct webnet_session *session)
     cJSON_Delete(json);
 }
 
+/*
+ * @brief 更新 LLM 配置（POST）
+ */
 static void cgi_config_handler(struct webnet_session *session)
 {
     char *body = RT_NULL;
@@ -345,10 +355,9 @@ static void cgi_config_handler(struct webnet_session *session)
         goto cleanup;
     }
 
-    /* Copy selected values before updating internal configuration buffers. */
-    api_key_copy = duplicate_string(api_key);
-    model_name_copy = duplicate_string(model_name);
-    api_url_copy = duplicate_string(api_url);
+    api_key_copy = rt_strdup(api_key);
+    model_name_copy = rt_strdup(model_name);
+    api_url_copy = rt_strdup(api_url);
     if (api_key_copy == RT_NULL ||
         model_name_copy == RT_NULL ||
         api_url_copy == RT_NULL)
@@ -381,27 +390,20 @@ static void cgi_config_handler(struct webnet_session *session)
 
 cleanup:
     if (api_url_copy != RT_NULL)
-    {
         rt_free(api_url_copy);
-    }
     if (model_name_copy != RT_NULL)
-    {
         rt_free(model_name_copy);
-    }
     if (api_key_copy != RT_NULL)
-    {
         rt_free(api_key_copy);
-    }
     if (request_json != RT_NULL)
-    {
         cJSON_Delete(request_json);
-    }
     if (body != RT_NULL)
-    {
         rt_free(body);
-    }
 }
 
+/*
+ * @brief 聊天处理（POST）
+ */
 static void cgi_chat_handler(struct webnet_session *session)
 {
     char *body = RT_NULL;
@@ -410,7 +412,7 @@ static void cgi_chat_handler(struct webnet_session *session)
     char *user_message = RT_NULL;
     const char *ai_reply;
     Messages_t input_messages = messages_create(1);
-    Message_t output_message = RT_NULL;
+    Messages_t output_message = RT_NULL;
     rt_bool_t stream_mode = RT_FALSE;
 
     if (session == RT_NULL || session->request == RT_NULL)
@@ -489,7 +491,7 @@ static void cgi_chat_handler(struct webnet_session *session)
         goto cleanup;
     }
 
-    messages_append(input_messages,TYPE_TEXT,user_message);
+    messages_append(input_messages, TYPE_TEXT, user_message);
 
     if (input_messages == RT_NULL)
     {
@@ -503,14 +505,14 @@ static void cgi_chat_handler(struct webnet_session *session)
     output_message = message_hub->get_message(message_hub,
                                               message_hub->output_mailbox);
 
-    if (output_message == RT_NULL || messages_get_content_idx(output_message,0); == RT_NULL)
+    if (output_message == RT_NULL || messages_get_content_idx(output_message, 0) == RT_NULL)
     {
         send_simple_json(session, 502, "Bad Gateway", RT_FALSE,
                          "error", "LLM response failed");
         goto cleanup;
     }
 
-    ai_reply = messages_get_content_idx(output_message,0);;
+    ai_reply = messages_get_content_idx(output_message, 0);
 
     if (stream_mode)
     {
@@ -520,7 +522,6 @@ static void cgi_chat_handler(struct webnet_session *session)
                              (const rt_uint8_t *)":rt-thread-stream\n\n",
                              strlen(":rt-thread-stream\n\n"));
 
-        /* The mailbox currently returns a complete reply, so emit one SSE delta. */
         agent_webnet_stream_send_event(session, "delta", ai_reply);
         agent_webnet_stream_send_event(session, "final", ai_reply);
         agent_webnet_stream_send_event(session, "done", "[DONE]");
@@ -530,7 +531,6 @@ static void cgi_chat_handler(struct webnet_session *session)
     send_simple_json(session, 200, "OK", RT_TRUE, "response", ai_reply);
 
 cleanup:
-    /* output_message owns   messages_get_content_idx(output_message,0); do not free ai_reply separately. */
     if (output_message != RT_NULL)
     {
         messages_destroy(output_message);
@@ -549,6 +549,9 @@ cleanup:
     }
 }
 
+/*
+ * @brief 显示当前 LLM 配置（MSH 命令）
+ */
 static void show_llm_config(void)
 {
     const char *api_key = get_dynamic_agent_api_key();
@@ -564,6 +567,11 @@ static void show_llm_config(void)
 }
 MSH_CMD_EXPORT(show_llm_config, Show current LLM configuration);
 
+/*
+ * @brief WebNet 通道初始化
+ * @param hub 消息中心句柄
+ * @param ctx 上下文管理器句柄
+ */
 void webnet_agent_mode(MessageHub_t hub, Context_t ctx)
 {
     if (hub == RT_NULL || ctx == RT_NULL)

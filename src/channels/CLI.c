@@ -2,8 +2,9 @@
 
 static CLI_channel handle = {0};
 
-/**
+/*
  * @brief 阻塞获取一个字符
+ * @return 读取到的字符
  */
 static rt_uint8_t CLI_getc(void)
 {
@@ -15,7 +16,7 @@ static rt_uint8_t CLI_getc(void)
     return ch;
 }
 
-/**
+/*
  * @brief 设备接收回调
  */
 static rt_err_t CLI_rxcb(rt_device_t dev, rt_size_t size)
@@ -24,26 +25,23 @@ static rt_err_t CLI_rxcb(rt_device_t dev, rt_size_t size)
     return RT_EOK;
 }
 
-/**
- * @brief 刷新历史命令行回显 ANSI 清除当前行
+/*
+ * @brief 刷新命令行回显（ANSI 清除当前行）
  */
 static rt_bool_t CLI_handle_history(const char *prompt)
 {
-    // \033[2K 清除整行 \r光标回到行首
     rt_kprintf("\033[2K\r%s%s", prompt, handle.line);
     return RT_FALSE;
 }
 
-/**
+/*
  * @brief 提交当前行到历史记录
  */
 static void CLI_push_history(void)
 {
-    // 空行不保存
     if (handle.line_position == 0)
         return;
 
-    // 和最新一条历史重复，不存入
     if (handle.history_count > 0)
     {
         if (rt_strncmp(handle.CLI_history[handle.history_count - 1], handle.line, CLI_CMD_BUFFER_SIZE) == 0)
@@ -53,7 +51,6 @@ static void CLI_push_history(void)
         }
     }
 
-    // 历史缓冲区已满，向前滚动
     if (handle.history_count >= CLI_HISTORY_LINES)
     {
         for (int index = 0; index < CLI_HISTORY_LINES - 1; index++)
@@ -75,8 +72,12 @@ static void CLI_push_history(void)
     handle.history_current = handle.history_count;
 }
 
-/**
- * @brief readline 实现，支持光标移动、历史、退格
+/*
+ * @brief readline 实现（支持光标移动、历史、退格）
+ * @param prompt      提示符
+ * @param buffer      输出缓冲区
+ * @param buffer_size 缓冲区大小
+ * @return 输入行长度
  */
 static int CLI_readline(const char *prompt, char *buffer, int buffer_size)
 {
@@ -89,7 +90,6 @@ start:
     {
         ch = CLI_getc();
 
-        // ESC 开始解析功能键
         if (ch == 0x1b)
         {
             handle.stat = CLI_WAIT_SPEC_KEY;
@@ -97,7 +97,7 @@ start:
         }
         else if (handle.stat == CLI_WAIT_SPEC_KEY)
         {
-            if (ch == 0x5b) // '['
+            if (ch == 0x5b)
             {
                 handle.stat = CLI_WAIT_FUNC_KEY;
                 continue;
@@ -109,7 +109,7 @@ start:
             handle.stat = CLI_WAIT_NORMAL;
             switch (ch)
             {
-                case 0x41: // ↑
+                case 0x41:
                     if (handle.history_current > 0)
                     {
                         handle.history_current--;
@@ -120,7 +120,7 @@ start:
                     }
                     continue;
 
-                case 0x42: // ↓
+                case 0x42:
                     if (handle.history_current < handle.history_count - 1)
                     {
                         handle.history_current++;
@@ -131,7 +131,6 @@ start:
                     }
                     else
                     {
-                        // 下拉到最新，清空恢复空行
                         handle.history_current = handle.history_count;
                         rt_memset(handle.line, 0, CLI_CMD_BUFFER_SIZE);
                         handle.line_position = 0;
@@ -140,7 +139,7 @@ start:
                     }
                     continue;
 
-                case 0x44: // ←
+                case 0x44:
                     if (handle.line_curpos > 0)
                     {
                         rt_kprintf("\033[D");
@@ -148,7 +147,7 @@ start:
                     }
                     continue;
 
-                case 0x43: // →
+                case 0x43:
                     if (handle.line_curpos < handle.line_position)
                     {
                         rt_kprintf("\033[C");
@@ -160,11 +159,9 @@ start:
             }
         }
 
-        // 无效字符过滤
         if (ch == '\0' || ch == 0xFF)
             continue;
 
-        // 退格: BACKSPACE(0x08) / DEL(0x7f)
         if (ch == 0x7f || ch == 0x08)
         {
             if (handle.line_curpos == 0)
@@ -173,18 +170,15 @@ start:
             handle.line_curpos--;
             handle.line_position--;
 
-            // 内存前移删除字符
             rt_memmove(&handle.line[handle.line_curpos],
                        &handle.line[handle.line_curpos + 1],
                        handle.line_position - handle.line_curpos);
             handle.line[handle.line_position] = '\0';
 
-            // ANSI刷新，消除残影，替代原有 \b 方案
             CLI_handle_history(prompt);
             continue;
         }
 
-        // 回车
         if (ch == '\r' || ch == '\n')
         {
             CLI_push_history();
@@ -197,31 +191,26 @@ start:
             buffer[buffer_size - 1] = '\0';
             int len = handle.line_position;
 
-            // 清空行缓存
             rt_memset(handle.line, 0, CLI_CMD_BUFFER_SIZE);
             handle.line_curpos = handle.line_position = 0;
             return len;
         }
 
-        // Ctrl+D 退出CLI readline，返回0
         if (ch == 0x04)
         {
             return 0;
         }
 
-        // Tab预留自动补全入口
         if (ch == '\t')
         {
             continue;
         }
 
-        // 缓冲区满拒绝输入
         if (handle.line_position >= (CLI_CMD_BUFFER_SIZE - 1))
         {
             continue;
         }
 
-        // 在光标位置插入字符
         if (handle.line_curpos < handle.line_position)
         {
             rt_memmove(&handle.line[handle.line_curpos + 1],
@@ -233,11 +222,14 @@ start:
         handle.line_position++;
         handle.line[handle.line_position] = '\0';
 
-        // 刷新当前行
         CLI_handle_history(prompt);
     }
 }
 
+/*
+ * @brief CLI 工作线程：读取用户输入 -> 发送到 message hub -> 获取结果
+ * @param p 线程参数（未使用）
+ */
 static void CLI_run(void *p)
 {
     char input_buffer[CLI_CMD_BUFFER_SIZE] = {0};
@@ -254,7 +246,6 @@ static void CLI_run(void *p)
         return;
     }
 
-    // 保存原始回调
     handle.rx_indicate = handle.device->rx_indicate;
     rt_device_set_rx_indicate(handle.device, CLI_rxcb);
 
@@ -272,11 +263,10 @@ static void CLI_run(void *p)
         else if (length > 0)
         {
             input_messages = messages_create(0);
-            messages_append(input_messages,TYPE_TEXT,input_buffer);
+            messages_append(input_messages, TYPE_TEXT, input_buffer);
 
             if (input_messages == RT_NULL)
             {
-
                 LOG_E("messages_create fail");
                 continue;
             }
@@ -287,18 +277,15 @@ static void CLI_run(void *p)
 
             output_message = handle.message_hub->get_message(handle.message_hub,
                                                              handle.message_hub->output_mailbox);
-            /* 上层处理output_message */
 
             rt_kprintf("\n");
             messages_destroy(input_messages);
             messages_destroy(output_message);
         }
 
-        /* reset input_buffer */
         rt_memset(input_buffer, 0, sizeof(input_buffer));
     }
 
-    // 资源恢复
     rt_device_set_rx_indicate(handle.device, handle.rx_indicate);
     if (handle.sem_inited)
     {
@@ -310,21 +297,24 @@ static void CLI_run(void *p)
     handle.thread_running = RT_FALSE;
 }
 
-int AgentCLIChannel(MessageHub_t message_hub, Context_t context)
+/*
+ * @brief CLI 通道初始化
+ * @param message_hub 消息中心句柄
+ * @param context     上下文管理器句柄
+ * @return RT_EOK 成功
+ */
+int agent_cli_channel(MessageHub_t message_hub, Context_t context)
 {
-    // 如果线程已经运行，禁止重复启动
     if (handle.thread_running == RT_TRUE)
     {
         LOG_W("CLI channel already running!");
         return RT_EOK;
     }
 
-    // 重置CLI状态
     rt_memset(&handle, 0x00, sizeof(CLI_channel));
     handle.message_hub = message_hub;
     handle.stat = CLI_WAIT_NORMAL;
 
-    // 初始化信号量
     rt_err_t sem_ret = rt_sem_init(&(handle.rx_sem), "CLI_rxsem", 0, RT_IPC_FLAG_FIFO);
     if (sem_ret != RT_EOK)
     {
@@ -333,7 +323,6 @@ int AgentCLIChannel(MessageHub_t message_hub, Context_t context)
     }
     handle.sem_inited = RT_TRUE;
 
-    // 计算线程优先级
 #if defined(RT_VERSION_CHECK) && (RTTHREAD_VERSION >= RT_VERSION_CHECK(5, 1, 0))
     rt_uint8_t prio = RT_SCHED_PRIV(rt_thread_self()).current_priority + 1;
 #else
@@ -341,10 +330,10 @@ int AgentCLIChannel(MessageHub_t message_hub, Context_t context)
 #endif
 
     rt_err_t result = rt_thread_init(&handle.thread,
-                                    "CLI_channel",
-                                    CLI_run, RT_NULL,
-                                    handle.thread_stack, sizeof(handle.thread_stack),
-                                    prio, 10);
+                                     "CLI_channel",
+                                     CLI_run, RT_NULL,
+                                     handle.thread_stack, sizeof(handle.thread_stack),
+                                     prio, 10);
     if (result != RT_EOK)
     {
         if (handle.sem_inited)
