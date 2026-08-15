@@ -48,22 +48,22 @@ static int agent_send_message(int argc, char *argv[])   // 修正参数顺序及
     char *content = argv[2];
 
     // 4. 创建输入消息
-    Message_t input_message = message_create(msg_type, content, 1);
-    if (input_message == RT_NULL) {
+    Messages_t input_messages = message_create(msg_type, content, 1);
+    if (input_messages == RT_NULL) {
         return -1;
     }
 
     // 5. 将输入消息放入输入邮箱（假设 put_message 原型为 int put_message(MessageHub_t, void*, Message_t)）
-    rt_err_t ret = g_message_hub->put_message(g_message_hub, input_message, g_message_hub->input_mailbox);
+    rt_err_t ret = g_message_hub->put_message(g_message_hub, input_messages, g_message_hub->input_mailbox);
     if (ret == RT_ERROR) {
-        message_destroy(input_message);
+        messages_destroy(input_messages);
         return -1;
     }
 
     // 6. 从输出邮箱获取响应消息（若暂无消息，可能阻塞或立即返回 NULL，取决于具体实现）
     //    此处简单处理：若返回 NULL，视为失败，但输入消息已发出，需根据业务决定是否继续等待。
     //    为保持简单，若输出为 NULL 仍销毁输入并返回 -1，但也可选择等待机制。
-    Message_t output_message = g_message_hub->get_message(g_message_hub, g_message_hub->output_mailbox);
+    Messages_t output_message = g_message_hub->get_message(g_message_hub, g_message_hub->output_mailbox);
 
     // 7. 销毁输入消息（无论是否获得输出）
     message_destroy(input_message);

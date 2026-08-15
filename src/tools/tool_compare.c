@@ -5,9 +5,9 @@ void tool_compare(cJSON* args_obj, AgentToolNode_t node)
     // 1. 参数校验
     if (!args_obj || !node) {
         if (node) {
-            if (node->ret.message) {
-                message_destroy(node->ret.message);
-                node->ret.message = RT_NULL;
+            if (node->ret.messages) {
+                messages_destroy(node->ret.messages);
+                node->ret.messages = RT_NULL;
             }
             node->ret.ret = RT_ERROR;
         }
@@ -15,9 +15,9 @@ void tool_compare(cJSON* args_obj, AgentToolNode_t node)
     }
 
     // 2. 释放旧消息
-    if (node->ret.message) {
-        message_destroy(node->ret.message);
-        node->ret.message = RT_NULL;
+    if (node->ret.messages) {
+        messages_destroy(node->ret.messages);
+        node->ret.messages = RT_NULL;
     }
 
     // 3. 解析参数
@@ -43,7 +43,8 @@ void tool_compare(cJSON* args_obj, AgentToolNode_t node)
     }
 
     // 5. 创建消息
-    node->ret.message = message_create(TYPE_TEXT, ret_buffer, 1);
-    node->ret.ret = (node->ret.message) ? RT_EOK : RT_ERROR;
+    node->ret.messages = messages_create(1);
+    messages_append(node->ret.messages,TYPE_TEXT,ret_buffer);
+    node->ret.ret = (node->ret.messages) ? RT_EOK : RT_ERROR;
 
 }

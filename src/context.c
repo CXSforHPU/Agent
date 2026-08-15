@@ -90,13 +90,12 @@ self->payload
     ]
 }
 */
-static rt_err_t __append_user_message(Context_t self, Message_t message)
+static rt_err_t __append_user_message(Context_t self, Messages_t messages)
 {
     cJSON* user_message = RT_NULL;
     cJSON* content_obj = RT_NULL;
-    rt_err_t rc = RT_EOK;
 
-    if (!self || !message || !self->message) {
+    if (!self || !messages || !self->message) {
         return -RT_EINVAL;
     }
 
@@ -106,7 +105,7 @@ static rt_err_t __append_user_message(Context_t self, Message_t message)
     }
     cJSON_AddStringToObject(user_message, "role", Role(ROLE_USER));
 
-    content_obj = to_content(message);
+    content_obj = to_content(messages);
 
     cJSON_AddItemToObject(user_message,"content",content_obj);
 
@@ -215,7 +214,7 @@ self->payload
     }
 ]
 */
-static rt_err_t __append_tool_message(Context_t self,const char* tool_call_id,Message_t message){
+static rt_err_t __append_tool_message(Context_t self,const char* tool_call_id,Messages_t message){
     cJSON* tool_msg = cJSON_CreateObject();
     cJSON* content_obj = RT_NULL;
     cJSON_AddStringToObject(tool_msg, "role", Role(ROLE_TOOL));

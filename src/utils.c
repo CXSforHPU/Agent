@@ -82,9 +82,9 @@ cJSON* create_content_array()
 非多模态
 {"content":"xxx"}
  */
-cJSON* to_content(Message_t message)
+cJSON* to_content(Messages_t messages)
 {
-    if (!message) {
+    if (!messages) {
         return RT_NULL;
     }
 
@@ -94,8 +94,9 @@ cJSON* to_content(Message_t message)
     if (!content_obj) {
         return RT_NULL;
     }
-    if (message->content) {
-        cJSON_AddStringToObject(content_obj, "content", message->content);
+
+    if (messages_get_content_idx(messages,0)) {
+        cJSON_AddStringToObject(content_obj, "content", messages_get_content_idx(messages,0));
     }
     return content_obj;
 
@@ -106,19 +107,17 @@ cJSON* to_content(Message_t message)
         return RT_NULL;
     }
 
-    Message_t p = message;
-    for (int i = 0; i < p->size; i++) {
-        Message_t item = &p[i];
-        if (!item->content) {
+    for (int i = 0; i < messages->current_size; i++) {
+        if (messages_get_content_idx(messages,i)) {
             continue;
         }
 
-        switch (item->message_type) {
+        switch (messages_get_type_idx(messages,i)) {
             case TYPE_TEXT: {
                 cJSON* text = cJSON_CreateObject();
                 if (!text) continue;
                 cJSON_AddStringToObject(text, "type", get_agent_content_type(TYPE_TEXT));
-                cJSON_AddStringToObject(text, get_agent_content_type(TYPE_TEXT), item->content);
+                cJSON_AddStringToObject(text, get_agent_content_type(TYPE_TEXT),messages_get_content_idx(messages,i));
                 cJSON_AddItemToArray(content_arr, text);
                 break;
             }
@@ -127,11 +126,11 @@ cJSON* to_content(Message_t message)
             case TYPE_IMAGE:
             case TYPE_VIDEO: {
                 char out_url[128] = {0};
-                const char* uploaded_url = agent_up_load(item->content);
+                const char* uploaded_url = agent_up_load(messages_get_content_idx(messages,i));
                 if (!uploaded_url || uploaded_url[0] == '\0') {
                     LOG_E("[agent] %s upload fail, skip item",
-                          (item->message_type == TYPE_AUDIO) ? "audio" :
-                          (item->message_type == TYPE_IMAGE) ? "image" : "video");
+                          (messages_get_type_idx(messages,i) == TYPE_AUDIO) ? "audio" :
+                          (messages_get_type_idx(messages,i) == TYPE_IMAGE) ? "image" : "video");
                     continue;
                 }
                 rt_strncpy(out_url, uploaded_url, sizeof(out_url) - 1);
@@ -145,7 +144,7 @@ cJSON* to_content(Message_t message)
                     continue;
                 }
 
-                const char* type_str = get_agent_content_type(item->message_type);
+                const char* type_str = get_agent_content_type(messages_get_type_idx(messages,i));
                 cJSON_AddStringToObject(media, "type", type_str);
                 cJSON_AddStringToObject(url_obj, "url", out_url);
                 cJSON_AddItemToObject(media, type_str, url_obj);
@@ -154,7 +153,7 @@ cJSON* to_content(Message_t message)
             }
 
             default:
-                LOG_E("[agent] unknown message_type:%d, skip", item->message_type);
+                LOG_E("[agent] unknown message_type:%d, skip", messages_get_type_idx(messages,i));
                 break;
         }
     }

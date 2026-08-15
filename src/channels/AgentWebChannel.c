@@ -409,7 +409,7 @@ static void cgi_chat_handler(struct webnet_session *session)
     cJSON *item;
     char *user_message = RT_NULL;
     const char *ai_reply;
-    Message_t input_message = RT_NULL;
+    Messages_t input_messages = messages_create(1);
     Message_t output_message = RT_NULL;
     rt_bool_t stream_mode = RT_FALSE;
 
@@ -489,27 +489,28 @@ static void cgi_chat_handler(struct webnet_session *session)
         goto cleanup;
     }
 
-    input_message = message_create(TYPE_TEXT, user_message, 1);
-    if (input_message == RT_NULL)
+    messages_append(input_messages,TYPE_TEXT,user_message);
+
+    if (input_messages == RT_NULL)
     {
         send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
                          "error", "Failed to create input message");
         goto cleanup;
     }
 
-    message_hub->put_message(message_hub, input_message,
+    message_hub->put_message(message_hub, input_messages,
                              message_hub->input_mailbox);
     output_message = message_hub->get_message(message_hub,
                                               message_hub->output_mailbox);
 
-    if (output_message == RT_NULL || output_message->content == RT_NULL)
+    if (output_message == RT_NULL || messages_get_content_idx(output_message,0); == RT_NULL)
     {
         send_simple_json(session, 502, "Bad Gateway", RT_FALSE,
                          "error", "LLM response failed");
         goto cleanup;
     }
 
-    ai_reply = output_message->content;
+    ai_reply = messages_get_content_idx(output_message,0);;
 
     if (stream_mode)
     {
@@ -529,14 +530,14 @@ static void cgi_chat_handler(struct webnet_session *session)
     send_simple_json(session, 200, "OK", RT_TRUE, "response", ai_reply);
 
 cleanup:
-    /* output_message owns output_message->content; do not free ai_reply separately. */
+    /* output_message owns   messages_get_content_idx(output_message,0); do not free ai_reply separately. */
     if (output_message != RT_NULL)
     {
-        message_destroy(output_message);
+        messages_destroy(output_message);
     }
-    if (input_message != RT_NULL)
+    if (input_messages != RT_NULL)
     {
-        message_destroy(input_message);
+        messages_destroy(input_messages);
     }
     if (request_json != RT_NULL)
     {

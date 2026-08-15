@@ -23,12 +23,20 @@ typedef enum MessageType
 } MessageType;
 
 /* 消息结构 */
-typedef struct Message
+typedef struct MessageItem
 {
     MessageType message_type;
     char *content;
-    int size; //多模态使用数组时，计数使用
-} Message, *Message_t;
+}MessageItem, *MessageItem_t;
+
+typedef struct Messages
+{
+    MessageItem_t message_ptr;
+    int max_size;
+    int current_size;
+}Messages,*Messages_t;
+
+
 
 /* 消息中心结构 */
 typedef struct MessageHub
@@ -38,19 +46,22 @@ typedef struct MessageHub
     rt_mailbox_t output_mailbox;
 
     /* 方法 */
-    rt_err_t (*put_message)(struct MessageHub *self, Message_t message,rt_mailbox_t mb);
-    Message_t (*get_message)(struct MessageHub *self,rt_mailbox_t mb);
+    rt_err_t (*put_message)(struct MessageHub *self, Messages_t message,rt_mailbox_t mb);
+    Messages_t (*get_message)(struct MessageHub *self,rt_mailbox_t mb);
 } MessageHub, *MessageHub_t;
 
 /* 函数声明 */
 MessageHub_t MessageHub_create(void);
 void MessageHub_destroy(MessageHub_t hub);
-rt_err_t MessageHub_put(MessageHub_t hub, Message_t message,rt_mailbox_t mb);
-Message_t MessageHub_get(MessageHub_t hub,rt_mailbox_t mb);
+rt_err_t MessageHub_put(MessageHub_t hub, Messages_t message,rt_mailbox_t mb);
+Messages_t MessageHub_get(MessageHub_t hub,rt_mailbox_t mb);
 
 /* 创建消息 */
-Message_t message_create(MessageType message_type,char *content,int size);
-void message_destroy(Message_t message);
+Messages_t messages_create(int max_size);
+rt_err_t messages_append(Messages_t messages,MessageType message_type,const char* content);
+void messages_destroy(Messages_t messages);
+MessageType messages_get_type_idx(Messages_t messages,int idx);
+char* messages_get_content_idx(Messages_t messages,int idx);
 /* 获取消息类型 */
 char* get_agent_content_type(MessageType message_type);
 

@@ -242,8 +242,8 @@ static void CLI_run(void *p)
 {
     char input_buffer[CLI_CMD_BUFFER_SIZE] = {0};
     const char *device_name = RT_CONSOLE_DEVICE_NAME;
-    Message_t input_message = RT_NULL;
-    Message_t output_message = RT_NULL;
+    Messages_t input_messages = RT_NULL;
+    Messages_t output_message = RT_NULL;
 
     handle.thread_running = RT_TRUE;
     handle.device = rt_device_find(device_name);
@@ -271,18 +271,18 @@ static void CLI_run(void *p)
         }
         else if (length > 0)
         {
+            input_messages = messages_create(0);
+            messages_append(input_messages,TYPE_TEXT,input_buffer);
 
-            input_message = message_create(TYPE_TEXT, input_buffer,1);
-
-            if (input_message == RT_NULL)
+            if (input_messages == RT_NULL)
             {
 
-                LOG_E("message_create fail");
+                LOG_E("messages_create fail");
                 continue;
             }
 
             handle.message_hub->put_message(handle.message_hub,
-                                            input_message,
+                                            input_messages,
                                             handle.message_hub->input_mailbox);
 
             output_message = handle.message_hub->get_message(handle.message_hub,
@@ -290,8 +290,8 @@ static void CLI_run(void *p)
             /* 上层处理output_message */
 
             rt_kprintf("\n");
-            message_destroy(input_message);
-            message_destroy(output_message);
+            messages_destroy(input_messages);
+            messages_destroy(output_message);
         }
 
         /* reset input_buffer */

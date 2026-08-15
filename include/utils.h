@@ -13,7 +13,7 @@
 
 cJSON* format_text(const char* text);
 cJSON* create_content_array();
-cJSON* to_content(Message_t message);
+cJSON* to_content(Messages_t message);
 
 void print_reasoning(const char* text);
 void print_tool_call(const char* text);

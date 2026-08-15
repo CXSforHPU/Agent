@@ -34,7 +34,7 @@ typedef struct AgentToolRet
 {
     /* data */
     rt_err_t ret;
-    Message_t message;
+    Messages_t messages;
 }AgentToolRet,*AgentToolRet_t;
 
 

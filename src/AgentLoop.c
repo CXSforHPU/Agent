@@ -41,7 +41,7 @@ static void AgentLoop(Context_t g_context,
     const int loop_max = 10;
     int loop_cnt = 0;
     ChatResponse_t resp = RT_NULL;
-    Message_t assistant_message = RT_NULL;
+    Messages_t assistant_messages = RT_NULL;
 
     while (loop_cnt < loop_max)
     {
@@ -59,10 +59,11 @@ static void AgentLoop(Context_t g_context,
             g_context->append_assistant_message(g_context,resp);
 
             /* 复制内容到新消息，避免resp释放后悬空指针 */
-            assistant_message = message_create(TYPE_TEXT, resp->context, 1);
-            if (assistant_message)
+            assistant_messages = messages_create(1);
+            messages_append(assistant_messages,TYPE_TEXT,resp->context);
+            if (assistant_messages)
             {
-                g_message_hub->put_message(g_message_hub, assistant_message, g_message_hub->output_mailbox);
+                g_message_hub->put_message(g_message_hub, assistant_messages, g_message_hub->output_mailbox);
             }
             chat_response_free(resp);
             resp = RT_NULL;
@@ -101,7 +102,6 @@ static void AgentLoop(Context_t g_context,
             const char* func_name = name_node->valuestring;
             const char* args_str = args_node->valuestring;
             const char* id_str = id_node->valuestring;
-            int message_size = 0;
 
             // Parse tool arguments
             cJSON* args_json = cJSON_Parse(args_str);
@@ -113,18 +113,15 @@ static void AgentLoop(Context_t g_context,
 
             tool_node->execute_func(args_json,tool_node);
 
-            message_size = tool_node->ret.message->size;
-            for (int i = 0; i < message_size;i++)
+            Messages_t tool_ret_messages = tool_node->ret.messages;
+            for (int i = 0; i < tool_ret_messages->max_size;i++)
             {
-                Message_t item = &tool_node->ret.message[i];
-                char* result_str = item->content;
-                char* type = get_agent_content_type(item->message_type);
-                LOG_I("[Local Tool %s Execution Result] type %s,result %s\n", func_name,type,result_str);
+                LOG_I("[Local Tool %s Execution Result] type %s,result %s\n", func_name,messages_get_type_idx(tool_ret_messages,i),messages_get_content_idx(tool_ret_messages,i));
             }
 
             // Append tool response message
 
-            g_context->append_tool_message(g_context,id_str,tool_node->ret.message);
+            g_context->append_tool_message(g_context,id_str,tool_ret_messages);
 
 
             cJSON_Delete(args_json);
@@ -147,14 +144,14 @@ static void MainLoop(void* param){
     g_agent_running = RT_TRUE;
     while (g_agent_running)
     {
-        Message_t message = g_message_hub->get_message(g_message_hub,g_message_hub->input_mailbox);
+        Messages_t messages = g_message_hub->get_message(g_message_hub,g_message_hub->input_mailbox);
         /* RT_NULL 为 CleanupAgent 发出的唤醒信号，回 while 检查 g_agent_running */
-        if (message == RT_NULL)
+        if (messages == RT_NULL)
         {
             continue;
         }
         /* 消息由channel创建，context内部会复制内容，channel负责释放原消息 */
-        g_context->append_user_message(g_context,message);
+        g_context->append_user_message(g_context,messages);
 
         AgentLoop(g_context,GetAgentTools(),print_reasoning,print_tool_call,print_context);
         /* 裁剪上下文，保留system prompt + 最近6条消息，防止无限膨胀 */
