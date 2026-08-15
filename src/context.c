@@ -168,6 +168,12 @@ Context_t agent_context_create(void)
         return RT_NULL;
     }
     context->message = cJSON_CreateArray();
+    if (context->message == RT_NULL)
+    {
+        LOG_E("context message create failed.");
+        rt_free(context);
+        return RT_NULL;
+    }
 
     context->build_system_prompt = __build_system_prompt;
     context->append_user_message = __append_user_message;

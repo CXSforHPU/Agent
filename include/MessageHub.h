@@ -56,6 +56,15 @@ void message_hub_destroy(MessageHub_t hub);
 rt_err_t message_hub_put(MessageHub_t hub, Messages_t message, rt_mailbox_t mb);
 Messages_t message_hub_get(MessageHub_t hub, rt_mailbox_t mb);
 
+/*
+ * @brief 带超时的消息接收（供通道做可中断的输出等待）
+ * @param hub     消息中心句柄
+ * @param mb      源 mailbox
+ * @param timeout 超时时间（tick），RT_WAITING_NO 表示不等待
+ * @return 超时返回 NULL，成功返回消息数组指针
+ */
+Messages_t message_hub_get_timeout(MessageHub_t hub, rt_mailbox_t mb, rt_int32_t timeout);
+
 /* 创建消息 */
 Messages_t messages_create(int max_size);
 rt_err_t messages_append(Messages_t messages, MessageType message_type, const char *content);

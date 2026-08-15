@@ -2,6 +2,9 @@
 
 static CLI_channel_t g_handle = RT_NULL;
 
+/* CLI 通道 ops 实例（init=agent_cli_channel, reset=agent_cli_stop） */
+AgentChannelOps agent_cli_ops = { agent_cli_channel, agent_cli_stop };
+
 /*
  * @brief 阻塞获取一个字符
  * @return 读取到的字符
@@ -255,6 +258,8 @@ static void CLI_run(void *p)
         LOG_D("The msh device find failed.");
         handle->thread_running = RT_FALSE;
         handle->thread = RT_NULL;
+        /* 通知 agent_cli_stop 线程已完全退出，避免其等待 exit_sem 卡死 */
+        rt_sem_release(handle->exit_sem);
         return;
     }
 
@@ -275,24 +280,46 @@ static void CLI_run(void *p)
         else if (length > 0)
         {
             input_messages = messages_create(0);
-            messages_append(input_messages, TYPE_TEXT, input_buffer);
-
             if (input_messages == RT_NULL)
             {
                 LOG_E("messages_create fail");
                 continue;
             }
+            if (messages_append(input_messages, TYPE_TEXT, input_buffer) != RT_EOK)
+            {
+                LOG_E("messages_append fail");
+                messages_destroy(input_messages);
+                continue;
+            }
 
-            handle->message_hub->put_message(handle->message_hub,
-                                             input_messages,
-                                             handle->message_hub->input_mailbox);
+            /* 所有权移交：put 成功后由 main_loop 消费并释放，此处不得销毁 */
+            if (handle->message_hub->put_message(handle->message_hub,
+                                                 input_messages,
+                                                 handle->message_hub->input_mailbox) != RT_EOK)
+            {
+                LOG_E("put input message fail");
+                messages_destroy(input_messages);
+                continue;
+            }
 
-            output_message = handle->message_hub->get_message(handle->message_hub,
-                                                              handle->message_hub->output_mailbox);
+            /* 可中断的输出等待：agent 停止时能及时退出，避免清理卡死 */
+            output_message = RT_NULL;
+            while (handle->thread_running)
+            {
+                output_message = message_hub_get_timeout(handle->message_hub,
+                                                         handle->message_hub->output_mailbox,
+                                                         rt_tick_from_millisecond(100));
+                if (output_message != RT_NULL)
+                {
+                    break;
+                }
+            }
 
             rt_kprintf("\n");
-            messages_destroy(input_messages);
-            messages_destroy(output_message);
+            if (output_message)
+            {
+                messages_destroy(output_message);
+            }
         }
 
         rt_memset(input_buffer, 0, sizeof(input_buffer));
@@ -310,21 +337,42 @@ static void CLI_run(void *p)
 }
 
 /*
- * @brief 停止 CLI 通道线程并等待退出
+ * @brief 停止 CLI 通道线程并等待退出，随后释放句柄与信号量（幂等）
+ * @note 作为 AgentChannelOps.reset 实现，用于清理流程，
+ *       确保线程不再访问 message_hub / context
  */
 void agent_cli_stop(void)
 {
     CLI_channel_t handle = g_handle;
-    if (handle == RT_NULL || handle->thread_running != RT_TRUE)
+    if (handle == RT_NULL)
+    {
         return;
+    }
 
-    handle->thread_running = RT_FALSE;
+    /* 线程运行中：请求停止并唤醒可能阻塞在 CLI_getc() 中 rx_sem 上的线程 */
+    if (handle->thread_running == RT_TRUE)
+    {
+        handle->thread_running = RT_FALSE;
+        rt_sem_release(handle->rx_sem);
+    }
 
-    /* 唤醒可能阻塞在 CLI_getc() 中 rx_sem 上的线程 */
-    rt_sem_release(handle->rx_sem);
-
-    /* 等待线程实际退出（CLI_run 退出时会 release exit_sem） */
+    /* 等待线程实际退出（CLI_run 最后一步才 release exit_sem；
+       线程已退出（如用户 CTRL+D 自行退出）时立即返回） */
     rt_sem_take(handle->exit_sem, RT_WAITING_FOREVER);
+
+    /* 线程已完全退出，安全释放句柄与信号量（先置空全局，防 rx 回调竞态） */
+    g_handle = RT_NULL;
+    if (handle->rx_sem)
+    {
+        rt_sem_delete(handle->rx_sem);
+        handle->rx_sem = RT_NULL;
+    }
+    if (handle->exit_sem)
+    {
+        rt_sem_delete(handle->exit_sem);
+        handle->exit_sem = RT_NULL;
+    }
+    rt_free(handle);
 
     LOG_I("CLI channel stopped");
 }
@@ -339,6 +387,12 @@ int agent_cli_channel(MessageHub_t message_hub, Context_t context)
 {
     CLI_channel_t handle = g_handle;
 
+    if (message_hub == RT_NULL || context == RT_NULL)
+    {
+        LOG_E("CLI channel requires valid message_hub and context");
+        return -RT_EINVAL;
+    }
+
     /* 如果已有运行中的实例，先停止 */
     if (handle != RT_NULL && handle->thread_running == RT_TRUE)
     {
@@ -346,16 +400,10 @@ int agent_cli_channel(MessageHub_t message_hub, Context_t context)
         return RT_EOK;
     }
 
-    /* 清理旧实例 */
+    /* 清理旧实例（兜底：正常情况下 agent_cli_stop 已释放句柄） */
     if (handle != RT_NULL)
     {
-        if (handle->rx_sem)
-            rt_sem_delete(handle->rx_sem);
-        if (handle->exit_sem)
-            rt_sem_delete(handle->exit_sem);
-        /* 动态线程退出后空闲线程自动清理，无需手动 rt_thread_delete */
-        rt_free(handle);
-        g_handle = RT_NULL;
+        agent_cli_stop();
     }
 
     handle = (CLI_channel_t)rt_malloc(sizeof(CLI_channel));

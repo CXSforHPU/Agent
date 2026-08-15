@@ -164,11 +164,46 @@ cJSON *get_agent_tools(void)
 }
 
 /*
- * @brief 释放工具节点
+ * @brief 释放工具节点（仅释放节点自身与 ret.messages）
+ * @note tool_obj 的所有权在 build_tools_json 时已移交给 AgentTools 数组，
+ *       由 agent_tool_list_destroy 统一释放，此处不得再 cJSON_Delete(tool_obj)
  * @param node 要释放的节点
  */
 void free_agent_tool_node(AgentToolNode_t node)
 {
-    cJSON_Delete(node->tool_obj);
+    if (!node)
+    {
+        return;
+    }
+    if (node->ret.messages)
+    {
+        messages_destroy(node->ret.messages);
+        node->ret.messages = RT_NULL;
+    }
     rt_free(node);
+}
+
+/*
+ * @brief 销毁整个工具链表（含 AgentTools 数组及各节点残留的 ret.messages）
+ * @note 工具链为全局单例，仅在 agent 清理（cleanup_agent）时调用；
+ *       调用后需复位 tool_func 的注册标志，再次进入时重新注册
+ */
+void agent_tool_list_destroy(void)
+{
+    AgentToolNode_t p = head;
+    AgentToolNode_t next = RT_NULL;
+
+    while (p != RT_NULL)
+    {
+        next = p->next;
+        free_agent_tool_node(p);
+        p = next;
+    }
+    head = RT_NULL;
+
+    if (AgentTools)
+    {
+        cJSON_Delete(AgentTools);
+        AgentTools = RT_NULL;
+    }
 }

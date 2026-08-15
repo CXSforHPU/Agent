@@ -190,7 +190,22 @@ MessageHub_t message_hub_create(void)
     }
 
     hub->input_mailbox = rt_mb_create(MESSAGE_HUB_INPUT_NAME, MESSAGE_HUB_INPUT_MAILBOX_SIZE, RT_IPC_FLAG_FIFO);
+    if (hub->input_mailbox == RT_NULL)
+    {
+        rt_free(hub);
+        return RT_NULL;
+    }
+
     hub->output_mailbox = rt_mb_create(MESSAGE_HUB_OUTPUT_NAME, MESSAGE_HUB_OUTPUT_MAILBOX_SIZE, RT_IPC_FLAG_FIFO);
+    if (hub->output_mailbox == RT_NULL)
+    {
+        /* 回滚已创建的输入 mailbox，避免部分失败泄漏 */
+        rt_mb_delete(hub->input_mailbox);
+        hub->input_mailbox = RT_NULL;
+        rt_free(hub);
+        return RT_NULL;
+    }
+
     hub->put_message = _put_message;
     hub->get_message = _get_message;
 
@@ -198,23 +213,42 @@ MessageHub_t message_hub_create(void)
 }
 
 /*
- * @brief 销毁消息中心
+ * @brief 销毁消息中心（删除前排空 mailbox，释放残留消息）
  * @param hub 消息中心句柄
  */
 void message_hub_destroy(MessageHub_t hub)
 {
+    Messages_t pending = RT_NULL;
+
     if (hub == RT_NULL)
     {
         return;
     }
 
+    /* 排空可能仍含待处理 Messages_t 的 mailbox，避免消息泄漏 */
     if (hub->input_mailbox != RT_NULL)
     {
+        while (rt_mb_recv(hub->input_mailbox, (rt_ubase_t *)&pending, RT_WAITING_NO) == RT_EOK)
+        {
+            if (pending != RT_NULL)
+            {
+                messages_destroy(pending);
+            }
+        }
         rt_mb_delete(hub->input_mailbox);
+        hub->input_mailbox = RT_NULL;
     }
     if (hub->output_mailbox != RT_NULL)
     {
+        while (rt_mb_recv(hub->output_mailbox, (rt_ubase_t *)&pending, RT_WAITING_NO) == RT_EOK)
+        {
+            if (pending != RT_NULL)
+            {
+                messages_destroy(pending);
+            }
+        }
         rt_mb_delete(hub->output_mailbox);
+        hub->output_mailbox = RT_NULL;
     }
 
     rt_free(hub);
@@ -250,4 +284,28 @@ Messages_t message_hub_get(MessageHub_t hub, rt_mailbox_t mb)
     }
 
     return hub->get_message(hub, mb);
+}
+
+/*
+ * @brief 带超时接收消息（供通道做可中断的输出等待）
+ * @param hub     消息中心句柄
+ * @param mb      源 mailbox
+ * @param timeout 超时时间（tick），RT_WAITING_NO 表示不等待
+ * @return 超时/失败返回 NULL，成功返回消息数组指针
+ */
+Messages_t message_hub_get_timeout(MessageHub_t hub, rt_mailbox_t mb, rt_int32_t timeout)
+{
+    Messages_t messages = RT_NULL;
+
+    if (hub == RT_NULL || mb == RT_NULL)
+    {
+        return RT_NULL;
+    }
+
+    if (rt_mb_recv(mb, (rt_ubase_t *)&messages, timeout) != RT_EOK)
+    {
+        return RT_NULL;
+    }
+
+    return messages;
 }

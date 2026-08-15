@@ -8,6 +8,29 @@ static Context_t context = RT_NULL;
 static rt_bool_t webnet_started = RT_FALSE;
 
 /*
+ * @brief WebNet 通道 ops.init 包装（统一返回 int）
+ */
+static int webnet_agent_channel_init(MessageHub_t hub, Context_t ctx)
+{
+    webnet_agent_mode(hub, ctx);
+    return RT_EOK;
+}
+
+/*
+ * @brief WebNet 通道清理（置空缓存的 hub/context 指针，幂等）
+ * @note 作为 AgentChannelOps.reset 实现，用于清理流程；
+ *       CGI 已带 NULL 检查，会返回 "Message hub is unavailable" 而非访问已释放内存
+ */
+void agent_webnet_reset(void)
+{
+    message_hub = RT_NULL;
+    context = RT_NULL;
+}
+
+/* WebNet 通道 ops 实例（init=webnet_agent_channel_init, reset=agent_webnet_reset） */
+AgentChannelOps agent_webnet_ops = { webnet_agent_channel_init, agent_webnet_reset };
+
+/*
  * @brief 安全获取字符串（NULL 时返回空串）
  */
 static const char *safe_string(const char *value)
@@ -411,7 +434,7 @@ static void cgi_chat_handler(struct webnet_session *session)
     cJSON *item;
     char *user_message = RT_NULL;
     const char *ai_reply;
-    Messages_t input_messages = messages_create(1);
+    Messages_t input_messages = RT_NULL;
     Messages_t output_message = RT_NULL;
     rt_bool_t stream_mode = RT_FALSE;
 
@@ -491,19 +514,39 @@ static void cgi_chat_handler(struct webnet_session *session)
         goto cleanup;
     }
 
-    messages_append(input_messages, TYPE_TEXT, user_message);
-
+    input_messages = messages_create(1);
     if (input_messages == RT_NULL)
     {
         send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
                          "error", "Failed to create input message");
         goto cleanup;
     }
+    if (messages_append(input_messages, TYPE_TEXT, user_message) != RT_EOK)
+    {
+        send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
+                         "error", "Failed to append input message");
+        messages_destroy(input_messages);
+        input_messages = RT_NULL;
+        goto cleanup;
+    }
 
-    message_hub->put_message(message_hub, input_messages,
-                             message_hub->input_mailbox);
-    output_message = message_hub->get_message(message_hub,
-                                              message_hub->output_mailbox);
+    /* 所有权移交：put 成功后由 main_loop 消费并释放，此处不得销毁 */
+    if (message_hub->put_message(message_hub, input_messages,
+                                 message_hub->input_mailbox) != RT_EOK)
+    {
+        send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
+                         "error", "Failed to enqueue input message");
+        messages_destroy(input_messages);
+        input_messages = RT_NULL;
+        goto cleanup;
+    }
+    /* 所有权已移交 main_loop，本地置空防止误释放 */
+    input_messages = RT_NULL;
+
+    /* 可中断的输出等待：agent 停止/对话失败时超时返回 NULL */
+    output_message = message_hub_get_timeout(message_hub,
+                                             message_hub->output_mailbox,
+                                             rt_tick_from_millisecond(30000));
 
     if (output_message == RT_NULL || messages_get_content_idx(output_message, 0) == RT_NULL)
     {
@@ -535,6 +578,8 @@ cleanup:
     {
         messages_destroy(output_message);
     }
+    /* input_messages 成功入队后所有权已移交 main_loop（本地已置空），
+       仅早期失败路径残留时在此兜底释放 */
     if (input_messages != RT_NULL)
     {
         messages_destroy(input_messages);

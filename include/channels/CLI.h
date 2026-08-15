@@ -4,6 +4,7 @@
 #include "MessageHub.h"
 #include "context.h"
 #include "shell.h"
+#include "AgentChannel.h"
 
 #define LOG_TAG "Agent.Channels.CLI"
 #define LOG_LVL LOG_LVL_INFO
@@ -53,9 +54,13 @@ typedef struct CLI_channel
 int agent_cli_channel(MessageHub_t message_hub, Context_t context);
 
 /*
- * @brief 停止 CLI 通道线程并等待退出
- * @note 用于清理流程，确保线程不再访问 message_hub
+ * @brief 停止 CLI 通道线程并等待退出，随后释放句柄与信号量（幂等）
+ * @note 作为 AgentChannelOps.reset 实现，用于清理流程，
+ *       确保线程不再访问 message_hub / context
  */
 void agent_cli_stop(void);
+
+/* CLI 通道 ops 实例（init=agent_cli_channel, reset=agent_cli_stop） */
+extern AgentChannelOps agent_cli_ops;
 
 #endif /* __AGENT_CLI_H__ */

@@ -89,6 +89,8 @@ ChatResponse_t chat(
         LOG_E("chat: webclient session create failed\n");
         goto __cleanup;
     }
+    /* 设置超时，避免网络卡死导致清理流程无限等待 */
+    webclient_set_timeout(webSession, 30000);
 
     /* 5. 构造请求 JSON */
     cJSON *payload_json = cJSON_CreateObject();
@@ -144,7 +146,12 @@ ChatResponse_t chat(
 
                     cJSON *json = cJSON_Parse(json_str);
                     if (!json)
+                    {
+                        /* 解析失败：复位行缓冲，避免残留内容污染下一条 SSE 行 */
+                        stream_len = 0;
+                        rt_memset(stream_buffer, 0, sizeof(stream_buffer));
                         continue;
+                    }
 
                     cJSON *choices = cJSON_GetObjectItemCaseSensitive(json, "choices");
                     if (choices && cJSON_IsArray(choices))

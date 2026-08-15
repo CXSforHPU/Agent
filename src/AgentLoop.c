@@ -13,6 +13,8 @@ static MessageHub_t g_message_hub = RT_NULL;
 static Context_t g_context = RT_NULL;
 static rt_thread_t g_main_agent_loop = RT_NULL;
 static rt_bool_t g_agent_running = RT_FALSE;
+/* 通道 ops 函数指针：init/reset 统一经此分发，宏选择只在 AgentChannels.h 一处 */
+static const AgentChannelOps *g_channel_ops = RT_NULL;
 
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
 static rt_thread_t g_file_op_thread = RT_NULL;
@@ -26,15 +28,35 @@ static rt_sem_t g_cleanup_sem = RT_NULL;
  */
 static void init_agent(void)
 {
+    g_channel_ops = AGENT_CHANNEL_OPS;
+
     init_tools();
     g_message_hub = message_hub_create();
     g_context = agent_context_create();
+
+    if (g_message_hub == RT_NULL || g_context == RT_NULL)
+    {
+        LOG_E("init_agent: message_hub/context create failed");
+        return;
+    }
 
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
     g_file_op_thread = agent_file_op_init();
 #endif
 
-    AGENT_CHANNEL_IMPL(g_message_hub, g_context);
+    if (g_channel_ops != RT_NULL && g_channel_ops->init != RT_NULL)
+    {
+        g_channel_ops->init(g_message_hub, g_context);
+    }
+
+#ifdef RT_USING_HEAP
+    {
+        rt_size_t heap_total = 0, heap_used = 0, heap_max_used = 0;
+        rt_memory_info(&heap_total, &heap_used, &heap_max_used);
+        LOG_I("[mem] agent started: heap total=%d, used=%d, max_used=%d",
+              (int)heap_total, (int)heap_used, (int)heap_max_used);
+    }
+#endif
 }
 
 /*
@@ -122,10 +144,16 @@ static void agent_loop(Context_t g_context,
             tool_node->execute_func(args_json, tool_node);
 
             Messages_t tool_ret_messages = tool_node->ret.messages;
+            /* 工具参数校验失败时 ret.messages 可能为 NULL */
+            if (tool_ret_messages == RT_NULL)
+            {
+                cJSON_Delete(args_json);
+                continue;
+            }
             for (int i = 0; i < tool_ret_messages->current_size; i++)
             {
                 LOG_I("[Local Tool %s Execution Result] type %s, result %s\n", func_name,
-                      messages_get_type_idx(tool_ret_messages, i),
+                      get_agent_content_type(messages_get_type_idx(tool_ret_messages, i)),
                       messages_get_content_idx(tool_ret_messages, i));
             }
 
@@ -151,6 +179,13 @@ static void agent_loop(Context_t g_context,
 static void main_loop(void *param)
 {
     init_agent();
+    /* init_agent 失败（hub/context 创建失败）时直接退出并清理 */
+    if (g_message_hub == RT_NULL || g_context == RT_NULL)
+    {
+        cleanup_agent();
+        return;
+    }
+
     g_agent_running = RT_TRUE;
     while (g_agent_running)
     {
@@ -162,6 +197,8 @@ static void main_loop(void *param)
         }
 
         g_context->append_user_message(g_context, messages);
+        /* 输入消息所有权在 main_loop（消费者），使用完毕后释放 */
+        messages_destroy(messages);
 
         agent_loop(g_context, get_agent_tools(), print_reasoning, print_tool_call, print_context);
 
@@ -209,21 +246,42 @@ static void signal_agent_stop(void)
 }
 
 /*
- * @brief 清理 agent 资源（消息中心、上下文、多模态线程）
+ * @brief 清理 agent 资源（通道、消息中心、上下文、工具、多模态线程）
  */
 static void cleanup_agent(void)
 {
+    /* 1. 先停止通道，防止其继续访问即将销毁的 message_hub（幂等） */
+    if (g_channel_ops != RT_NULL && g_channel_ops->reset != RT_NULL)
+    {
+        g_channel_ops->reset();
+    }
+
+    /* 2. 向输出 mailbox 发 NULL 哨兵，唤醒仍可能阻塞在输出等待的通道 */
+    if (g_message_hub != RT_NULL && g_message_hub->output_mailbox != RT_NULL)
+    {
+        rt_mb_send(g_message_hub->output_mailbox, (rt_ubase_t)RT_NULL);
+    }
+
+    /* 3. 销毁消息中心（内部会排空残留消息） */
     if (g_message_hub)
     {
         message_hub_destroy(g_message_hub);
         g_message_hub = RT_NULL;
     }
+
+    /* 4. 销毁上下文 */
     if (g_context)
     {
         agent_context_destroy(g_context);
         g_context = RT_NULL;
     }
+
+    /* 5. 清理工具系统（释放工具链表与残留的工具结果消息），再次进入时重新注册 */
+    agent_tools_cleanup();
+
     g_main_agent_loop = RT_NULL;
+    g_agent_running = RT_FALSE;
+    g_channel_ops = RT_NULL;
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
     if (g_file_op_thread)
     {
@@ -231,6 +289,16 @@ static void cleanup_agent(void)
     }
     g_file_op_thread = RT_NULL;
 #endif
+
+#ifdef RT_USING_HEAP
+    {
+        rt_size_t heap_total = 0, heap_used = 0, heap_max_used = 0;
+        rt_memory_info(&heap_total, &heap_used, &heap_max_used);
+        LOG_I("[mem] cleanup done: heap total=%d, used=%d, max_used=%d",
+              (int)heap_total, (int)heap_used, (int)heap_max_used);
+    }
+#endif
+
     /* 通知清理完成 */
     if (g_cleanup_sem != RT_NULL)
     {
@@ -262,9 +330,10 @@ static int cleanup_agent_entry(void)
     }
 
     /* 先停止通道线程，防止它们继续访问即将销毁的 message_hub */
-#ifdef PKG_AGENT_CLI_CHANNEL
-    agent_cli_stop();
-#endif
+    if (g_channel_ops != RT_NULL && g_channel_ops->reset != RT_NULL)
+    {
+        g_channel_ops->reset();
+    }
 
     LOG_I("Signaling agent to stop...");
     signal_agent_stop();
