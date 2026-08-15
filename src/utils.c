@@ -1,5 +1,9 @@
 #include "utils.h"
 
+#define LOG_TAG "Agent.utils"
+#define LOG_LVL LOG_LVL_INFO
+#include <ulog.h>
+
 /*
  * @brief 打印思考过程
  */

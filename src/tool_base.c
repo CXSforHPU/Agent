@@ -1,5 +1,9 @@
 #include "tool_base.h"
 
+#define LOG_TAG "Agent.tool_base"
+#define LOG_LVL LOG_LVL_INFO
+#include <ulog.h>
+
 static AgentToolList *head = RT_NULL;
 static cJSON *AgentTools = RT_NULL;
 

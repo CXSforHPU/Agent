@@ -6,10 +6,6 @@
 #include "shell.h"
 #include "AgentChannel.h"
 
-#define LOG_TAG "Agent.Channels.CLI"
-#define LOG_LVL LOG_LVL_INFO
-#include <ulog.h>
-
 #define CLI_CMD_BUFFER_SIZE    512
 #define CLI_HISTORY_LINES          5
 #define CLI_THREAD_STACK_SIZE  1024

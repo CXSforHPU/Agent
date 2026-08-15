@@ -1,5 +1,9 @@
 #include "MessageHub.h"
 
+#define LOG_TAG "Agent.MessageHub"
+#define LOG_LVL LOG_LVL_INFO
+#include <ulog.h>
+
 static char agent_content_type[4][16] = {"text", "audio_url", "image_url", "video_url"};
 
 /* 静态函数声明 */

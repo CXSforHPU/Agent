@@ -1,5 +1,9 @@
 #include "CLI.h"
 
+#define LOG_TAG "Agent.Channels.CLI"
+#define LOG_LVL LOG_LVL_INFO
+#include <ulog.h>
+
 static CLI_channel_t g_handle = RT_NULL;
 
 /* CLI 通道 ops 实例（init=agent_cli_channel, reset=agent_cli_stop） */

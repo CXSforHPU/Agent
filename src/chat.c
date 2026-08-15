@@ -1,5 +1,9 @@
 #include "chat.h"
 
+#define LOG_TAG "Agent.chat"
+#define LOG_LVL LOG_LVL_INFO
+#include <ulog.h>
+
 #define POST_RESP_BUFSZ    PKG_AGENT_RESP_BUFSZ
 #define POST_HEADER_BUFSZ  PKG_AGENT_WEB_SOCKET_BUFSZ
 #define MAX_REASONING_LEN  PKG_AGENT_MAX_REASONING_LEN

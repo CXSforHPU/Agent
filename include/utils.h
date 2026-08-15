@@ -7,10 +7,6 @@
 #include "string.h"
 #include "MessageHub.h"
 
-#define LOG_TAG "Agent.utils"
-#define LOG_LVL LOG_LVL_INFO
-#include <ulog.h>
-
 /*
  * @brief 格式化文本为 cJSON 对象 { type, text }
  * @param text 文本内容

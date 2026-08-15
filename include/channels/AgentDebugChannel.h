@@ -5,10 +5,6 @@
 #include "context.h"
 #include "AgentChannel.h"
 
-#define LOG_TAG "Agent.Channels.DebugChannel"
-#define LOG_LVL LOG_LVL_INFO
-#include <ulog.h>
-
 /*
  * @brief Debug 通道初始化（绑定 message_hub / context）
  * @param message_hub 消息中心句柄

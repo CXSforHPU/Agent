@@ -7,10 +7,6 @@
 #include "chat.h"
 #include "utils.h"
 
-#define LOG_TAG "Agent.context"
-#define LOG_LVL LOG_LVL_INFO
-#include <ulog.h>
-
 /* 角色类型枚举 */
 typedef enum RoleType
 {

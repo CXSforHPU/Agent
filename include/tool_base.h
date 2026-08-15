@@ -6,10 +6,6 @@
 #include "utils.h"
 #include "chat.h"
 
-#define LOG_TAG "Agent.tool_base"
-#define LOG_LVL LOG_LVL_INFO
-#include <ulog.h>
-
 /* 工具返回值结构 */
 typedef struct AgentToolRet
 {

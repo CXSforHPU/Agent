@@ -1,5 +1,9 @@
 #include "AgentWebChannel.h"
 
+#define LOG_TAG "Agent.channel.webnet"
+#define LOG_LVL LOG_LVL_INFO
+#include <ulog.h>
+
 #define CONFIG_REQUEST_MAX_SIZE 2048
 #define CHAT_REQUEST_MAX_SIZE   4096
 

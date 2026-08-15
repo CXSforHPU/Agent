@@ -10,10 +10,6 @@
 #include <string.h>
 #include "AgentChannel.h"
 
-#define LOG_TAG "Agent.channel.webnet"
-#define LOG_LVL LOG_LVL_INFO
-#include <ulog.h>
-
 /*
  * @brief WebNet 通道初始化（注册 CGI 处理器并启动 webnet）
  * @param hub 消息中心句柄

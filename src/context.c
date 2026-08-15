@@ -1,5 +1,9 @@
 #include "context.h"
 
+#define LOG_TAG "Agent.context"
+#define LOG_LVL LOG_LVL_INFO
+#include <ulog.h>
+
 static char AgentRole[4][16] = {"system", "user", "assistant", "tool"};
 
 /*

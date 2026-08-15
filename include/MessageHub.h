@@ -4,10 +4,6 @@
 #include <rtthread.h>
 #include "cJSON.h"
 
-#define LOG_TAG "Agent.MessageHub"
-#define LOG_LVL LOG_LVL_INFO
-#include <ulog.h>
-
 #define MESSAGE_HUB_INPUT_MAILBOX_SIZE 10
 #define MESSAGE_HUB_OUTPUT_MAILBOX_SIZE 10
 #define MESSAGE_HUB_INPUT_NAME "AgentInputMb"

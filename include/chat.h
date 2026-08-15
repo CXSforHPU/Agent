@@ -6,10 +6,6 @@
 #include "webclient.h"
 #include "AgentConfig.h"
 
-#define LOG_TAG "Agent.chat"
-#define LOG_LVL LOG_LVL_INFO
-#include <ulog.h>
-
 /* 聊天响应结构体 */
 typedef struct ChatResponse
 {
