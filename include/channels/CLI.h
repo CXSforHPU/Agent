@@ -23,12 +23,11 @@ enum CLI_channelInputStat
 /* CLI 通道结构体 */
 typedef struct CLI_channel
 {
-    struct rt_thread thread;
-    rt_uint8_t thread_stack[CLI_THREAD_STACK_SIZE];
-
+    rt_thread_t thread;
     enum CLI_channelInputStat stat;
-    struct rt_semaphore rx_sem;
-    rt_bool_t sem_inited;
+    rt_sem_t rx_sem;
+    rt_sem_t exit_sem;
+    /* 线程栈由 rt_thread_create 动态分配，不再需要 thread_stack 数组 */
 
     char CLI_history[CLI_HISTORY_LINES][CLI_CMD_BUFFER_SIZE];
     rt_uint16_t history_count;
@@ -52,5 +51,11 @@ typedef struct CLI_channel
  * @return RT_EOK 成功
  */
 int agent_cli_channel(MessageHub_t message_hub, Context_t context);
+
+/*
+ * @brief 停止 CLI 通道线程并等待退出
+ * @note 用于清理流程，确保线程不再访问 message_hub
+ */
+void agent_cli_stop(void);
 
 #endif /* __AGENT_CLI_H__ */

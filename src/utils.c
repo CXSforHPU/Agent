@@ -219,7 +219,7 @@ void create_property(cJSON *props_obj, const char *name, const char *type, const
 static rt_mq_t g_file_op_mq_input = RT_NULL;
 static rt_mq_t g_file_op_mq_output = RT_NULL;
 static rt_thread_t g_file_op_thread = RT_NULL;
-
+static rt_sem_t g_exit_sem = RT_NULL;
 /*
  * @brief 从路径中提取文件名
  */
@@ -490,6 +490,7 @@ static void file_operation_work_thread(void *arg)
         if (req.op == CMD_AGENT_FILE_EXIT)
         {
             LOG_I("[fileop] exit thread");
+            rt_sem_release(g_exit_sem);
             break;
         }
 
@@ -564,6 +565,16 @@ rt_thread_t agent_file_op_init(void)
         return RT_NULL;
     }
 
+    g_exit_sem = rt_sem_create("fileop_exit", 0, RT_IPC_FLAG_FIFO);
+    if (g_exit_sem == RT_NULL)
+    {
+        rt_mq_delete(g_file_op_mq_input);
+        rt_mq_delete(g_file_op_mq_output);
+        g_file_op_mq_input = RT_NULL;
+        g_file_op_mq_output = RT_NULL;
+        return RT_NULL;
+    }
+
     g_file_op_thread = rt_thread_create("fileop_wk",
                                         file_operation_work_thread,
                                         RT_NULL,
@@ -574,8 +585,10 @@ rt_thread_t agent_file_op_init(void)
     {
         rt_mq_delete(g_file_op_mq_input);
         rt_mq_delete(g_file_op_mq_output);
+        rt_sem_delete(g_exit_sem);
         g_file_op_mq_input = RT_NULL;
         g_file_op_mq_output = RT_NULL;
+        g_exit_sem = RT_NULL;
         return RT_NULL;
     }
 
@@ -593,14 +606,12 @@ void agent_file_op_deinit(void)
         file_op_req exit_req;
         exit_req.op = CMD_AGENT_FILE_EXIT;
         rt_mq_send(g_file_op_mq_input, &exit_req, sizeof(file_op_req));
-        rt_thread_mdelay(100);
+        /* 等待线程退出（线程收到命令后会 release g_exit_sem 并自然退出） */
+        rt_sem_take(g_exit_sem, RT_WAITING_FOREVER);
     }
 
-    if (g_file_op_thread != RT_NULL)
-    {
-        rt_thread_delete(g_file_op_thread);
-        g_file_op_thread = RT_NULL;
-    }
+    /* 线程由 rt_thread_create 创建，入口函数返回后空闲线程自动清理，无需 rt_thread_delete */
+    g_file_op_thread = RT_NULL;
 
     if (g_file_op_mq_input != RT_NULL)
     {
@@ -612,6 +623,12 @@ void agent_file_op_deinit(void)
         rt_mq_delete(g_file_op_mq_output);
         g_file_op_mq_output = RT_NULL;
     }
+    if (g_exit_sem != RT_NULL)
+    {
+        rt_sem_delete(g_exit_sem);
+        g_exit_sem = RT_NULL;
+    }
+
     LOG_I("[fileop] deinit done");
 }
 

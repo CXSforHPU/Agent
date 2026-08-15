@@ -19,6 +19,7 @@ static rt_thread_t g_file_op_thread = RT_NULL;
 #endif
 
 static void cleanup_agent(void);
+static rt_sem_t g_cleanup_sem = RT_NULL;
 
 /*
  * @brief 初始化 agent（工具、消息中心、上下文、通道）
@@ -202,7 +203,8 @@ static void signal_agent_stop(void)
     g_agent_running = RT_FALSE;
     if (g_message_hub != RT_NULL && g_message_hub->input_mailbox != RT_NULL)
     {
-        rt_mb_send(g_message_hub->input_mailbox, (rt_ubase_t)RT_NULL);
+        /* 使用阻塞发送保证唤醒消息一定能进入 mailbox */
+        rt_mb_send_wait(g_message_hub->input_mailbox, (rt_ubase_t)RT_NULL, RT_WAITING_FOREVER);
     }
 }
 
@@ -229,6 +231,11 @@ static void cleanup_agent(void)
     }
     g_file_op_thread = RT_NULL;
 #endif
+    /* 通知清理完成 */
+    if (g_cleanup_sem != RT_NULL)
+    {
+        rt_sem_release(g_cleanup_sem);
+    }
 }
 
 /*
@@ -242,8 +249,32 @@ static int cleanup_agent_entry(void)
         LOG_W("Agent not running, nothing to clean up");
         return 0;
     }
+
+    /* 创建完成信号量 */
+    if (g_cleanup_sem == RT_NULL)
+    {
+        g_cleanup_sem = rt_sem_create("agent_exit", 0, RT_IPC_FLAG_FIFO);
+        if (g_cleanup_sem == RT_NULL)
+        {
+            LOG_E("Failed to create cleanup semaphore");
+            return -RT_ERROR;
+        }
+    }
+
+    /* 先停止通道线程，防止它们继续访问即将销毁的 message_hub */
+#ifdef PKG_AGENT_CLI_CHANNEL
+    agent_cli_stop();
+#endif
+
     LOG_I("Signaling agent to stop...");
     signal_agent_stop();
+
+    /* 等待主循环线程真正退出 */
+    rt_sem_take(g_cleanup_sem, RT_WAITING_FOREVER);
+    rt_sem_delete(g_cleanup_sem);
+    g_cleanup_sem = RT_NULL;
+
+    LOG_I("Agent stopped successfully.");
     return 0;
 }
 
