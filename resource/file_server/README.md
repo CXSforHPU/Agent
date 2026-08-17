@@ -127,9 +127,11 @@ uv run main.py
 2. 效果demo
 
 > 上传照片如下
+
 ![](../../pictures/多模态测试照片.jpg)
 
 > AI reply
+
 ![](../../pictures/多模态照片demo.jpg)
 
 ## 6. 常见问题排查
