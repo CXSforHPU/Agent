@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 import os
 import uuid
 import sqlite3
+import mimetypes
 from datetime import datetime
 from typing import Dict, Any
 
@@ -85,6 +86,33 @@ async def upload(file: UploadFile = File(...)):
     }
 
 
+def guess_media_type(path: str) -> str:
+    """优先按扩展名推断 Content-Type，失败时按文件魔数嗅探（不依赖第三方库）。
+
+    LLM 多模态服务端按 Content-Type 判断是否为图片，
+    无扩展名/未知扩展名的文件若返回 application/octet-stream 会被判为非法图片 URL。
+    """
+    mt, _ = mimetypes.guess_type(path)
+    if mt:
+        return mt
+    try:
+        with open(path, "rb") as f:
+            head = f.read(16)
+    except OSError:
+        return "application/octet-stream"
+    if head[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if head[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[:2] == b"BM":
+        return "image/bmp"
+    return "application/octet-stream"
+
+
 @app.get("/download/{file_id}", summary="根据file_id下载文件，供嵌入式GET下载")
 def download_file(file_id: str):
     conn = sqlite3.connect(DB_PATH)
@@ -100,7 +128,9 @@ def download_file(file_id: str):
 
     return FileResponse(
         path=item["store_path"],
-        filename=item["original_name"]
+        filename=item["original_name"],
+        media_type=guess_media_type(item["store_path"]),
+        content_disposition_type="inline",
     )
 
 
