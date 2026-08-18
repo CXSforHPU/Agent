@@ -75,17 +75,13 @@ cJSON *to_content(Messages_t messages)
 
 #if defined(PKG_AGENT_MULTIMODAL_DISABLE)
     /* 非多模态：返回一个对象，包含 "content" 字段 */
-    cJSON *content_obj = cJSON_CreateObject();
-    if (!content_obj)
-    {
-        return RT_NULL;
-    }
 
     if (messages_get_content_idx(messages, 0))
     {
-        cJSON_AddStringToObject(content_obj, "content", messages_get_content_idx(messages, 0));
+        return cJSON_CreateString(messages_get_content_idx(messages,0));
     }
-    return content_obj;
+
+    return RT_NULL;
 
 #elif defined(PKG_AGENT_MULTIMODAL_ENABLE)
     /* 多模态：返回一个数组，每个元素为 { type, ... } */
