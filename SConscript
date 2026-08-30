@@ -27,6 +27,12 @@ for file in os.listdir(os.path.join(cwd, 'src',"tools")):
 # add config
 src.append(os.path.join(cwd, 'config', 'AgentConfig.c'))
 
+# add driver
+if GetDepend(['PKG_AGENT_DRIVER_AUDIO']):
+    src.append(os.path.join(cwd,"src","driver","audio","AgentAudio.c"))
+    CPPPATH.append(os.path.join(cwd,"include","driver","audio"))
+
+
 
 CPPPATH.append(os.path.join(cwd, 'include'))
 CPPPATH.append(os.path.join(cwd,"include","channels"))

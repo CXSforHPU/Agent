@@ -28,3 +28,5 @@ __pycache__/
 *.elf
 *.log
 .DS_Store
+
+src/driver/audio/AgentAudio.o

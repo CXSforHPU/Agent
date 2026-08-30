@@ -87,19 +87,20 @@ async def upload(file: UploadFile = File(...)):
 
 
 def guess_media_type(path: str) -> str:
-    """优先按扩展名推断 Content-Type，失败时按文件魔数嗅探（不依赖第三方库）。
+    """按文件魔数嗅探优先、扩展名兜底推断 Content-Type（不依赖第三方库）。
 
-    LLM 多模态服务端按 Content-Type 判断是否为图片，
-    无扩展名/未知扩展名的文件若返回 application/octet-stream 会被判为非法图片 URL。
+    背景：LLM 多模态服务端按 Content-Type 判断资源类型。
+    - .amr（嵌入式最常用语音格式）Python mimetypes 不认识，会退化为 application/octet-stream；
+    - .raw/.pcm 裸音频会被 mimetypes 误判为 image/RAW；
+    均会导致模型按错误容器解码音频而失真，故优先用魔数识别。
     """
-    mt, _ = mimetypes.guess_type(path)
-    if mt:
-        return mt
     try:
         with open(path, "rb") as f:
             head = f.read(16)
     except OSError:
         return "application/octet-stream"
+
+    # ---- 图片魔数 ----
     if head[:3] == b"\xff\xd8\xff":
         return "image/jpeg"
     if head[:8] == b"\x89PNG\r\n\x1a\n":
@@ -110,6 +111,25 @@ def guess_media_type(path: str) -> str:
         return "image/webp"
     if head[:2] == b"BM":
         return "image/bmp"
+
+    # ---- 音频魔数 ----
+    if head[:4] == b"RIFF" and head[8:12] == b"WAVE":
+        return "audio/wav"
+    if head[0] == 0xFF and (head[1] & 0xF6) == 0xF0:
+        return "audio/aac"           # AAC ADTS 帧同步：0xFF F0/F1/F8/F9
+    if head[:3] == b"ID3" or (head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
+        return "audio/mpeg"          # MP3：ID3 标签或帧同步 0xFF Ex/Fx
+    if head[:5] == b"#!AMR":
+        return "audio/amr"           # AMR-NB/WB（嵌入式最常用）
+    if head[:4] == b"OggS":
+        return "audio/ogg"           # OGG / Opus
+    if head[:4] == b"fLaC":
+        return "audio/flac"
+
+    # ---- 扩展名兜底（排除 mimetypes 对 .raw 的误判） ----
+    mt, _ = mimetypes.guess_type(path)
+    if mt and mt != "image/RAW":
+        return mt
     return "application/octet-stream"
 
 

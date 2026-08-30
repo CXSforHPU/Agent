@@ -295,7 +295,9 @@ static int agent_post_file_stream(const char *URI, const char *filename,
         rc = -WEBCLIENT_NOMEM;
         goto cleanup;
     }
-    webclient_set_timeout(session, 30000);
+    /* 音频等大文件上传耗时较长，放宽收发超时（120s），
+       避免慢速网络下上传中途超时导致服务器存下截断文件 */
+    webclient_set_timeout(session, 120000);
 
     webclient_header_fields_add(session, "Content-Length: %zu\r\n", total_length);
     webclient_header_fields_add(session, "Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
