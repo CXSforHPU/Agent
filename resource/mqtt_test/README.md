@@ -8,7 +8,9 @@
 |---|---|
 | `qemu_msh_test.ps1` | MSH 冒烟测试：启动客户端、订阅多个话题、通配符路由、发布/回环、poll 缓冲与退订 |
 | `qemu_e2e_test.ps1` | 端到端测试：自然语言让 agent 用 `mqtt_publish` 下发命令（PC 订阅端验证收到），并向 `agent/sub` 发消息验证「订阅 → 交给 agent 分析」 |
-| `mqtt_pub.py` | 最小 MQTT 3.1.1 发布客户端（stdlib，无第三方依赖） |
+| `qemu_inject_test.ps1` | 验证公共注入 API `agent_inject_text()`（`include/utils.h`）：PC 发布 → 回调 → 接收线程（`mode=auto`）→ 注入 → LLM 分析；断言 `mqtt -> agent: N message(s) delivered`、注入内容确实进入模型上下文、MQTT 侧 `injected_total` 计数正确 |
+| `qemu_chat_history_test.ps1` | 复现「问某话题历史导致模型反复调用 `mqtt_history`」的场景：**不启动 MQTT** 直接问历史，断言工具结果非空且写明原因、模型给出回答、且不会无限重试（详见文档 §9.3） |
+| `mqtt_pub.py` | 最小 MQTT 3.1.1 发布客户端（stdlib，无第三方依赖；payload 含引号时用 `MQTT_PAYLOAD` 环境变量传入） |
 | `mqtt_sub.py` | 最小 MQTT 3.1.1 订阅客户端（stdlib，带 PINGREQ 保活） |
 
 ## 依赖
@@ -26,6 +28,12 @@ powershell -ExecutionPolicy Bypass -File .\qemu_msh_test.ps1 -Port 5580 -Smp 2
 
 # 端到端测试（会调用大模型，需要有效 API Key）
 powershell -ExecutionPolicy Bypass -File .\qemu_e2e_test.ps1 -Port 5600
+
+# 公共注入 API + MQTT 触发模型分析（会调用大模型）
+powershell -ExecutionPolicy Bypass -File .\qemu_inject_test.ps1 -Port 5585
+
+# 历史查询死循环回归（会调用大模型）
+powershell -ExecutionPolicy Bypass -File .\qemu_chat_history_test.ps1 -Port 5581
 ```
 
 脚本会用 `-serial tcp:127.0.0.1:<Port>,server,nowait` 连接串口，自动完成：杀残留 QEMU → 启动 → 等启动完成 → 逐条执行命令 → 打印完整记录 → 关闭 QEMU。

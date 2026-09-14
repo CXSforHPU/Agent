@@ -251,6 +251,26 @@ typedef struct AgentToolList {
 | `rt_bool_t agent_is_running(void)` | 主循环是否在运行 |
 | `rt_bool_t agent_is_busy(void)` | 是否正在处理一轮对话（含 LLM 请求与工具执行）；注入方据此错峰投递 |
 
+### 4.7 文本注入（`include/utils.h`）
+
+把一段外部文本作为**用户消息**交给 agent 分析，工具/驱动/其它模块都可用这一个入口，不必自己拼 `MessageHub`：
+
+| 函数 | 说明 |
+|---|---|
+| `rt_err_t agent_inject_text(const char *text)` | 注入一段非空文本（`role=user`），等待 LLM 分析/总结/告警。成功 `RT_EOK`；agent 未运行、消息中心未就绪、输入 mailbox 满时返回 `RT_ERROR`（调用方需自行缓存或丢弃）。`put` 成功后消息所有权移交 agent 主循环，调用方不得再释放 |
+
+```c
+#include "utils.h"
+
+/* 例：把一条设备事件交给 agent 分析（MQTT 路由线程即这样调用） */
+if (agent_inject_text("topic: device/1/data\npayload: {\"temp\":42}") != RT_EOK)
+{
+    /* agent 未运行 / mailbox 满：自行缓存或丢弃 */
+}
+```
+
+> 需要错峰时先判断 `agent_is_busy()`；实现见 `src/utils.c`（由原先 MQTT 模块内的 `mqtt_inject_text()` 提升而来，MQTT 特有的注入计数/错峰时间戳仍留在 `tool_mqtt_route.c` 维护）。
+
 ---
 
 ## 5. Channels —— 交互通道

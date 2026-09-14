@@ -261,7 +261,8 @@ classDiagram
 - `tool_func.c`：工具注册与初始化入口（`init_tools` / `agent_tools_cleanup`）
 - `tool_add.c`、`tool_mul.c`、`tool_compare.c`：具体工具功能实现
 - `tools/tool_mqtt/`：MQTT 工具（发布话题命令 / 订阅话题并交给 agent 分析；含接收线程、话题表、poll 缓冲与 `mqtt_tool` 调试命令，见 [MQTT 工具说明](./docs/tool_mqtt.md)）
-- `AgentRuntime.h`：agent 运行时访问器（`agent_get_message_hub` / `agent_is_running`，由 `AgentLoop.c` 实现，供工具层向 agent 注入消息）
+- `AgentRuntime.h`：agent 运行时访问器（`agent_get_message_hub` / `agent_is_running` / `agent_is_busy`，由 `AgentLoop.c` 实现，供工具层向 agent 注入消息）
+- `utils.h` / `utils.c`：公共注入入口 `agent_inject_text()` —— 任何工具/驱动把一段文本作为用户消息交给 agent（`role=user`，等待 LLM 分析/总结/告警），不必自己拼 `MessageHub`；MQTT 路由线程即用它投递订阅消息（原先名为 `mqtt_inject_text()`，已提升为框架公共 API）
 
 ### 工具调用排查（常见坑）
 

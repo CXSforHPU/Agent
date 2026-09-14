@@ -526,57 +526,10 @@ int poll_clear(void)
     return n;
 }
 
-/* ==========================================================================
- * 向 agent 注入消息
- * ========================================================================== */
-
 /*
- * @brief 把一段文本作为用户消息注入 agent（等待 LLM 分析）
- * @param text 文本内容
- * @return RT_EOK 成功，RT_ERROR agent 未运行或注入失败
+ * 注：向 agent 注入文本的能力已提升为框架公共 API ——
+ *     agent_inject_text()（声明见 include/utils.h，实现见 src/utils.c），
+ *     MQTT 模块（tool_mqtt_route.c）与其它工具共用同一入口；
+ *     MQTT 特有的注入计数/错峰时间戳留在本模块里维护。
  */
-rt_err_t mqtt_inject_text(const char *text)
-{
-    MessageHub_t hub;
-    Messages_t messages;
-
-    if (text == RT_NULL || !agent_is_running())
-    {
-        return RT_ERROR;
-    }
-
-    hub = agent_get_message_hub();
-    if (hub == RT_NULL)
-    {
-        return RT_ERROR;
-    }
-
-    messages = messages_create(1);
-    if (messages == RT_NULL)
-    {
-        return RT_ERROR;
-    }
-    if (messages_append(messages, TYPE_TEXT, text) != RT_EOK)
-    {
-        messages_destroy(messages);
-        return RT_ERROR;
-    }
-
-    /* 所有权移交：成功后由 agent 主循环消费并释放 */
-    if (hub->put_message(hub, messages, hub->input_mailbox) != RT_EOK)
-    {
-        messages_destroy(messages);
-        LOG_W("agent input mailbox full, drop mqtt message");
-        return RT_ERROR;
-    }
-
-    if (lock_take())
-    {
-        s_inject_total++;
-        lock_give();
-    }
-    s_last_inject_tick = rt_tick_get();
-
-    return RT_EOK;
-}
 

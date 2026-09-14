@@ -6,6 +6,7 @@
  *       统一声明在 tool_mqtt_internal.h（对外接口见 tool_mqtt.h）。
  */
 #include "tool_mqtt_internal.h"
+#include "utils.h"          /* agent_inject_text() */
 
 #define LOG_TAG "Agent.tool_mqtt"
 #define LOG_LVL LOG_LVL_INFO
@@ -243,12 +244,17 @@ static void mqtt_route_item(const mqtt_rx_item_t *item)
                    "arrived in the same batch and are not repeated above.", dup_count);
     }
 
-    if (mqtt_inject_text(text) == RT_EOK)
+    /* 注入到 agent：公共 API，其它工具/驱动也用同一入口（见 include/utils.h） */
+    if (agent_inject_text(text) == RT_EOK)
     {
         int i;
         LOG_I("mqtt -> agent: %d message(s) delivered for analysis", count);
+
+        /* MQTT 侧自有的注入统计与错峰时间戳：注入成功后更新 */
+        s_last_inject_tick = rt_tick_get();
         if (lock_take())
         {
+            s_inject_total++;
             for (i = 0; i < count; i++)
             {
                 entry = sub_match(s_batch[i].topic);
