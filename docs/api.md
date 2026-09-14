@@ -213,6 +213,44 @@ typedef struct AgentToolList {
 | `tool_mul` | `void tool_mul(cJSON *args, AgentToolNode_t node)` | `a`, `b`（double） | `<a*b>` |
 | `tool_compare` | `void tool_compare(cJSON *args, AgentToolNode_t node)` | `a`, `b`（double） | 大小比较文本 |
 
+### 4.5 MQTT 工具（`PKG_AGENT_TOOL_MQTT_ENABLE`）
+
+**头文件**：`include/tools/tool_mqtt/tool_mqtt.h`　**实现**：`src/tools/tool_mqtt/tool_mqtt.c`　**使用说明**：[tool_mqtt.md](./tool_mqtt.md)
+
+| 工具（LLM 可见名） | 签名 | 参数 | 结果 |
+|---|---|---|---|
+| `mqtt_publish` | `void tool_mqtt_publish(cJSON *args, AgentToolNode_t node)` | `topic?`（string）, `message`（string） | `publish ok: topic=... bytes=... qos=1` |
+| `mqtt_subscribe` | `void tool_mqtt_subscribe(cJSON *args, AgentToolNode_t node)` | `action`（subscribe/unsubscribe/list）, `topic?`, `mode?`（filter/auto/poll） | 订阅状态 / 订阅列表 |
+| `mqtt_rule` | `void tool_mqtt_rule(cJSON *args, AgentToolNode_t node)` | `action`（set/clear/list）, `topic?`, `field?`, `op?`, `value?` | 规则设置结果 / 规则列表 |
+| `mqtt_receive` | `void tool_mqtt_receive(cJSON *args, AgentToolNode_t node)` | `max?`（number）, `topic?`（string） | 缓存/滚动窗口里的消息 |
+
+投递模式（`mqtt_subscribe` 的 `mode` 参数，默认 `filter`）：
+
+| 模式 | 行为 |
+|---|---|
+| `filter` | 只有「报文像咨询」或「命中 `mqtt_rule` 阈值规则」的消息才注入 agent；其余只统计并进滚动窗口 |
+| `auto` | 该话题每条消息都注入 agent |
+| `poll` | 都不自动注入，全部由 `mqtt_receive` 取用 |
+
+生命周期与调试接口（应用层可显式调用，工具内部会按需自动启动）：
+
+| 函数 | 说明 |
+|---|---|
+| `rt_err_t mqtt_tool_start(void)` | 启动 MQTT 客户端（幂等）：建接收队列/接收线程并启动 paho 工作线程 |
+| `void mqtt_tool_stop(void)` | 停止客户端并释放接收线程/队列（幂等） |
+| `rt_bool_t mqtt_tool_is_started(void)` | 客户端是否已启动 |
+| MSH `mqtt_tool` | `start/stop/status/sub/unsub/pub/recv/sim/flush` 调试命令 |
+
+### 4.6 Agent 运行时访问器（`include/AgentRuntime.h`）
+
+供需要主动向 agent 注入消息的模块使用（MQTT 订阅回调即通过它投递消息）：
+
+| 函数 | 说明 |
+|---|---|
+| `MessageHub_t agent_get_message_hub(void)` | 取当前消息中心句柄；agent 未运行时返回 `NULL` |
+| `rt_bool_t agent_is_running(void)` | 主循环是否在运行 |
+| `rt_bool_t agent_is_busy(void)` | 是否正在处理一轮对话（含 LLM 请求与工具执行）；注入方据此错峰投递 |
+
 ---
 
 ## 5. Channels —— 交互通道

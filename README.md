@@ -1,7 +1,7 @@
 # 智能代理框架（Agent Framework）
 基于 RT-Thread 打造的智能代理框架，可实现具备工具调用能力的大语言模型（LLM）交互。
 
-> 文档入口：[框架文档](./docs/framework.md) ｜ [API 文档](./docs/api.md) ｜ [工具开发指南](./docs/tool_guide.md)
+> 文档入口：[框架文档](./docs/framework.md) ｜ [API 文档](./docs/api.md) ｜ [工具开发指南](./docs/tool_guide.md) ｜ [MQTT 工具说明](./docs/tool_mqtt.md)
 
 ## 概述
 本框架可用于构建智能代理，通过 API 调用与大语言模型交互、处理工具请求，并维护对话上下文。框架支持工具执行、会话状态管理、多通道交互（CLI / WebNet / Debug），以及"进入对话 → 清理 → 再次进入"的完整生命周期管理（清理后内存回到基线）。
@@ -131,6 +131,25 @@ classDiagram
     class ToolCompare {
         +tool_compare(args_obj, node)
     }
+    class ToolMqtt {
+        +tool_mqtt_publish(args_obj, node)
+        +tool_mqtt_subscribe(args_obj, node)
+        +tool_mqtt_rule(args_obj, node)
+        +tool_mqtt_receive(args_obj, node)
+        +mqtt_tool_start() rt_err_t
+        +mqtt_tool_stop() void
+        +mqtt_tool() MSH 命令
+    }
+    class MqttModules {
+        <<module>>
+        tool_mqtt.c 引擎核心
+        tool_mqtt_client.c 连接与订阅
+        tool_mqtt_route.c 接收线程与路由
+        tool_mqtt_filter.c 过滤与阈值规则
+        tool_mqtt_ops.c 业务操作
+        tool_mqtt_tools.c 工具入口
+        tool_mqtt_cmd.c MSH 命令
+    }
 
     %% ========== 第5层：交互通道（ops 接口，函数指针统一分发） ==========
     class AgentChannelOps {
@@ -171,6 +190,8 @@ classDiagram
     ToolAdd --> AgentToolNode
     ToolMul --> AgentToolNode
     ToolCompare --> AgentToolNode
+    ToolMqtt --> AgentToolNode
+    ToolMqtt *-- MqttModules
 
     %% 第五层通道实现 ops 接口
     CLIChannel ..|> AgentChannelOps
@@ -198,6 +219,8 @@ classDiagram
 - 支持动态注册与检索工具
 - 自动解析参数并执行工具函数，结果回填上下文
 - 内置多种工具示例：加法、乘法、比较运算（扩展见 [工具开发指南](./docs/tool_guide.md)）
+- 内置 MQTT 工具：**发布话题命令**（`mqtt_publish`）+ **订阅话题并只在需要时打扰 agent**（`mqtt_subscribe` / `mqtt_rule` / `mqtt_receive`，见 [MQTT 工具说明](./docs/tool_mqtt.md)）
+  - 默认 `filter` 模式：只有**报文像咨询**或**命中阈值规则**（`mqtt_rule`，含边沿触发与冷却）时才交给 agent 做简短总结/告警，例行数据本地过滤，不消耗 LLM 调用
 
 ### 5. 流式接口支持
 - 兼容大模型流式返回数据（SSE）
@@ -237,6 +260,20 @@ classDiagram
 - `tool_base.c`：工具底层基础管理逻辑（链表、查找、整体销毁）
 - `tool_func.c`：工具注册与初始化入口（`init_tools` / `agent_tools_cleanup`）
 - `tool_add.c`、`tool_mul.c`、`tool_compare.c`：具体工具功能实现
+- `tools/tool_mqtt/`：MQTT 工具（发布话题命令 / 订阅话题并交给 agent 分析；含接收线程、话题表、poll 缓冲与 `mqtt_tool` 调试命令，见 [MQTT 工具说明](./docs/tool_mqtt.md)）
+- `AgentRuntime.h`：agent 运行时访问器（`agent_get_message_hub` / `agent_is_running`，由 `AgentLoop.c` 实现，供工具层向 agent 注入消息）
+
+### 工具调用排查（常见坑）
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 模型回答「我准备调用 XX 工具」但没有 `Detected N tool invocation(s)`，也没有工具结果 | 带 `tool_calls` 的 SSE 报文行较长（实测 ~310 字节），若 `PKG_AGENT_STREAM_LINE_BUFSZ` 太小会被整行丢弃 | 该值已设为 1024，并会在超长时打印告警；如自定义工具参数很大可继续调大 |
+| 看不到思考过程（界面空白） | 提供方字段名是 `reasoning_content`，框架原只识别 `reasoning` | 两个字段名均已支持（`src/chat.c`） |
+| 工具参数（arguments）拼接不完整 | 流式后续分片 `id`/`type`/`name` 为 `null`，需按 `index` 累积 | 已做分片容错与归一化（缺失 `id` 用 `call_<index>` 兜底） |
+| 日志里出现 `Chat request failed` / `mbedtls_client_read data error, return -0x4c` / `http status=-76` | `-0x4c` = `MBEDTLS_ERR_NET_RECV_FAILED`：TLS 连接读取响应时被对端或网络重置；请求过于密集（如设备周期性上报逐条触发 LLM）时最易出现 | 已缓解：MQTT 注入侧错峰+合并（1s 间隔、批量 5 条、agent 忙时等待空闲）+ 框架侧失败自动重试 3 次；仍频繁可调大 `PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS` 或降低上报频率 |
+| **模型反复调用同一个工具十几轮、最后不给任何回答（像卡死）** | ① 工具结果里的长度参数没从实际内容长度续写，尾部提示语把正文覆盖掉 → 模型以为没拿到数据；② 框架侧没有重复调用保护，且达到轮次上限时直接结束、不发回答 | 已修：工具侧按 `rt_strlen()` 续写并保证结果非空（含「查不到的原因 + 下一步 + 不要再重复调用」）；框架侧相同参数重复调用直接跳过，连续两轮重复或达到上限（6）时**强制生成文本回答**，收尾请求不带工具。详见 `docs/tool_mqtt.md` §9.3 |
+| 未启动 MQTT 时 `mqtt_tool status` / `mqtt_history` 报 `error: mqtt state busy` | 状态锁原先只在 `mqtt_tool_start()` 里创建，只读操作拿不到锁 | 已修：`mqtt_tool_lock_init()` 幂等懒创建，未启动也可读订阅表/历史/计数 |
+| 兜底提示（如「工具循环超限」「请求失败」）在 CLI 通道看不到 | CLI 通道收到输出 mailbox 的消息后只打印换行、不打印内容（`channels/CLI.c`），用户只能看到流式输出 | 已修：兜底文本同时走流式打印路径（`agent_notify()`）；正常回答仍只投 mailbox，避免重复打印 |
 
 ### 通道系统
 - `CLI.c`：命令行 readline 交互通道

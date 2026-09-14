@@ -1,0 +1,10 @@
+# Stub set WITH RT_VER_NUM (a normal RT-Thread 4.x/5.x tree).
+
+source "stubs/Kconfig.base"
+
+# In the real kernel this is a hidden hex symbol (no prompt) whose value always
+# reflects the actual kernel version, so the Agent Kconfig reads it directly.
+# The prompt here exists only so the test scenarios can emulate other kernels.
+config RT_VER_NUM
+    hex "RT-Thread version (test override)"
+    default 0x50300

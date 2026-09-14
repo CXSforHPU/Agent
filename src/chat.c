@@ -55,6 +55,7 @@ ChatResponse_t chat(
     int reasoning_len = 0;
     int content_len = 0;
     rt_bool_t is_answering = RT_FALSE;
+    rt_bool_t skip_line = RT_FALSE;
     char stream_buffer[STREAM_LINE_BUFSZ] = {0};
     int stream_len = 0;
 
@@ -139,6 +140,14 @@ ChatResponse_t chat(
             unsigned char ch = buffer[i];
             if (ch == '\n')
             {
+                if (skip_line)
+                {
+                    /* 上一条 SSE 行超长已丢弃，本条是它的剩余部分，直接跳过 */
+                    skip_line = RT_FALSE;
+                    stream_len = 0;
+                    rt_memset(stream_buffer, 0, sizeof(stream_buffer));
+                    continue;
+                }
                 stream_buffer[stream_len] = '\0';
                 if (rt_strncmp(stream_buffer, "data: ", 6) == 0)
                 {
@@ -166,9 +175,15 @@ ChatResponse_t chat(
                             cJSON *delta = cJSON_GetObjectItemCaseSensitive(choice, "delta");
                             if (delta && cJSON_IsObject(delta))
                             {
-                                /* 解析思考过程 */
-                                cJSON *reasoning_field = cJSON_GetObjectItemCaseSensitive(delta, "reasoning");
-                                if (reasoning_field && cJSON_IsString(reasoning_field))
+                                /* 解析思考过程：兼容 reasoning_content（OpenAI 兼容推理模型）
+                                   与 reasoning 两种字段名 */
+                                cJSON *reasoning_field = cJSON_GetObjectItemCaseSensitive(delta, "reasoning_content");
+                                if (!reasoning_field || !cJSON_IsString(reasoning_field))
+                                {
+                                    reasoning_field = cJSON_GetObjectItemCaseSensitive(delta, "reasoning");
+                                }
+                                if (reasoning_field && cJSON_IsString(reasoning_field) &&
+                                    reasoning_field->valuestring[0] != '\0')
                                 {
                                     const char *seg = reasoning_field->valuestring;
                                     size_t seg_len = rt_strlen(seg);
@@ -184,9 +199,10 @@ ChatResponse_t chat(
                                     }
                                 }
 
-                                /* 解析回答正文 */
+                                /* 解析回答正文（空分片不产生输出，避免多余空行） */
                                 cJSON *content_field = cJSON_GetObjectItemCaseSensitive(delta, "content");
-                                if (content_field && cJSON_IsString(content_field))
+                                if (content_field && cJSON_IsString(content_field) &&
+                                    content_field->valuestring[0] != '\0')
                                 {
                                     const char *seg = content_field->valuestring;
                                     size_t seg_len = rt_strlen(seg);
@@ -221,33 +237,52 @@ ChatResponse_t chat(
                                         cJSON *id_node = cJSON_GetObjectItemCaseSensitive(tc_item, "id");
                                         cJSON *func_node = cJSON_GetObjectItemCaseSensitive(tc_item, "function");
                                         cJSON *idx_node = cJSON_GetObjectItemCaseSensitive(tc_item, "index");
-                                        cJSON *type_node = cJSON_GetObjectItemCaseSensitive(tc_item, "type");
-                                        if (!id_node || !func_node || !idx_node || !type_node)
-                                            continue;
 
-                                        char key_buf[32] = {0};
-                                        rt_snprintf(key_buf, sizeof(key_buf), "%d", idx_node->valueint);
+                                        /* 分片容错：只有首个分片带 id/type，后续分片这些字段
+                                           可能为 null 或缺失（如 {"index":0,"id":null,"type":null,
+                                           "function":{"name":"","arguments":"..."}}）；
+                                           index 缺失时按 0 处理 */
+                                        int idx = (idx_node && cJSON_IsNumber(idx_node)) ? idx_node->valueint : 0;
+                                        char key_buf[16] = {0};
+                                        rt_snprintf(key_buf, sizeof(key_buf), "%d", idx);
+
                                         cJSON *map_entry = cJSON_GetObjectItemCaseSensitive(tool_call_map, key_buf);
                                         if (!map_entry)
                                         {
                                             map_entry = cJSON_CreateObject();
-                                            cJSON_AddStringToObject(map_entry, "id", id_node->valuestring);
-                                            cJSON_AddNumberToObject(map_entry, "index", idx_node->valueint);
-                                            cJSON_AddStringToObject(map_entry, "type", type_node->valuestring);
-                                            cJSON_AddItemToObject(map_entry, "function", cJSON_CreateObject());
+                                            if (!map_entry) continue;
+                                            cJSON_AddNumberToObject(map_entry, "index", idx);
+                                            cJSON_AddStringToObject(map_entry, "_id", "");
+                                            cJSON_AddStringToObject(map_entry, "_name", "");
+                                            cJSON_AddStringToObject(map_entry, "arguments", "");
                                             cJSON_AddItemToObject(tool_call_map, key_buf, map_entry);
                                         }
-                                        cJSON *map_func = cJSON_GetObjectItemCaseSensitive(map_entry, "function");
-                                        if (!map_func) continue;
 
-                                        /* 填充函数名 */
-                                        cJSON *name_node = cJSON_GetObjectItemCaseSensitive(func_node, "name");
-                                        if (name_node && cJSON_IsString(name_node))
+                                        /* 补全 id（仅首个分片携带，后续为空则保持已有值） */
+                                        if (id_node && cJSON_IsString(id_node) && id_node->valuestring[0] != '\0')
                                         {
-                                            cJSON *exist_name = cJSON_GetObjectItemCaseSensitive(map_func, "name");
-                                            if (!exist_name)
+                                            cJSON *exist_id = cJSON_GetObjectItemCaseSensitive(map_entry, "_id");
+                                            if (!exist_id || exist_id->valuestring == NULL ||
+                                                exist_id->valuestring[0] == '\0')
                                             {
-                                                cJSON_AddStringToObject(map_func, "name", name_node->valuestring);
+                                                cJSON_ReplaceItemInObjectCaseSensitive(
+                                                    map_entry, "_id", cJSON_CreateString(id_node->valuestring));
+                                            }
+                                        }
+
+                                        if (!func_node || !cJSON_IsObject(func_node))
+                                            continue;
+
+                                        /* 补全函数名（同样只有首个分片有值） */
+                                        cJSON *name_node = cJSON_GetObjectItemCaseSensitive(func_node, "name");
+                                        if (name_node && cJSON_IsString(name_node) && name_node->valuestring[0] != '\0')
+                                        {
+                                            cJSON *exist_name = cJSON_GetObjectItemCaseSensitive(map_entry, "_name");
+                                            if (!exist_name || exist_name->valuestring == NULL ||
+                                                exist_name->valuestring[0] == '\0')
+                                            {
+                                                cJSON_ReplaceItemInObjectCaseSensitive(
+                                                    map_entry, "_name", cJSON_CreateString(name_node->valuestring));
                                             }
                                         }
 
@@ -260,10 +295,12 @@ ChatResponse_t chat(
                                             if (append_len == 0)
                                                 continue;
 
-                                            cJSON *exist_args = cJSON_GetObjectItemCaseSensitive(map_func, "arguments");
-                                            if (!exist_args)
+                                            cJSON *exist_args = cJSON_GetObjectItemCaseSensitive(map_entry, "arguments");
+                                            if (!exist_args || exist_args->valuestring == NULL ||
+                                                exist_args->valuestring[0] == '\0')
                                             {
-                                                cJSON_AddStringToObject(map_func, "arguments", append_str);
+                                                cJSON_ReplaceItemInObjectCaseSensitive(
+                                                    map_entry, "arguments", cJSON_CreateString(append_str));
                                             }
                                             else
                                             {
@@ -287,9 +324,8 @@ ChatResponse_t chat(
                                                 rt_memcpy(combine_buf + old_len, append_str, append_len);
                                                 combine_buf[total_len] = '\0';
 
-                                                cJSON_DetachItemFromObject(map_func, "arguments");
-                                                cJSON_Delete(exist_args);
-                                                cJSON_AddStringToObject(map_func, "arguments", combine_buf);
+                                                cJSON_ReplaceItemInObjectCaseSensitive(
+                                                    map_entry, "arguments", cJSON_CreateString(combine_buf));
                                                 rt_free(combine_buf);
                                             }
                                         }
@@ -305,12 +341,22 @@ ChatResponse_t chat(
             }
             else
             {
+                if (skip_line)
+                {
+                    continue;
+                }
                 if (stream_len < STREAM_LINE_BUFSZ - 1)
                 {
                     stream_buffer[stream_len++] = ch;
                 }
                 else
                 {
+                    /* SSE 行超长：丢弃整行并告警（含 tool_calls 的报文行约 300+ 字节，
+                       默认 1KB 足够；如遇超长参数分片请调大 PKG_AGENT_STREAM_LINE_BUFSZ） */
+                    LOG_W("chat: SSE line exceeds %d bytes, discarded; "
+                          "raise PKG_AGENT_STREAM_LINE_BUFSZ if tool calls are missing\n",
+                          STREAM_LINE_BUFSZ);
+                    skip_line = RT_TRUE;
                     stream_len = 0;
                     rt_memset(stream_buffer, 0, sizeof(stream_buffer));
                 }
@@ -322,14 +368,54 @@ __success:
     reasoning[reasoning_len] = '\0';
     content[content_len] = '\0';
 
-    /* 将 map 中的 tool_call 转移到最终数组 */
+    /* 将 map 中的 tool_call 归一化后转移到最终数组：
+       - id 缺失（分片未携带）时用 call_<index> 兜底，保证下游 tool_call_id 始终有效
+       - arguments 缺失/为空时用 "{}" 兜底，避免下游 cJSON_Parse 失败
+       - 无函数名的条目视为无效，直接丢弃 */
     cJSON *map_key = NULL;
-    cJSON *map_val = NULL;
     for (map_key = tool_call_map->child; map_key != NULL; map_key = map_key->next)
     {
-        map_val = map_key;
-        cJSON *dup_item = cJSON_Duplicate(map_val, cJSON_True);
-        cJSON_AddItemToArray(tool_calls, dup_item);
+        cJSON *entry = map_key;
+        cJSON *id_node = cJSON_GetObjectItemCaseSensitive(entry, "_id");
+        cJSON *name_node = cJSON_GetObjectItemCaseSensitive(entry, "_name");
+        cJSON *args_node = cJSON_GetObjectItemCaseSensitive(entry, "arguments");
+        cJSON *idx_node = cJSON_GetObjectItemCaseSensitive(entry, "index");
+
+        const char *func_name = (name_node && cJSON_IsString(name_node)) ? name_node->valuestring : RT_NULL;
+        if (func_name == RT_NULL || func_name[0] == '\0')
+        {
+            LOG_W("chat: tool call without function name, dropped\n");
+            continue;
+        }
+
+        const char *args_str = (args_node && cJSON_IsString(args_node) && args_node->valuestring[0] != '\0')
+                               ? args_node->valuestring : "{}";
+
+        char id_buf[32] = {0};
+        const char *call_id = (id_node && cJSON_IsString(id_node) && id_node->valuestring[0] != '\0')
+                              ? id_node->valuestring : RT_NULL;
+        if (call_id == RT_NULL)
+        {
+            rt_snprintf(id_buf, sizeof(id_buf), "call_%d",
+                        (idx_node && cJSON_IsNumber(idx_node)) ? idx_node->valueint : 0);
+            call_id = id_buf;
+        }
+
+        cJSON *item = cJSON_CreateObject();
+        cJSON *func_obj = cJSON_CreateObject();
+        if (item == RT_NULL || func_obj == RT_NULL)
+        {
+            if (item) cJSON_Delete(item);
+            if (func_obj) cJSON_Delete(func_obj);
+            LOG_E("chat: create tool call item fail\n");
+            break;
+        }
+        cJSON_AddStringToObject(item, "id", call_id);
+        cJSON_AddStringToObject(item, "type", "function");
+        cJSON_AddStringToObject(func_obj, "name", func_name);
+        cJSON_AddStringToObject(func_obj, "arguments", args_str);
+        cJSON_AddItemToObject(item, "function", func_obj);
+        cJSON_AddItemToArray(tool_calls, item);
     }
 
     /* 回调完整 tool_call */

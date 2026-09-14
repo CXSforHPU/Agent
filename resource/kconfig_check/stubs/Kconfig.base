@@ -1,0 +1,125 @@
+# External symbols referenced by the Agent Kconfig, modelled after the real
+# RT-Thread tree (klibc / mbedtls / webclient / pahomqtt / webnet / wavplayer).
+#
+# This file deliberately does NOT define RT_VER_NUM: stubs/Kconfig.deps sources it
+# and adds RT_VER_NUM, so the same stub set can be used with and without it (to
+# emulate a tree that predates RT_VER_NUM).
+
+menu "rt_vsnprintf options"
+
+config RT_KLIBC_USING_LIBC_VSNPRINTF
+    bool "Enable rt_vsnprintf to use libc vsnprintf"
+
+config RT_KLIBC_USING_VSNPRINTF_STANDARD
+    bool "Enable standard rt_vsnprintf version"
+    default y
+    depends on !RT_KLIBC_USING_LIBC_VSNPRINTF
+
+config RT_KLIBC_USING_VSNPRINTF_DECIMAL_SPECIFIERS
+    bool "Support %f"
+    default y
+    depends on RT_KLIBC_USING_VSNPRINTF_STANDARD
+
+config RT_KLIBC_USING_VSNPRINTF_EXPONENTIAL_SPECIFIERS
+    bool "Support %e/%g"
+    default y
+    depends on RT_KLIBC_USING_VSNPRINTF_STANDARD
+
+endmenu
+
+config RT_USING_ULOG
+    bool "ulog"
+    default y
+
+config PKG_USING_RT_VSNPRINTF_FULL
+    bool "rt_vsnprintf_full"
+    default n
+
+config PKG_USING_CJSON
+    bool "cJSON"
+    default n
+
+config PKG_USING_CJSON_V1717
+    bool
+    default y if PKG_USING_CJSON
+
+config PKG_USING_WEBCLIENT
+    bool "webclient"
+    default n
+
+config PKG_USING_MBEDTLS
+    bool "mbedtls"
+    default n
+
+config PKG_USING_MBEDTLS_DIGICERT_ROOT_CA
+    bool
+    default n
+
+config PKG_USING_MBEDTLS_CLOBALSIGN_ROOT_CA
+    bool
+    default n
+
+config WEBCLIENT_USING_FILE_DOWMLOAD
+    bool "webclient download"
+    default n
+
+menu "pahomqtt"
+
+config PKG_USING_PAHOMQTT
+    bool "pahomqtt"
+    default n
+
+if PKG_USING_PAHOMQTT
+
+choice
+    prompt "MQTT mode"
+    default PAHOMQTT_PIPE_MODE
+
+config PAHOMQTT_PIPE_MODE
+    bool "Pipe mode: high performance and depends on DFS"
+    select RT_USING_DEVICE_IPC
+
+config PAHOMQTT_UDP_MODE
+    bool "UDP mode: small footprint, need net supported loopback"
+
+endchoice
+
+config PKG_PAHOMQTT_SUBSCRIBE_HANDLERS
+    int "Max pahomqtt subscribe topic handlers"
+    default 1
+    range 1 8
+
+endif
+
+endmenu
+
+config PKG_USING_WEBNET
+    bool "webnet"
+    default n
+
+config WEBNET_USING_CGI
+    bool "webnet cgi"
+    default n
+
+config PKG_USING_WAVPLAYER
+    bool "wavplayer"
+    default n
+
+# real name is PKG_WP_USING_RECORD (wavplayer Kconfig); the misspelled
+# PKG_WP_USINGRECORD is kept here on purpose, to prove that selecting it is a
+# silent no-op in the pre-fix Kconfig.
+config PKG_WP_USING_RECORD
+    bool "wavplayer record"
+    default n
+
+config RT_USING_AUDIO
+    bool "audio framework"
+    default n
+
+config BSP_DRV_AUDIO
+    bool "Audio driver"
+    select RT_USING_AUDIO
+    default n
+
+# does not exist in this BSP (that BSP uses BSP_DRV_AUDIO): the old
+# "select BSP_USING_AUDIO" had no effect, keep it undefined to detect that.

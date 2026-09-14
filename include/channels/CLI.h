@@ -8,7 +8,12 @@
 
 #define CLI_CMD_BUFFER_SIZE    512
 #define CLI_HISTORY_LINES          5
-#define CLI_THREAD_STACK_SIZE  1024
+/*
+ * CLI 线程栈：CLI_run 在栈上有 512 字节输入缓冲，且每敲一个键都会经
+ * rt_kprintf -> rt_vsnprintf（完整实现）重绘整行，1024 字节会栈溢出
+ * （溢出会被内核栈检查捕获，并因在调度器上下文中调用 ulog 而触发断言）
+ */
+#define CLI_THREAD_STACK_SIZE  4096
 
 enum CLI_channelInputStat
 {

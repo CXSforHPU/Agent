@@ -30,3 +30,4 @@ __pycache__/
 .DS_Store
 
 src/driver/audio/AgentAudio.o
+src/tools/tool_mqtt/*.o

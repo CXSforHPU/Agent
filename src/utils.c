@@ -4,12 +4,28 @@
 #define LOG_LVL LOG_LVL_INFO
 #include <ulog.h>
 
+/* 思考过程是否已开始输出（用于整段连续打印，避免逐片段刷日志） */
+static rt_bool_t g_reasoning_started = RT_FALSE;
+
 /*
  * @brief 打印思考过程
+ * @note  推理模型的思考内容是逐片段流式返回的（每片段可能只有 1 个字符），
+ *        若逐片段调 LOG_I 会把串口刷爆；这里首片段加前缀、其后连续追加，
+ *        与正文流式输出保持一致的可读性
  */
 void print_reasoning(const char *text)
 {
-    LOG_I("Reasoning: \n%s", text);
+    if (text == RT_NULL)
+    {
+        return;
+    }
+
+    if (!g_reasoning_started)
+    {
+        rt_kprintf("\n[thinking] ");
+        g_reasoning_started = RT_TRUE;
+    }
+    rt_kprintf("%s", text);
 }
 
 /*
@@ -22,9 +38,11 @@ void print_tool_call(const char *text)
 
 /*
  * @brief 打印回复内容
+ * @note  正文开始意味着本轮思考结束，复位标记使下一轮思考重新起头
  */
 void print_context(const char *text)
 {
+    g_reasoning_started = RT_FALSE;
     rt_kprintf("%s", text);
 }
 
