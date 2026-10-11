@@ -16,8 +16,8 @@ void init_tools(void)
 
     /* ========== add ========== */
     cJSON *props_add = cJSON_CreateObject();
-    create_property(props_add, "a", "double", "First number");
-    create_property(props_add, "b", "double", "Second number");
+    create_property(props_add, "a", "number", "First number");
+    create_property(props_add, "b", "number", "Second number");
 
     cJSON *required_add = cJSON_CreateArray();
     cJSON_AddItemToArray(required_add, cJSON_CreateString("a"));
@@ -29,8 +29,8 @@ void init_tools(void)
 
     /* ========== mul ========== */
     cJSON *props_mul = cJSON_CreateObject();
-    create_property(props_mul, "a", "double", "First multiplier");
-    create_property(props_mul, "b", "double", "Second multiplier");
+    create_property(props_mul, "a", "number", "First multiplier");
+    create_property(props_mul, "b", "number", "Second multiplier");
 
     cJSON *required_mul = cJSON_CreateArray();
     cJSON_AddItemToArray(required_mul, cJSON_CreateString("a"));
@@ -42,8 +42,8 @@ void init_tools(void)
 
     /* ========== compare ========== */
     cJSON *props_cmp = cJSON_CreateObject();
-    create_property(props_cmp, "a", "double", "Number A to compare");
-    create_property(props_cmp, "b", "double", "Number B to compare");
+    create_property(props_cmp, "a", "number", "Number A to compare");
+    create_property(props_cmp, "b", "number", "Number B to compare");
 
     cJSON *required_cmp = cJSON_CreateArray();
     cJSON_AddItemToArray(required_cmp, cJSON_CreateString("a"));
@@ -57,7 +57,7 @@ void init_tools(void)
     /* ========== mqtt_connect ========== */
     /* 连接 broker：未启动则启动，未连上则等待（发布/订阅内部也会自动做这一步） */
     cJSON *props_mqtt_conn = cJSON_CreateObject();
-    create_property(props_mqtt_conn, "timeout_ms", "double",
+    create_property(props_mqtt_conn, "timeout_ms", "number",
                     "How long to wait for the connection, in milliseconds "
                     "(default: the built-in connect wait).");
 
@@ -133,7 +133,7 @@ void init_tools(void)
     /* ========== mqtt_receive ========== */
     /* 取出 poll 模式缓存的消息 */
     cJSON *props_mqtt_recv = cJSON_CreateObject();
-    create_property(props_mqtt_recv, "max", "double",
+    create_property(props_mqtt_recv, "max", "number",
                     "Maximum number of buffered messages to fetch (up to 8).");
     create_property(props_mqtt_recv, "topic", "string",
                     "Only fetch messages of this topic (wildcards supported).");
@@ -161,7 +161,7 @@ void init_tools(void)
                     "Omit it when the whole payload is a bare number (e.g. '35').");
     create_property(props_mqtt_rule, "op", "string",
                     "Comparison operator: '>', '>=', '<', '<=', '==' or '!=' (default '>').");
-    create_property(props_mqtt_rule, "value", "double",
+    create_property(props_mqtt_rule, "value", "number",
                     "Threshold value, e.g. 30.");
 
     cJSON *required_mqtt_rule = cJSON_CreateArray();
@@ -182,7 +182,7 @@ void init_tools(void)
     cJSON *props_mqtt_hist = cJSON_CreateObject();
     create_property(props_mqtt_hist, "topic", "string",
                     "Topic filter to summarize; omit to summarize every subscribed topic.");
-    create_property(props_mqtt_hist, "max", "double",
+    create_property(props_mqtt_hist, "max", "number",
                     "How many recent messages to list per topic (default 8).");
 
     cJSON *required_mqtt_hist = cJSON_CreateArray();

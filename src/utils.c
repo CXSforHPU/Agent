@@ -465,7 +465,7 @@ cleanup:
 /*
  * @brief 根据 file_id 下载文件
  */
-static int agent_multi_get_file(const char *file_id, const char *path)
+static rt_err_t agent_multi_get_file(const char *file_id, const char *path)
 {
     char url[128] = {0};
     rt_snprintf(url, sizeof(url), "%s/%s", PKG_AGENT_DOWNLOAD_URL, file_id);
@@ -710,7 +710,7 @@ void agent_file_op_deinit(void)
  * @param file_id 文件 ID
  * @return RT_EOK 成功
  */
-rt_err_t down_load(const char *path, const char *file_id)
+rt_err_t agent_down_load(const char *path, const char *file_id)
 {
     if (g_file_op_mq_input == RT_NULL)
     {
@@ -774,5 +774,95 @@ char *agent_up_load(const char *path)
     LOG_I("upload complete, url=%s", result_url);
     return result_url;
 }
+
+/*
+ * @brief 文件操作 MSH 命令（合并自 msh_agent_download / msh_agent_upload）
+ *
+ * 用法：
+ *   <cmd> -h | --help | help
+ *   <cmd> up   | upload   <file_path>
+ *   <cmd> down | download <file_id> <save_path>
+ *
+ * - 子命令不区分大小写：本实现保留原始 argv 做匹配，调用方按字面传入；
+ *   up/down 短名 + upload/download 长名均接受，便于敲命令和脚本拼接。
+ * - 帮助触发：argc<2、"-h"、"--help"、"help" 任一命中即打印用法并返回 0。
+ * - 未知子命令：打印 error 并提示 "-h"，返回 -1。
+ * - MQ 未初始化：所有子命令都会先检查，直接返回 -1，避免后续 send 卡死。
+ * @note  入队的任务真正工作由 file_operation_work_thread 完成；本函数只负责
+ *        解析参数、打包 file_op_req 并向 g_file_op_mq_input 投递。
+ */
+static int msh_agent_upload_download(int argc, char *argv[])
+{
+    rt_mq_t file_op_mq = get_agent_file_op_mq_input();
+    const char *prog = (argc > 0 && argv[0] != RT_NULL) ? argv[0] : "upload_download";
+
+    /* 帮助：-h / --help / help / 不带子命令 */
+    if (argc < 2 ||
+        rt_strcmp(argv[1], "-h")    == 0 ||
+        rt_strcmp(argv[1], "--help") == 0 ||
+        rt_strcmp(argv[1], "help")   == 0)
+    {
+        rt_kprintf("Usage:\n");
+        rt_kprintf("  %s up   | upload   <file_path>            # upload file to server\n",   prog);
+        rt_kprintf("  %s down | download <file_id> <save_path>  # download file from server\n", prog);
+        rt_kprintf("  %s -h | --help | help                     # show this help\n",          prog);
+        return 0;
+    }
+
+    if (file_op_mq == RT_NULL)
+    {
+        rt_kprintf("error: file op mq not init\n");
+        return -1;
+    }
+
+    /* 子命令：上传 */
+    if (rt_strcmp(argv[1], "up") == 0 || rt_strcmp(argv[1], "upload") == 0)
+    {
+        if (argc < 3)
+        {
+            rt_kprintf("usage: %s up <file_path>\n", prog);
+            return -1;
+        }
+
+        file_op_req req;
+        rt_memset(&req, 0, sizeof(req));
+        req.op = CMD_AGENT_FILE_UPLOAD;
+        rt_strncpy(req.path, argv[2], sizeof(req.path) - 1);
+        req.path[sizeof(req.path) - 1] = '\0';
+
+        rt_mq_send(file_op_mq, &req, sizeof(req));
+        rt_kprintf("up_load task enqueued: %s\n", req.path);
+        return 0;
+    }
+
+    /* 子命令：下载 */
+    if (rt_strcmp(argv[1], "down") == 0 || rt_strcmp(argv[1], "download") == 0)
+    {
+        if (argc < 4)
+        {
+            rt_kprintf("usage: %s down <file_id> <save_path>\n", prog);
+            return -1;
+        }
+
+        file_op_req req;
+        rt_memset(&req, 0, sizeof(req));
+        req.op = CMD_AGENT_FILE_DOWNLOAD;
+        rt_strncpy(req.file_id, argv[2], sizeof(req.file_id) - 1);
+        req.file_id[sizeof(req.file_id) - 1] = '\0';
+        rt_strncpy(req.path, argv[3], sizeof(req.path) - 1);
+        req.path[sizeof(req.path) - 1] = '\0';
+
+        rt_mq_send(file_op_mq, &req, sizeof(req));
+        rt_kprintf("down_load task enqueued: %s -> %s\n", req.file_id, req.path);
+        return 0;
+    }
+
+    /* 未知子命令 */
+    rt_kprintf("error: unknown subcommand '%s'\n", argv[1]);
+    rt_kprintf("try '%s -h' for help\n", prog);
+    return -1;
+}
+
+MSH_CMD_EXPORT(msh_agent_upload_download, upload/download file by file_server);
 
 #endif
