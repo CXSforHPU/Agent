@@ -33,6 +33,17 @@
 
 ![](./pictures/demo.png)
 
+### mbedtls 证书不可用时
+
+1. 打开menuconfig，进入 `RT-Thread online packages → security packages → mbedtls -> Select Root Certificat`,选中 `Using user CA`
+![](./pictures/mbedtls选择userCA.png)
+
+2. 将 `Agent-latest\resource`目录下的 `*.cer`或自己的 `CA` 复制到 `mbedtls-xx\certs\`目录下面
+- 若出现无法正常编译问题，参考[在使用用户自定义证书，解析证书时会把md文档一同解析](https://github.com/RT-Thread-packages/mbedtls/pull/66)
+
+***注意`mbedtls`版本选择最新***
+- 旧发布版本加载 `user CA` 时，会将 `mbedtls-xx\certs\README.md` 一同编译进去，导致无法正常编译
+
 ## 架构
 框架由多个核心组件协同工作，实现智能代理完整能力。详细设计见 [框架文档](./docs/framework.md)。
 
