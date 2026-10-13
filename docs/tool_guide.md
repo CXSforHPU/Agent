@@ -48,8 +48,8 @@ agent_loop 按 function.name 查找已注册工具节点（search_agent_tool_nod
     "parameters": {
       "type": "object",
       "properties": {
-        "a": { "type": "double", "description": "First number" },
-        "b": { "type": "double", "description": "Second number" }
+        "a": { "type": "number", "description": "First number" },
+        "b": { "type": "number", "description": "Second number" }
       },
       "required": ["a", "b"]
     }
@@ -161,8 +161,8 @@ void tool_xxx(cJSON *args_obj, AgentToolNode_t node)
 ```c
     /* ========== xxx ========== */
     cJSON *props_xxx = cJSON_CreateObject();
-    create_property(props_xxx, "a", "double", "First number");
-    create_property(props_xxx, "b", "double", "Second number");
+    create_property(props_xxx, "a", "number", "First number");
+    create_property(props_xxx, "b", "number", "Second number");
 
     cJSON *required_xxx = cJSON_CreateArray();
     cJSON_AddItemToArray(required_xxx, cJSON_CreateString("a"));
@@ -255,8 +255,8 @@ void tool_mod(cJSON *args_obj, AgentToolNode_t node)
 ```c
     /* ========== mod ========== */
     cJSON *props_mod = cJSON_CreateObject();
-    create_property(props_mod, "a", "double", "Dividend");
-    create_property(props_mod, "b", "double", "Divisor");
+    create_property(props_mod, "a", "number", "Dividend");
+    create_property(props_mod, "b", "number", "Divisor");
 
     cJSON *required_mod = cJSON_CreateArray();
     cJSON_AddItemToArray(required_mod, cJSON_CreateString("a"));
@@ -377,9 +377,75 @@ void tool_word_count(cJSON *args_obj, AgentToolNode_t node)
 
 ### 6.2 参数 schema 约定
 
-- 类型建议与现有代码保持一致：数值用 `"double"`，文本用 `"string"`，布尔用 `"true"`/`"false"`（cJSON 支持 `cJSON_IsNumber` / `cJSON_IsString` / `cJSON_IsBool` 校验）。
-- 必填参数务必加入 `required` 数组；可选参数不加入，但执行函数内要容忍缺失。
-- 属性描述（description）与工具描述请写清楚，直接影响模型调用的准确率。
+#### 6.2.1 数值类型选型
+
+OpenAI/JSON Schema 严格模式下,数值类参数只允许 `integer` 与 `number` 两种 `type`,两者在 cJSON 端都通过 `cJSON_IsNumber` 校验,但语义不同:
+
+| `type` | 含义 | LLM 端 | C 端取值 | 典型场景 |
+|---|---|---|---|---|
+| `integer` | 整数,无小数部分 | int64 | `(long)x->valueint` | 计数、索引、ID、档位、循环次数 |
+| `number`  | 浮点数,允许小数 | float64 | `(double)x->valuedouble` | 长度/重量/温度、比例、坐标、统计量 |
+
+**关键差异**:
+
+- 看到 `integer` 时 LLM 倾向发整数(避免 `5.0` 这类尾零);看到 `number` 可以发小数。
+- cJSON 内部统一以 double 存储,**两种 `type` 都满足 `cJSON_IsNumber`**,单看校验无法区分整数/浮点。如需在执行函数中严格区分,可比较 `x->valueint != x->valuedouble`。
+- `valueint` 在 cJSON 中为 `int`,32 位平台 ±2^31、64 位平台约 ±2^31;超界用 `valuedouble` 接收并自行强转 `int64_t` / `long long`。
+
+#### 6.2.2 `integer` 注册与解析示例
+
+```c
+/* 注册 */
+cJSON *props = cJSON_CreateObject();
+create_property(props, "count", "integer", "How many items to process (>= 1)");
+create_property(props, "page",  "integer", "Page index, 0-based");
+
+/* 解析 */
+cJSON *count = cJSON_GetObjectItemCaseSensitive(args, "count");
+cJSON *page  = cJSON_GetObjectItemCaseSensitive(args, "page");
+if (!count || !page || !cJSON_IsNumber(count) || !cJSON_IsNumber(page))
+{
+    node->ret.ret = RT_ERROR;
+    return;
+}
+long n   = (long)count->valueint;
+long idx = (long)page->valueint;
+if (n < 1 || idx < 0) { /* 业务校验 */ }
+```
+
+#### 6.2.3 `number` 注册与解析示例
+
+```c
+/* 注册 */
+cJSON *props = cJSON_CreateObject();
+create_property(props, "voltage",   "number", "Measured voltage in volts (e.g. 3.3)");
+create_property(props, "threshold", "number", "Threshold to compare against, range 0.0 - 1.0");
+
+/* 解析 */
+cJSON *v = cJSON_GetObjectItemCaseSensitive(args, "voltage");
+cJSON *t = cJSON_GetObjectItemCaseSensitive(args, "threshold");
+if (!v || !t || !cJSON_IsNumber(v) || !cJSON_IsNumber(t))
+{
+    node->ret.ret = RT_ERROR;
+    return;
+}
+double voltage   = v->valuedouble;
+double threshold = t->valuedouble;
+```
+
+#### 6.2.4 常见误区
+
+- **不要混用**:`number` 接整数浪费精度,`integer` 接小数会被 LLM 四舍五入,边界处极易翻车。
+- **不要传字符串数字**:LLM 偶尔把数字包成 `"3.3"` 字符串,即便 schema 是 `number` 也会出现。执行函数必须 `cJSON_IsNumber` 校验;若模型反复误发,在 description 里强调 `Please send a number, not a string`。
+- **大数/精度**:`integer` 超过 2^53、`number` 超过 15~16 位有效数字会丢精度,业务侧先确认范围再选 `type`。
+- **格式化输出**:`%d` 配 `valueint`,`%f` / `%lf` 配 `valuedouble`,别混。
+
+#### 6.2.5 其它类型与约定
+
+- 文本用 `"string"`,执行函数用 `cJSON_IsString` 校验,取 `valuestring`。
+- 布尔用 `"true"` / `"false"`(备注:OpenAI 严格 schema 中布尔 `type` 应写 `"boolean"`,此处保留现有 cJSON 风格;若切到 strict 模式需要再统一改),执行函数用 `cJSON_IsBool` 校验,取 `valueint` 判 0/非 0。
+- 必填参数务必加入 `required` 数组;可选参数不加入,但执行函数内要容忍缺失。
+- 属性描述(description)与工具描述请写清楚,直接影响模型调用的准确率;数值参数最好在 description 里写出**单位 / 范围 / 示例值**。
 
 ### 6.3 执行函数的硬性要求
 
