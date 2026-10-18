@@ -10,7 +10,10 @@
  * AgentLoop 通过 g_channel_ops（AgentChannelOps 函数指针）统一分发 init/reset，
  * 调用点不再出现通道相关 #ifdef。
  */
-#ifdef PKG_AGENT_CLI_CHANNEL
+#ifdef PKG_AGENT_LVGL_CHANNEL
+    #include "AgentLvglChannel.h"
+    #define AGENT_CHANNEL_OPS  (&agent_lvgl_ops)
+#elif defined(PKG_AGENT_CLI_CHANNEL)
     #include "CLI.h"
     #define AGENT_CHANNEL_OPS  (&agent_cli_ops)
 #elif defined(PKG_AGENT_WEBNET_CHANNEL)

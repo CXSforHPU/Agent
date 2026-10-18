@@ -85,9 +85,11 @@ static rt_err_t __append_assistant_message(Context_t self, ChatResponse_t resp)
         return RT_EOK;
     }
 
-    /* 有 tool_calls：保存含 tool_calls 的助手消息 */
+    /* 有 tool_calls：保存含 tool_calls 的助手消息。
+       assistant 消息必须先于对应的 tool 消息进入上下文，否则 API 会以 400 拒绝 */
     cJSON *assist_tc = cJSON_CreateObject();
     cJSON_AddStringToObject(assist_tc, "role", get_role_string(ROLE_ASSISTANT));
+    cJSON_AddStringToObject(assist_tc, "content", "");
     cJSON_AddItemToObject(assist_tc, "tool_calls", cJSON_Duplicate(resp->tool_call, cJSON_True));
     cJSON_AddItemToArray(self->message, assist_tc);
 
@@ -103,18 +105,65 @@ static rt_err_t __append_assistant_message(Context_t self, ChatResponse_t resp)
  */
 static rt_err_t __append_tool_message(Context_t self, const char *tool_call_id, Messages_t messages)
 {
-    cJSON *tool_msg = cJSON_CreateObject();
-    cJSON *content_obj = RT_NULL;
+    cJSON *tool_msg = RT_NULL;
+    char *content = RT_NULL;
+    rt_size_t total = 0;
+    rt_size_t used = 0;
+    int i;
+
+    if (self == RT_NULL || tool_call_id == RT_NULL)
+    {
+        return -RT_EINVAL;
+    }
+
+    /* 工具消息的 content 必须是字符串；多模态的数组格式只适用于 user 消息 */
+    if (messages != RT_NULL)
+    {
+        for (i = 0; i < messages->current_size; i++)
+        {
+            const char *item = messages_get_content_idx(messages, i);
+            if (messages_get_type_idx(messages, i) == TYPE_TEXT && item != RT_NULL)
+            {
+                total += rt_strlen(item);
+            }
+        }
+    }
+
+    content = (char *)rt_malloc(total + 1);
+    if (content == RT_NULL)
+    {
+        return -RT_ENOMEM;
+    }
+    content[0] = '\0';
+
+    if (messages != RT_NULL)
+    {
+        for (i = 0; i < messages->current_size; i++)
+        {
+            const char *item = messages_get_content_idx(messages, i);
+            if (messages_get_type_idx(messages, i) == TYPE_TEXT && item != RT_NULL)
+            {
+                rt_size_t len = rt_strlen(item);
+
+                rt_memcpy(content + used, item, len);
+                used += len;
+                content[used] = '\0';
+            }
+        }
+    }
+
+    tool_msg = cJSON_CreateObject();
+    if (tool_msg == RT_NULL)
+    {
+        rt_free(content);
+        return -RT_ENOMEM;
+    }
     cJSON_AddStringToObject(tool_msg, "role", get_role_string(ROLE_TOOL));
     cJSON_AddStringToObject(tool_msg, "tool_call_id", tool_call_id);
-
-    content_obj = to_content(messages);
-
-    cJSON_AddItemToObject(tool_msg, "content", content_obj);
+    cJSON_AddStringToObject(tool_msg, "content", content);
     cJSON_AddItemToArray(self->message, tool_msg);
+    rt_free(content);
 
-    tool_msg = RT_NULL;
-    content_obj = RT_NULL;
     return RT_EOK;
 }
 

@@ -254,6 +254,32 @@ static void init_agent(void)
 }
 
 /*
+ * @brief 为一个未执行的工具调用补写失败结果
+ * @note  assistant.tool_calls 中的每个 id 都必须有对应的 tool 消息，
+ *        未知工具/参数非法等跳过执行的情况也要回一条，否则下一轮请求会被 API 以 400 拒绝
+ */
+static void agent_append_tool_error(Context_t context, const char *tool_call_id, const char *text)
+{
+    Messages_t messages;
+
+    if (context == RT_NULL || tool_call_id == RT_NULL)
+    {
+        return;
+    }
+
+    messages = messages_create(1);
+    if (messages == RT_NULL)
+    {
+        return;
+    }
+    if (messages_append(messages, TYPE_TEXT, text) == RT_EOK)
+    {
+        context->append_tool_message(context, tool_call_id, messages);
+    }
+    messages_destroy(messages);
+}
+
+/*
  * @brief Agent 工具调用循环（最大 loop_max 轮）
  * @param g_context     上下文管理器
  * @param tools         工具定义 JSON 数组
@@ -317,6 +343,10 @@ static void agent_loop(Context_t g_context,
             break;
         }
 
+        /* 有 tool_calls：先保存带 tool_calls 的 assistant 消息，再执行工具。
+           顺序不能反：tool 消息必须能对应到前一条 assistant 消息里的 tool_calls */
+        g_context->append_assistant_message(g_context, resp);
+
         /* 执行所有 tool_calls */
         int tool_count = cJSON_GetArraySize(resp->tool_call);
         int dup_hits = 0;
@@ -325,30 +355,42 @@ static void agent_loop(Context_t g_context,
         for (int t = 0; t < tool_count; t++)
         {
             cJSON *tc_item = cJSON_GetArrayItem(resp->tool_call, t);
-            AgentToolNode_t tool_node = search_agent_tool_node(tc_item);
+            if (!tc_item) continue;
 
-            if (!tc_item || !tool_node) continue;
+            cJSON *id_node = cJSON_GetObjectItem(tc_item, "id");
+            /* id 缺失/非字符串时兜底，保证 append_tool_message 的 tool_call_id 有效 */
+            const char *id_str = (id_node && cJSON_IsString(id_node)) ? id_node->valuestring : "call_0";
 
             cJSON *tc_func = cJSON_GetObjectItemCaseSensitive(tc_item, "function");
             if (!tc_func || !cJSON_IsObject(tc_func))
             {
                 LOG_I("Tool call %d missing function field, skip\n", t);
+                agent_append_tool_error(g_context, id_str, "Tool call is missing the function field.");
                 continue;
             }
 
             cJSON *name_node = cJSON_GetObjectItemCaseSensitive(tc_func, "name");
             cJSON *args_node = cJSON_GetObjectItemCaseSensitive(tc_func, "arguments");
-            cJSON *id_node = cJSON_GetObjectItem(tc_item, "id");
             if (!name_node || !cJSON_IsString(name_node) || !args_node || !cJSON_IsString(args_node))
             {
                 LOG_I("Tool call %d invalid name/arguments, skip\n", t);
+                agent_append_tool_error(g_context, id_str, "Tool call has an invalid function name or arguments.");
                 continue;
             }
 
             const char *func_name = name_node->valuestring;
             const char *args_str = args_node->valuestring;
-            /* id 缺失/非字符串时兜底，保证 append_tool_message 的 tool_call_id 有效 */
-            const char *id_str = (id_node && cJSON_IsString(id_node)) ? id_node->valuestring : "call_0";
+
+            AgentToolNode_t tool_node = search_agent_tool_node(tc_item);
+            if (!tool_node)
+            {
+                char err_buf[96];
+
+                rt_snprintf(err_buf, sizeof(err_buf), "Unknown tool: %s", func_name);
+                LOG_W("%s\n", err_buf);
+                agent_append_tool_error(g_context, id_str, err_buf);
+                continue;
+            }
 
             /*
              * 重复调用检测：同一轮对话里已经用完全相同的参数调用过同一个工具，
@@ -398,6 +440,7 @@ static void agent_loop(Context_t g_context,
             if (!args_json)
             {
                 LOG_I("Tool %s parse arguments failed, skip execution\n", func_name);
+                agent_append_tool_error(g_context, id_str, "Tool arguments are not valid JSON.");
                 continue;
             }
 
@@ -407,6 +450,9 @@ static void agent_loop(Context_t g_context,
             /* 工具参数校验失败时 ret.messages 可能为 NULL */
             if (tool_ret_messages == RT_NULL)
             {
+                LOG_I("Tool %s returned no result\n", func_name);
+                agent_append_tool_error(g_context, id_str,
+                                        "Tool execution failed (invalid or missing arguments).");
                 cJSON_Delete(args_json);
                 continue;
             }
