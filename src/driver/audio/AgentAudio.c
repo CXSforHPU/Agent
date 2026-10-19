@@ -1,4 +1,5 @@
 #include "AgentAudio.h"
+#include "msh.h"
 
 #define LOG_TAG "Agent.Driver.Audio"
 #define LOG_LVL LOG_LVL_INFO

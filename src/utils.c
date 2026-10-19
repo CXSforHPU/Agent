@@ -1,9 +1,15 @@
 #include "utils.h"
 #include "AgentRuntime.h"   /* agent_is_running / agent_get_message_hub */
+#include "dfs_posix.h"
+#include "unistd.h"
 
 #define LOG_TAG "Agent.utils"
 #define LOG_LVL LOG_LVL_INFO
 #include <ulog.h>
+
+#ifdef PKG_AGENT_STT_ENABLE
+const char *agent_stt_transcribe(const char *path);
+#endif
 
 /* 思考过程是否已开始输出（用于整段连续打印，避免逐片段刷日志） */
 static rt_bool_t g_reasoning_started = RT_FALSE;
@@ -181,6 +187,73 @@ cJSON *to_content(Messages_t messages)
             }
 
             case TYPE_AUDIO:
+            {
+#ifdef PKG_AGENT_STT_ENABLE
+                const char *audio_path = messages_get_content_idx(messages, i);
+                const char *text = agent_stt_transcribe(audio_path);
+                /* 录音只是 STT 的临时输入，文本生成后立即删除，避免 SD 卡堆积 */
+                unlink(audio_path);
+                if (text != RT_NULL && text[0] != '\0')
+                {
+                    cJSON *t = cJSON_CreateObject();
+                    if (t != RT_NULL)
+                    {
+                        cJSON_AddStringToObject(t, "type",
+                            get_agent_content_type(TYPE_TEXT));
+                        cJSON_AddStringToObject(t,
+                            get_agent_content_type(TYPE_TEXT), text);
+                        cJSON_AddItemToArray(content_arr, t);
+                        break;
+                    }
+                }
+                LOG_W("[agent] STT failed for %s", audio_path);
+                /* DeepSeek 等纯文本模型不接受 audio_url，STT 失败后再回退上传
+                   音频会让整个请求 422；这里改为一条提示文本，保证请求送达 */
+                cJSON *hint = cJSON_CreateObject();
+                if (hint != RT_NULL)
+                {
+                    cJSON_AddStringToObject(hint, "type",
+                        get_agent_content_type(TYPE_TEXT));
+                    cJSON_AddStringToObject(hint,
+                        get_agent_content_type(TYPE_TEXT),
+                        "[语音消息转写失败，请再说一次]");
+                    cJSON_AddItemToArray(content_arr, hint);
+                }
+                break;
+#else
+                {
+                    char out_url[128] = {0};
+                    const char *uploaded_url = agent_up_load(
+                        messages_get_content_idx(messages, i));
+                    /* 上传完成后本地文件不再需要 */
+                    unlink(messages_get_content_idx(messages, i));
+                    if (!uploaded_url || uploaded_url[0] == '\0')
+                    {
+                        LOG_E("[agent] audio upload fail, skip item");
+                        continue;
+                    }
+                    rt_strncpy(out_url, uploaded_url, sizeof(out_url) - 1);
+                    out_url[sizeof(out_url) - 1] = '\0';
+
+                    cJSON *media = cJSON_CreateObject();
+                    cJSON *url_obj = cJSON_CreateObject();
+                    if (!media || !url_obj)
+                    {
+                        if (media) cJSON_Delete(media);
+                        if (url_obj) cJSON_Delete(url_obj);
+                        continue;
+                    }
+                    cJSON_AddStringToObject(media, "type",
+                        get_agent_content_type(TYPE_AUDIO));
+                    cJSON_AddStringToObject(url_obj, "url", out_url);
+                    cJSON_AddItemToObject(media,
+                        get_agent_content_type(TYPE_AUDIO), url_obj);
+                    cJSON_AddItemToArray(content_arr, media);
+                }
+                break;
+#endif /* PKG_AGENT_STT_ENABLE */
+            }
+
             case TYPE_IMAGE:
             case TYPE_VIDEO:
             {
@@ -282,8 +355,6 @@ void create_property(cJSON *props_obj, const char *name, const char *type, const
 
 /* 文件服务器 - 多模态 */
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
-#include "dfs_posix.h"
-#include "unistd.h"
 
 /* ==================== 静态全局变量 ==================== */
 static rt_mq_t g_file_op_mq_input = RT_NULL;
@@ -365,10 +436,6 @@ static int agent_post_file_stream(const char *URI, const char *filename,
         rc = -WEBCLIENT_NOMEM;
         goto cleanup;
     }
-    /* 音频等大文件上传耗时较长，放宽收发超时（120s），
-       避免慢速网络下上传中途超时导致服务器存下截断文件 */
-    webclient_set_timeout(session, 120000);
-
     webclient_header_fields_add(session, "Content-Length: %zu\r\n", total_length);
     webclient_header_fields_add(session, "Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
 
@@ -378,6 +445,11 @@ static int agent_post_file_stream(const char *URI, const char *filename,
         LOG_D("webclient_post stream fail %d", rc);
         goto cleanup;
     }
+
+    /* webclient_set_timeout() 作用在 session->socket 上，必须在 connect
+       成功之后调用；之前放在 post 前时 socket 还是 -1，设置不生效，实际仍是
+       webclient 默认的 6s 收发超时，大文件或慢响应会中途超时。 */
+    webclient_set_timeout(session, 120000);
 
     /* 1. 发送 multipart 头部 */
     wlen = rt_snprintf((char *)io_buf, IO_BUF_SZ,
@@ -735,6 +807,139 @@ rt_err_t agent_down_load(const char *path, const char *file_id)
     LOG_I("download task enqueued, file_id=%s", file_id);
     return RT_EOK;
 }
+
+#ifdef PKG_AGENT_STT_ENABLE
+/*
+ * @brief 把本地 WAV 通过 STT 接口转成文本（multipart POST，回 JSON）
+ *
+ * 与 agent_post_file_stream 类似，区别是不取回 URL，而是把响应体里的
+ * {"code":0,"data":{"text":"..."}} 里的 text 解析出来返回。返回的指针指向
+ * 静态缓冲区，调用者需及时拷贝。
+ *
+ * @param path 本地 WAV 文件路径
+ * @return 转写后的文本；NULL 表示失败
+ */
+const char *agent_stt_transcribe(const char *path)
+{
+    static char result_text[1024];
+    int fd = -1, rc = WEBCLIENT_OK;
+    unsigned char *io_buf = RT_NULL;
+    struct webclient_session *session = RT_NULL;
+    int wlen, rlen, total = 0;
+    int resp_code = 0;
+
+    result_text[0] = '\0';
+
+    if (path == RT_NULL)
+    {
+        return RT_NULL;
+    }
+    fd = open(path, O_RDONLY);
+    if (fd < 0)
+    {
+        LOG_W("[stt] open %s fail", path);
+        return RT_NULL;
+    }
+    rt_off_t file_sz = lseek(fd, 0, SEEK_END);
+    if (file_sz < 0)
+    {
+        close(fd);
+        return RT_NULL;
+    }
+    lseek(fd, 0, SEEK_SET);
+
+#define STT_IO_BUF_SZ 1024
+    io_buf = (unsigned char *)rt_malloc(STT_IO_BUF_SZ);
+    if (io_buf == RT_NULL) { close(fd); return RT_NULL; }
+
+    char boundary[60];
+    rt_snprintf(boundary, sizeof(boundary), "----------------------------%012d", rt_tick_get());
+    const char *uri = PKG_AGENT_STT_URL;
+    const char *filename = strrchr(path, '/');
+    filename = filename ? filename + 1 : path;
+    char form_data[128];
+    rt_snprintf(form_data, sizeof(form_data),
+                "name=\"file\"; filename=\"%s\"", filename);
+    size_t prefix_len = rt_snprintf(RT_NULL, 0,
+            "--%s\r\nContent-Disposition: form-data; %s\r\n"
+            "Content-Type: audio/wav\r\n\r\n",
+            boundary, form_data);
+    size_t suffix_len = rt_snprintf(RT_NULL, 0, "\r\n--%s--\r\n", boundary);
+    size_t total_length = prefix_len + (size_t)file_sz + suffix_len;
+
+    session = webclient_session_create(WEBCLIENT_HEADER_BUFSZ);
+    if (session == RT_NULL) { rt_free(io_buf); close(fd); return RT_NULL; }
+
+    webclient_header_fields_add(session, "Content-Length: %zu\r\n", total_length);
+    webclient_header_fields_add(session,
+        "Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
+
+    LOG_I("[stt] POST %s, file=%s (%d bytes)", uri, filename, (int)file_sz);
+    rc = webclient_post(session, uri, RT_NULL, 0);
+    if (rc < 0) { LOG_W("[stt] post connect fail %d", rc); goto out; }
+
+    /* 首次识别要加载 whisper 模型，可能耗时数十秒；socket 已连上后再把
+       收发超时放宽到 120s（见 agent_post_file_stream 中的说明）。 */
+    webclient_set_timeout(session, 120000);
+
+    /* prefix */
+    wlen = rt_snprintf((char *)io_buf, STT_IO_BUF_SZ,
+            "--%s\r\nContent-Disposition: form-data; %s\r\n"
+            "Content-Type: audio/wav\r\n\r\n",
+            boundary, form_data);
+    if (webclient_write(session, io_buf, wlen) != wlen) { rc = -1; goto out; }
+
+    /* file body */
+    while ((rlen = read(fd, io_buf, STT_IO_BUF_SZ)) > 0)
+    {
+        if (webclient_write(session, io_buf, rlen) != rlen) { rc = -1; goto out; }
+    }
+
+    /* suffix */
+    wlen = rt_snprintf((char *)io_buf, STT_IO_BUF_SZ, "\r\n--%s--\r\n", boundary);
+    if (webclient_write(session, io_buf, wlen) != wlen) { rc = -1; goto out; }
+
+    extern int webclient_handle_response(struct webclient_session *session);
+    resp_code = webclient_handle_response(session);
+    if (resp_code != 200)
+    {
+        LOG_W("[stt] http resp code %d", resp_code);
+        rc = -1;
+        goto out;
+    }
+    int clen = (int)webclient_content_length_get(session);
+    int want = (clen > 0 && clen < (int)sizeof(result_text) - 1) ? clen
+              : (int)sizeof(result_text) - 1;
+    while (total < want)
+    {
+        rlen = webclient_read(session, (unsigned char *)result_text + total, want - total);
+        if (rlen <= 0) break;
+        total += rlen;
+    }
+    result_text[total] = '\0';
+    {
+        cJSON *root = cJSON_Parse(result_text);
+        if (root)
+        {
+            cJSON *data = cJSON_GetObjectItem(root, "data");
+            cJSON *txt = data ? cJSON_GetObjectItem(data, "text") : RT_NULL;
+            if (txt && cJSON_IsString(txt) && txt->valuestring)
+            {
+                rt_strncpy(result_text, txt->valuestring, sizeof(result_text) - 1);
+                result_text[sizeof(result_text) - 1] = '\0';
+            }
+            cJSON_Delete(root);
+        }
+    }
+
+out:
+    if (rc < 0) result_text[0] = '\0';
+    if (session) webclient_close(session);
+    if (io_buf) rt_free(io_buf);
+    if (fd >= 0) close(fd);
+    return result_text[0] ? result_text : RT_NULL;
+}
+#endif /* PKG_AGENT_STT_ENABLE */
 
 /*
  * @brief 上传文件（同步等待返回 URL）

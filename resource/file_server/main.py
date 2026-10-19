@@ -4,6 +4,8 @@ import os
 import uuid
 import sqlite3
 import mimetypes
+import threading
+import asyncio
 from datetime import datetime
 from typing import Dict, Any
 
@@ -191,10 +193,78 @@ def delete_file(file_id: str):
 
     if os.path.exists(item["store_path"]):
         os.remove(item["store_path"])
-    cur.execute("DELETE FROM file_record WHERE file_id = ?", (file_id,))
+    cur.execute("DELETE FROM file_record WHERE file_id=?", (file_id,))
     conn.commit()
     conn.close()
     return {"code": 0, "msg": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# 本地语音转文本 (轻量化，openai-whisper tiny/base)
+# 接受与 /upload 同样的 multipart file 字段，返回 {"code":0,"data":{"text":...}}
+# ---------------------------------------------------------------------------
+_STT_MODEL = os.getenv("STT_MODEL", "tiny")        # tiny / base / small
+_STT_LANG  = os.getenv("STT_LANG",  "zh")
+_stt_lock  = threading.Lock()
+_stt_model = None
+
+
+def _stt_get_model():
+    global _stt_model
+    with _stt_lock:
+        if _stt_model is None:
+            import whisper
+            print(f"[stt] loading whisper model: {_STT_MODEL} (lang={_STT_LANG}) ...",
+                  flush=True)
+            _stt_model = whisper.load_model(_STT_MODEL)
+            print("[stt] model ready", flush=True)
+        return _stt_model
+
+
+def _stt_transcribe(tmp_path):
+    import soundfile as sf
+
+    model = _stt_get_model()
+    # whisper 需要 16 kHz 单声道 float32 in [-1, 1]；soundfile 直读避免 ffmpeg 依赖
+    audio, _sr = sf.read(tmp_path, dtype="float32")
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    with _stt_lock:
+        result = model.transcribe(audio, language=_STT_LANG,
+                                  fp16=False, beam_size=1)
+    return (result.get("text") or "").strip()
+
+
+@app.on_event("startup")
+def _stt_preload():
+    """启动时后台加载模型，避免板子第一次 /stt 请求等模型下载/加载数十秒。"""
+    def _work():
+        try:
+            _stt_get_model()
+        except Exception as e:
+            print(f"[stt] preload failed: {e}", flush=True)
+
+    threading.Thread(target=_work, daemon=True).start()
+
+
+@app.post("/stt", summary="本地语音转文本")
+async def stt(file: UploadFile = File(...)):
+    tmp_path = os.path.join(UPLOAD_DIR, f"stt_{uuid.uuid4().hex}.wav")
+    body = await file.read()
+    with open(tmp_path, "wb") as f:
+        f.write(body)
+    try:
+        # 识别是 CPU 密集的同步调用，放到线程池里跑，避免阻塞事件循环导致
+        # 同一进程的 /upload、/download 请求排队（板子会表现为连接超时）。
+        text = await asyncio.to_thread(_stt_transcribe, tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"stt failed: {e}")
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+    return {"code": 0, "data": {"text": text}}
 
 
 if __name__ == "__main__":
