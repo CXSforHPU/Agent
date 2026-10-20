@@ -124,6 +124,32 @@ rt_err_t mqtt_do_disconnect(char *out, rt_size_t out_size)
 }
 
 /*
+ * paho pipe 模式的工作线程一次 read() 会把管道里积压的多条报文读进同一缓冲，
+ * 但只序列化发送第一条，其余静默丢失；这里给每次写管道预留时间槽，保证逐条被取走
+ */
+#define MQTT_PUB_MIN_GAP_MS 100
+
+static RT_DEFINE_SPINLOCK(s_pub_slot_lock);
+static rt_tick_t s_pub_next_tick;
+
+static void mqtt_pub_wait_slot(void)
+{
+    rt_tick_t now, slot;
+    rt_base_t level;
+
+    level = rt_spin_lock_irqsave(&s_pub_slot_lock);
+    now = rt_tick_get();
+    slot = ((rt_int32_t)(s_pub_next_tick - now) > 0) ? s_pub_next_tick : now;
+    s_pub_next_tick = slot + rt_tick_from_millisecond(MQTT_PUB_MIN_GAP_MS);
+    rt_spin_unlock_irqrestore(&s_pub_slot_lock, level);
+
+    if (slot != now)
+    {
+        rt_thread_delay(slot - now);
+    }
+}
+
+/*
  * @brief 发布消息到指定话题
  * @param topic      目标话题（NULL 使用默认发布话题）
  * @param message    消息内容
@@ -167,6 +193,7 @@ rt_err_t mqtt_do_publish(const char *topic, const char *message, char *out, rt_s
         return RT_ERROR;
     }
 
+    mqtt_pub_wait_slot();
     if (paho_mqtt_publish(&s_client, MQTT_TOOL_QOS, pub_topic, message) != PAHO_SUCCESS)
     {
         buf_append(out, out_size, &used,
@@ -685,5 +712,115 @@ int mqtt_do_history(const char *topic_filter, int max, char *out, rt_size_t out_
 
     lock_give();
     return topics;
+}
+
+/* ==========================================================================
+ * 应用层直接调用的公共函数（外部模块如 sensor 上行、LVGL 订阅）
+ * ========================================================================== */
+
+/*
+ * @brief 应用层发布接口：语义与 mqtt_do_publish 一致
+ * @note  发布/订阅前会先确保 client 已启动并连上 broker
+ */
+rt_err_t mqtt_tool_publish(const char *topic, const char *payload,
+                           char *out, rt_size_t out_size)
+{
+    return mqtt_do_publish(topic, payload, out, out_size);
+}
+
+/* 取 {"val":X,...} 的 val；非 JSON 时把整条 payload 当数值 */
+static rt_bool_t parse_payload_value(const char *payload, double *out)
+{
+    const char *p;
+
+    if (payload == RT_NULL || payload[0] == '\0') return RT_FALSE;
+
+    p = payload;
+    while (*p == ' ' || *p == '\t') p++;
+
+    /* JSON 形如 {"val":384.0,"ts":1234}：取 "val" 字段 */
+    {
+        const char *key = rt_strstr(p, "\"val\"");
+        if (key != RT_NULL)
+        {
+            key += 5;
+            while (*key == ' ' || *key == ':' || *key == '\t') key++;
+            if (*key != '\0')
+            {
+                char *endp = RT_NULL;
+                double v = strtod(key, &endp);
+
+                if (endp != key)
+                {
+                    *out = v;
+                    return RT_TRUE;
+                }
+            }
+        }
+    }
+
+    /* 退化为整条 payload 视为数值 */
+    {
+        char *endp = RT_NULL;
+        double v = strtod(p, &endp);
+
+        if (endp != p)
+        {
+            *out = v;
+            return RT_TRUE;
+        }
+    }
+    return RT_FALSE;
+}
+
+/*
+ * @brief 读取已订阅话题（精确匹配）的最新一条消息数值，只读、不消费历史
+ * @note  历史为环形缓冲，最新一条在 (hist_head + hist_count - 1) % DEPTH
+ */
+rt_bool_t mqtt_tool_topic_latest(const char *topic_filter,
+                                  double *value_out, rt_tick_t *tick_out)
+{
+    rt_bool_t found = RT_FALSE;
+    rt_tick_t newest_tick = 0;
+    double    newest_val  = 0.0;
+    int i;
+
+    if (!lock_take()) return RT_FALSE;
+
+    for (i = 0; i < MQTT_TOOL_MAX_SUB_TOPICS; i++)
+    {
+        const mqtt_sub_entry_t *e = &s_subs[i];
+
+        if (!e->want || e->hist_count == 0) continue;
+
+        if (topic_filter != RT_NULL && topic_filter[0] != '\0')
+        {
+            if (rt_strcmp(e->topic, topic_filter) != 0) continue;
+        }
+
+        rt_uint8_t last_idx = (rt_uint8_t)((e->hist_head + e->hist_count - 1) %
+                                            MQTT_TOOL_HISTORY_DEPTH);
+        const mqtt_hist_item_t *h = &e->hist[last_idx];
+        double v;
+
+        if (!parse_payload_value(h->payload, &v)) continue;
+
+        /* 同一 topic_filter 多个槽位匹配时取最新一条 */
+        if (h->tick >= newest_tick)
+        {
+            newest_tick = h->tick;
+            newest_val  = v;
+            found = RT_TRUE;
+        }
+    }
+
+    lock_give();
+
+    if (found)
+    {
+        if (value_out != RT_NULL) *value_out = newest_val;
+        if (tick_out  != RT_NULL) *tick_out  = newest_tick;
+    }
+    return found;
 }
 

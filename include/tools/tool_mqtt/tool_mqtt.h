@@ -422,6 +422,29 @@ void mqtt_tool_stop(void);
 rt_bool_t mqtt_tool_is_started(void);
 
 /*
+ * @brief 通过 MQTT 引擎发布一条消息（自动启动/连接 broker）
+ * @note  给应用层（如 sensor 上行）使用，等价于 LLM 调 mqtt_publish 工具
+ * @param topic   话题
+ * @param payload 报文内容（明文 / JSON 字符串），不能为 RT_NULL
+ * @param out     结果文本缓冲（可为 NULL）
+ * @param out_size 缓冲大小
+ * @return RT_EOK 成功，RT_ERROR 失败
+ */
+rt_err_t mqtt_tool_publish(const char *topic, const char *payload,
+                           char *out, rt_size_t out_size);
+
+/*
+ * @brief 取某订阅话题的最近一条数值消息
+ * @note  非 消费，可重复调用；解析 {"val":X,"ts":Z}或纯数值字符串；UI 面板走这里订阅传感器
+ * @param topic_filter 话题过滤器（精确匹配订阅记录里的 topic，或传 NULL/空取任意话题）
+ * @param value_out    输出：解析出的数值（可为 NULL）
+ * @param tick_out     输出：消息到达时戳（rt_tick_get 单位，可为 NULL）
+ * @return RT_TRUE 至少收到过一条消息；RT_FALSE 该话题从未收到
+ */
+rt_bool_t mqtt_tool_topic_latest(const char *topic_filter,
+                                  double *value_out, rt_tick_t *tick_out);
+
+/*
  * @brief 查询当前连接状态（用于结果文本与排查）
  * @return "stopped" / "connecting" / "connected"
  */
