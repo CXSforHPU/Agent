@@ -1,43 +1,35 @@
-# 工具开发指南：添加示例与自定义工具注册
+# 工具开发指南
 
-> 面向开发者的工具扩展教程：如何为 Agent 框架添加新工具、如何自定义工具注册。
-> 框架结构见 [framework.md](./framework.md)，API 见 [api.md](./api.md)。
+本文说明如何给 Agent 添加工具、注册工具，以及工具执行函数的约定。框架结构见 [framework.md](./framework.md)，接口见 [api.md](./api.md)。
 
----
+## 1. 调用流程
 
-## 1. 工具系统工作原理
+工具调用由模型发起，框架负责执行和回填：
 
-Agent 的工具调用是**模型驱动**的闭环：
-
-```
-LLM 判定需要工具 → 返回 tool_calls（含函数名 + 参数 JSON）
-        │
-        ▼
-agent_loop 按 function.name 查找已注册工具节点（search_agent_tool_node）
-        │
-        ▼
-调用工具执行函数 tool_xxx(args_json, node)
-        │
-        ▼
+```text
+LLM 返回 tool_calls（函数名 + 参数 JSON）
+        ↓
+agent_loop 按 function.name 查找工具节点
+        ↓
+校验参数 JSON，调用 tool_xxx(args, node)
+        ↓
 工具把结果写入 node->ret.messages
-        │
-        ▼
-结果以 role=tool 消息追加进上下文（append_tool_message）
-        │
-        ▼
-进入下一轮 chat()，LLM 基于工具结果继续回答
+        ↓
+结果以 role=tool 消息写入上下文
+        ↓
+进入下一轮 chat()
 ```
 
-**关键点**：
-- 工具执行函数由你实现，签名固定：`void tool_xxx(cJSON *args, AgentToolNode_t node)`。
-- 工具的 JSON 定义（名字、描述、参数 schema）在 `init_tools()` 中注册，会被发送给 LLM，**描述写得越好，模型调用越准**。
-- 工具代码只需放在 `src/tools/*.c`，`SConscript` 自动收录（遍历目录），**无需修改构建脚本**。
+几条硬性规则：
 
----
+- 工具函数签名固定为 `void tool_xxx(cJSON *args, AgentToolNode_t node)`。
+- 工具结果必须是文本。`role=tool` 消息只接受字符串内容。
+- 每个 `tool_call_id` 都必须有一条对应的 tool 消息。工具不存在、参数错误、执行失败时，框架也会补一条错误结果。
+- 工具结果为空时，模型容易反复调用同一个工具。返回内容至少包含结果、失败原因或下一步建议。
 
-## 2. 工具的 JSON 结构（LLM 视角）
+## 2. 工具定义
 
-每个工具最终以如下结构发送给模型（OpenAI function-calling 风格）：
+每个工具以 OpenAI function-calling 格式发给模型：
 
 ```json
 {
@@ -57,49 +49,50 @@ agent_loop 按 function.name 查找已注册工具节点（search_agent_tool_nod
 }
 ```
 
-框架提供三个工具函数帮助你构建这个结构（`include/utils.h`）：
+框架提供三个构造函数（`include/utils.h`）：
 
 | 函数 | 作用 |
 |---|---|
-| `create_property(props_obj, name, type, desc)` | 添加单个属性 `{type, description}` |
+| `create_property(props_obj, name, type, desc)` | 添加属性 `{type, description}` |
 | `create_param_obj(props_obj, required_arr)` | 包装成 `{type:"object", properties, required}` |
-| `create_tool_item(func_name, desc, params_obj)` | 包装成完整工具项 `{type:"function", function:{...}}` |
+| `create_tool_item(func_name, desc, params_obj)` | 包装成完整的工具项 |
 
----
+参数 schema 的写法：
 
-## 3. 添加新工具的标准流程
+- 类型名用小写：`integer`、`number`、`string`、`boolean`、`object`、`array`。
+- 整数用 `integer`，浮点用 `number`。两者在 cJSON 里都通过 `cJSON_IsNumber` 校验，区别在模型侧：`integer` 会倾向发整数。
+- 数组要写 `items`，对象要写 `properties`，不要只写一个 `"type": "array"`。
+- 必填参数放进 `required`，可选参数不要放，但执行函数要能处理缺失。
+- `description` 写清含义、单位、范围和示例值。模型是否调用正确，很大程度取决于这段文字。
 
-以内置工具 `add` 为模板，添加一个新工具共 **4 步**。
+## 3. 添加工具
 
-### 第 1 步：创建工具头文件
+以 `add` 为例，共 4 步。
 
-新建 `include/tools/tool_xxx.h`（xxx 为工具名）：
+### 3.1 创建头文件
+
+新建 `include/tools/tool_xxx.h`：
 
 ```c
 #ifndef __AGENT_TOOL_XXX_H__
 #define __AGENT_TOOL_XXX_H__
+
 #include "tool_base.h"
 
-/*
- * @brief 工具执行函数
- * @param args_obj 参数 JSON 对象
- * @param node     工具链表节点（用于返回结果）
- */
 void tool_xxx(cJSON *args_obj, AgentToolNode_t node);
 
-#endif // __AGENT_TOOL_XXX_H__
+#endif /* __AGENT_TOOL_XXX_H__ */
 ```
 
-### 第 2 步：实现工具函数
+### 3.2 实现工具函数
 
-新建 `src/tools/tool_xxx.c`，**必须遵循固定骨架**：
+新建 `src/tools/tool_xxx.c`：
 
 ```c
 #include "tool_xxx.h"
 
 void tool_xxx(cJSON *args_obj, AgentToolNode_t node)
 {
-    /* 1. 参数校验：args 或 node 为空时兜底释放并置错误 */
     if (!args_obj || !node)
     {
         if (node)
@@ -114,14 +107,13 @@ void tool_xxx(cJSON *args_obj, AgentToolNode_t node)
         return;
     }
 
-    /* 2. 释放上一次调用的旧结果（节点会复用，防止消息堆积） */
+    /* 节点会复用，先释放上一次的结果 */
     if (node->ret.messages)
     {
         messages_destroy(node->ret.messages);
         node->ret.messages = RT_NULL;
     }
 
-    /* 3. 解析并校验参数（必须检查字段存在性与类型） */
     cJSON *a_json = cJSON_GetObjectItemCaseSensitive(args_obj, "a");
     cJSON *b_json = cJSON_GetObjectItemCaseSensitive(args_obj, "b");
     if (!a_json || !b_json || !cJSON_IsNumber(a_json) || !cJSON_IsNumber(b_json))
@@ -130,65 +122,62 @@ void tool_xxx(cJSON *args_obj, AgentToolNode_t node)
         return;
     }
 
-    /* 4. 业务计算 */
-    double a = a_json->valuedouble;
-    double b = b_json->valuedouble;
     char ret_buffer[64] = {0};
-    rt_snprintf(ret_buffer, sizeof(ret_buffer), "计算结果: %f", a + b);
+    rt_snprintf(ret_buffer, sizeof(ret_buffer), "计算结果：%f",
+                a_json->valuedouble + b_json->valuedouble);
 
-    /* 5. 写入返回消息（文本结果用 TYPE_TEXT） */
     node->ret.messages = messages_create(1);
-    messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
-    node->ret.ret = (node->ret.messages) ? RT_EOK : RT_ERROR;
+    if (node->ret.messages != RT_NULL)
+    {
+        messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
+    }
+    node->ret.ret = (node->ret.messages != RT_NULL) ? RT_EOK : RT_ERROR;
 }
 ```
 
-### 第 3 步：加入统一头文件
+参数校验失败时保持 `messages` 为 `RT_NULL`。框架会补一条“参数无效”的 tool 消息。
 
-在 `include/tools/tools.h` 中追加一行：
+### 3.3 加入统一头文件
 
-```c
-#include "tool_add.h"
-#include "tool_mul.h"
-#include "tool_compare.h"
-#include "tool_xxx.h"   /* ← 新增 */
-```
-
-### 第 4 步：在 `init_tools()` 中注册
-
-编辑 `src/tool_func.c`，在 `init_tools()` 末尾追加注册代码：
+在 `include/tools/tools.h` 末尾追加：
 
 ```c
-    /* ========== xxx ========== */
-    cJSON *props_xxx = cJSON_CreateObject();
-    create_property(props_xxx, "a", "number", "First number");
-    create_property(props_xxx, "b", "number", "Second number");
-
-    cJSON *required_xxx = cJSON_CreateArray();
-    cJSON_AddItemToArray(required_xxx, cJSON_CreateString("a"));
-    cJSON_AddItemToArray(required_xxx, cJSON_CreateString("b"));
-
-    cJSON *params_xxx = create_param_obj(props_xxx, required_xxx);
-    cJSON *xxx_func = create_tool_item("xxx", "Description of the tool", params_xxx);
-    append_tool(xxx_func, tool_xxx);
+#include "tool_xxx.h"
 ```
 
-编译即可生效：`scons`（`src/tools/*.c` 自动收录，`include/tools` 已在 `CPPPATH`）。
+### 3.4 在 init_tools() 中注册
 
----
+编辑 `src/tool_func.c`：
 
-## 4. 完整示例一：数值工具 `mod`（求余）
+```c
+cJSON *props_xxx = cJSON_CreateObject();
+create_property(props_xxx, "a", "number", "First number");
+create_property(props_xxx, "b", "number", "Second number");
+
+cJSON *required_xxx = cJSON_CreateArray();
+cJSON_AddItemToArray(required_xxx, cJSON_CreateString("a"));
+cJSON_AddItemToArray(required_xxx, cJSON_CreateString("b"));
+
+cJSON *params_xxx = create_param_obj(props_xxx, required_xxx);
+cJSON *xxx_func = create_tool_item("xxx", "Description of the tool", params_xxx);
+append_tool(xxx_func, tool_xxx);
+```
+
+执行 `scons` 编译。`src/tools/*.c` 由 `SConscript` 自动收录，不需要改构建脚本。
+
+## 4. 示例：求余工具 mod
 
 **`include/tools/tool_mod.h`**
 
 ```c
 #ifndef __AGENT_TOOL_MOD_H__
 #define __AGENT_TOOL_MOD_H__
+
 #include "tool_base.h"
 
 void tool_mod(cJSON *args_obj, AgentToolNode_t node);
 
-#endif // __AGENT_TOOL_MOD_H__
+#endif /* __AGENT_TOOL_MOD_H__ */
 ```
 
 **`src/tools/tool_mod.c`**
@@ -229,6 +218,7 @@ void tool_mod(cJSON *args_obj, AgentToolNode_t node)
     long a = (long)a_json->valuedouble;
     long b = (long)b_json->valuedouble;
     char ret_buffer[64] = {0};
+
     if (b == 0)
     {
         rt_snprintf(ret_buffer, sizeof(ret_buffer), "error: modulo by zero");
@@ -239,271 +229,173 @@ void tool_mod(cJSON *args_obj, AgentToolNode_t node)
     }
 
     node->ret.messages = messages_create(1);
-    messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
-    node->ret.ret = (node->ret.messages) ? RT_EOK : RT_ERROR;
+    if (node->ret.messages != RT_NULL)
+    {
+        messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
+    }
+    node->ret.ret = (node->ret.messages != RT_NULL) ? RT_EOK : RT_ERROR;
 }
 ```
 
-**`include/tools/tools.h`** 追加：
+注册代码：
 
 ```c
-#include "tool_mod.h"
+cJSON *props_mod = cJSON_CreateObject();
+create_property(props_mod, "a", "number", "Dividend");
+create_property(props_mod, "b", "number", "Divisor");
+
+cJSON *required_mod = cJSON_CreateArray();
+cJSON_AddItemToArray(required_mod, cJSON_CreateString("a"));
+cJSON_AddItemToArray(required_mod, cJSON_CreateString("b"));
+
+cJSON *params_mod = create_param_obj(props_mod, required_mod);
+cJSON *mod_func = create_tool_item("mod", "Calculate the remainder of a divided by b", params_mod);
+append_tool(mod_func, tool_mod);
 ```
 
-**`src/tool_func.c` 注册**：
+## 5. 示例：字符串参数 word_count
+
+参数读取方式与数值工具相同，只是校验函数换成 `cJSON_IsString`。
 
 ```c
-    /* ========== mod ========== */
-    cJSON *props_mod = cJSON_CreateObject();
-    create_property(props_mod, "a", "number", "Dividend");
-    create_property(props_mod, "b", "number", "Divisor");
-
-    cJSON *required_mod = cJSON_CreateArray();
-    cJSON_AddItemToArray(required_mod, cJSON_CreateString("a"));
-    cJSON_AddItemToArray(required_mod, cJSON_CreateString("b"));
-
-    cJSON *params_mod = create_param_obj(props_mod, required_mod);
-    cJSON *mod_func = create_tool_item("mod", "Calculate the remainder of a divided by b", params_mod);
-    append_tool(mod_func, tool_mod);
-```
-
----
-
-## 5. 完整示例二：字符串工具 `word_count`（统计单词数）
-
-展示**字符串参数**与**多参数混合**的写法。
-
-**`include/tools/tool_word_count.h`**
-
-```c
-#ifndef __AGENT_TOOL_WORD_COUNT_H__
-#define __AGENT_TOOL_WORD_COUNT_H__
-#include "tool_base.h"
-
-void tool_word_count(cJSON *args_obj, AgentToolNode_t node);
-
-#endif // __AGENT_TOOL_WORD_COUNT_H__
-```
-
-**`src/tools/tool_word_count.c`**
-
-```c
-#include "tool_word_count.h"
-
-void tool_word_count(cJSON *args_obj, AgentToolNode_t node)
-{
-    if (!args_obj || !node)
-    {
-        if (node)
-        {
-            if (node->ret.messages)
-            {
-                messages_destroy(node->ret.messages);
-                node->ret.messages = RT_NULL;
-            }
-            node->ret.ret = RT_ERROR;
-        }
-        return;
-    }
-
-    if (node->ret.messages)
-    {
-        messages_destroy(node->ret.messages);
-        node->ret.messages = RT_NULL;
-    }
-
-    cJSON *text_json = cJSON_GetObjectItemCaseSensitive(args_obj, "text");
-    if (!text_json || !cJSON_IsString(text_json))
-    {
-        node->ret.ret = RT_ERROR;
-        return;
-    }
-
-    const char *text = text_json->valuestring;
-    int words = 0;
-    int in_word = 0;
-    for (const char *p = text; *p; p++)
-    {
-        if (*p == ' ' || *p == '\t' || *p == '\n')
-        {
-            in_word = 0;
-        }
-        else if (!in_word)
-        {
-            in_word = 1;
-            words++;
-        }
-    }
-
-    char ret_buffer[64] = {0};
-    rt_snprintf(ret_buffer, sizeof(ret_buffer), "word count: %d", words);
-
-    node->ret.messages = messages_create(1);
-    messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
-    node->ret.ret = (node->ret.messages) ? RT_EOK : RT_ERROR;
-}
-```
-
-**`include/tools/tools.h`** 追加：
-
-```c
-#include "tool_word_count.h"
-```
-
-**`src/tool_func.c` 注册**：
-
-```c
-    /* ========== word_count ========== */
-    cJSON *props_wc = cJSON_CreateObject();
-    create_property(props_wc, "text", "string", "The text to count words in");
-
-    cJSON *required_wc = cJSON_CreateArray();
-    cJSON_AddItemToArray(required_wc, cJSON_CreateString("text"));
-
-    cJSON *params_wc = create_param_obj(props_wc, required_wc);
-    cJSON *wc_func = create_tool_item("word_count", "Count the number of words in a text", params_wc);
-    append_tool(wc_func, tool_word_count);
-```
-
----
-
-## 6. 自定义工具注册的进阶说明
-
-### 6.1 注册时机与生命周期
-
-- `init_tools()` 由 `init_agent()` 自动调用（`main_loop_entry` 进入对话时），也可在 MSH 手动执行 `init_tools`。
-- 注册是幂等的：`init_flag` 保护，重复调用直接返回。
-- **清理与再注册**：`cleanup_agent()` 会调用 `agent_tools_cleanup()` 释放工具链表、工具 JSON 与节点残留消息，并复位 `init_flag`；再次进入对话时 `init_tools()` 自动重新注册。因此**不需要**（也不应）手动处理工具内存。
-
-### 6.2 参数 schema 约定
-
-#### 6.2.1 数值类型选型
-
-OpenAI/JSON Schema 严格模式下,数值类参数只允许 `integer` 与 `number` 两种 `type`,两者在 cJSON 端都通过 `cJSON_IsNumber` 校验,但语义不同:
-
-| `type` | 含义 | LLM 端 | C 端取值 | 典型场景 |
-|---|---|---|---|---|
-| `integer` | 整数,无小数部分 | int64 | `(long)x->valueint` | 计数、索引、ID、档位、循环次数 |
-| `number`  | 浮点数,允许小数 | float64 | `(double)x->valuedouble` | 长度/重量/温度、比例、坐标、统计量 |
-
-**关键差异**:
-
-- 看到 `integer` 时 LLM 倾向发整数(避免 `5.0` 这类尾零);看到 `number` 可以发小数。
-- cJSON 内部统一以 double 存储,**两种 `type` 都满足 `cJSON_IsNumber`**,单看校验无法区分整数/浮点。如需在执行函数中严格区分,可比较 `x->valueint != x->valuedouble`。
-- `valueint` 在 cJSON 中为 `int`,32 位平台 ±2^31、64 位平台约 ±2^31;超界用 `valuedouble` 接收并自行强转 `int64_t` / `long long`。
-
-#### 6.2.2 `integer` 注册与解析示例
-
-```c
-/* 注册 */
-cJSON *props = cJSON_CreateObject();
-create_property(props, "count", "integer", "How many items to process (>= 1)");
-create_property(props, "page",  "integer", "Page index, 0-based");
-
-/* 解析 */
-cJSON *count = cJSON_GetObjectItemCaseSensitive(args, "count");
-cJSON *page  = cJSON_GetObjectItemCaseSensitive(args, "page");
-if (!count || !page || !cJSON_IsNumber(count) || !cJSON_IsNumber(page))
+cJSON *text_json = cJSON_GetObjectItemCaseSensitive(args_obj, "text");
+if (!text_json || !cJSON_IsString(text_json))
 {
     node->ret.ret = RT_ERROR;
     return;
 }
-long n   = (long)count->valueint;
-long idx = (long)page->valueint;
-if (n < 1 || idx < 0) { /* 业务校验 */ }
-```
 
-#### 6.2.3 `number` 注册与解析示例
+const char *text = text_json->valuestring;
+int words = 0;
+int in_word = 0;
 
-```c
-/* 注册 */
-cJSON *props = cJSON_CreateObject();
-create_property(props, "voltage",   "number", "Measured voltage in volts (e.g. 3.3)");
-create_property(props, "threshold", "number", "Threshold to compare against, range 0.0 - 1.0");
-
-/* 解析 */
-cJSON *v = cJSON_GetObjectItemCaseSensitive(args, "voltage");
-cJSON *t = cJSON_GetObjectItemCaseSensitive(args, "threshold");
-if (!v || !t || !cJSON_IsNumber(v) || !cJSON_IsNumber(t))
+for (const char *p = text; *p != '\0'; p++)
 {
-    node->ret.ret = RT_ERROR;
-    return;
+    if (*p == ' ' || *p == '\t' || *p == '\n')
+    {
+        in_word = 0;
+    }
+    else if (!in_word)
+    {
+        in_word = 1;
+        words++;
+    }
 }
-double voltage   = v->valuedouble;
-double threshold = t->valuedouble;
-```
 
-#### 6.2.4 常见误区
+char ret_buffer[64] = {0};
+rt_snprintf(ret_buffer, sizeof(ret_buffer), "word count: %d", words);
 
-- **不要混用**:`number` 接整数浪费精度,`integer` 接小数会被 LLM 四舍五入,边界处极易翻车。
-- **不要传字符串数字**:LLM 偶尔把数字包成 `"3.3"` 字符串,即便 schema 是 `number` 也会出现。执行函数必须 `cJSON_IsNumber` 校验;若模型反复误发,在 description 里强调 `Please send a number, not a string`。
-- **大数/精度**:`integer` 超过 2^53、`number` 超过 15~16 位有效数字会丢精度,业务侧先确认范围再选 `type`。
-- **格式化输出**:`%d` 配 `valueint`,`%f` / `%lf` 配 `valuedouble`,别混。
-
-#### 6.2.5 其它类型与约定
-
-- 文本用 `"string"`,执行函数用 `cJSON_IsString` 校验,取 `valuestring`。
-- 布尔用 `"true"` / `"false"`(备注:OpenAI 严格 schema 中布尔 `type` 应写 `"boolean"`,此处保留现有 cJSON 风格;若切到 strict 模式需要再统一改),执行函数用 `cJSON_IsBool` 校验,取 `valueint` 判 0/非 0。
-- 必填参数务必加入 `required` 数组;可选参数不加入,但执行函数内要容忍缺失。
-- 属性描述(description)与工具描述请写清楚,直接影响模型调用的准确率;数值参数最好在 description 里写出**单位 / 范围 / 示例值**。
-
-### 6.3 执行函数的硬性要求
-
-1. **参数与节点校验**：`args_obj`/`node` 为 NULL 时兜底释放并返回。
-2. **先释放旧消息**：节点会被复用（同一工具多次调用），每次执行前 `messages_destroy(node->ret.messages)`。
-3. **参数类型校验**：用 `cJSON_GetObjectItemCaseSensitive` + `cJSON_IsXxx` 检查，缺失/类型错误置 `node->ret.ret = RT_ERROR` 返回。
-4. **结果写入**：`node->ret.messages = messages_create(1); messages_append(..., TYPE_TEXT, 文本);`，`node->ret.ret = RT_EOK`。
-5. **不要保留 args_obj 指针**：`args_obj` 由 `agent_loop` 在执行后释放（`cJSON_Delete(args_json)`），工具内如需长时间保存请自行拷贝。
-
-### 6.4 返回消息类型
-
-`Messages_t` 支持多种类型（`include/MessageHub.h`）：
-
-| 枚举 | 用途 |
-|---|---|
-| `TYPE_TEXT` | 文本结果（绝大多数工具） |
-| `TYPE_AUDIO` / `TYPE_IMAGE` / `TYPE_VIDEO` | 多模态结果（启用 `PKG_AGENT_MULTIMODAL_ENABLE` 时，`to_content` 会自动上传并转为 URL） |
-
-多模态工具示例（返回图片路径）：
-
-```c
 node->ret.messages = messages_create(1);
-messages_append(node->ret.messages, TYPE_IMAGE, "/sd/picture.png");
-node->ret.ret = RT_EOK;
+if (node->ret.messages != RT_NULL)
+{
+    messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
+}
+node->ret.ret = (node->ret.messages != RT_NULL) ? RT_EOK : RT_ERROR;
 ```
 
-### 6.5 工具数量与参数长度
+注册：
 
-- 工具参数分片拼接受 `PKG_AGENT_MAX_TOOL_ARG_LEN` 限制（超限会告警并跳过追加）。
-- 工具数量无硬限制，但注册过多会显著增大每次请求的 payload，建议按需注册。
+```c
+cJSON *props_wc = cJSON_CreateObject();
+create_property(props_wc, "text", "string", "The text to count words in");
 
----
+cJSON *required_wc = cJSON_CreateArray();
+cJSON_AddItemToArray(required_wc, cJSON_CreateString("text"));
 
-## 7. 完整流程速查（Checklist）
+cJSON *params_wc = create_param_obj(props_wc, required_wc);
+cJSON *wc_func = create_tool_item("word_count", "Count the number of words in a text", params_wc);
+append_tool(wc_func, tool_word_count);
+```
 
-- [ ] 新建 `include/tools/tool_xxx.h`（含 `tool_base.h` + 函数声明）
-- [ ] 新建 `src/tools/tool_xxx.c`（按 §3 骨架实现）
-- [ ] 在 `include/tools/tools.h` 追加 `#include "tool_xxx.h"`
-- [ ] 在 `src/tool_func.c::init_tools()` 追加注册代码（properties → required → params → create_tool_item → append_tool）
-- [ ] `scons` 编译（构建脚本无需修改）
-- [ ] 运行时用 `main_loop_entry` 进入对话，用自然语言触发新工具验证
-- [ ] 反复"进入→对话→清理→再进入"，确认无内存增长（`[mem] cleanup done` 日志）
+## 6. 注册与生命周期
 
----
+- `init_tools()` 由 `init_agent()` 在进入对话时调用，也可以手动执行 MSH 命令 `init_tools`。
+- 注册是幂等的，`init_flag` 保证只执行一次。
+- `cleanup_agent()` 调用 `agent_tools_cleanup()`，释放工具链表、工具定义 JSON 与残留结果，并复位注册标志。
+- 再次进入对话时会重新注册。工具代码不需要自己管理这些内存。
+- MQTT 工具在 `PKG_AGENT_TOOL_MQTT_ENABLE` 打开时注册，其余工具始终注册。
 
-## 8. FAQ
+## 7. 执行函数约定
 
-**Q1：新增工具后没有生效？**
-检查：`tools.h` 是否包含新头文件；`init_tools()` 是否调用 `append_tool`；是否重新编译并重启（`init_flag` 在同一进程内只注册一次，若中途改代码需重新烧录）。也可在 MSH 执行 `init_tools` 手动触发。
+1. 校验 `args_obj` 与 `node` 是否为 `RT_NULL`。
+2. 每次执行前释放 `node->ret.messages`，节点会被复用。
+3. 用 `cJSON_GetObjectItemCaseSensitive` 取字段，用 `cJSON_IsXxx` 校验类型。
+4. 结果写入 `node->ret.messages`，文本使用 `TYPE_TEXT`。
+5. 不要保存 `args_obj` 指针。`agent_loop` 在调用返回后会执行 `cJSON_Delete`。
+6. 失败时可以把错误原因作为文本结果返回，也可以让 `messages` 保持 `RT_NULL`。后者会由框架补一条通用错误消息。
 
-**Q2：模型不调用我的工具？**
-多为描述/参数 schema 质量问题：工具描述要说明"何时使用、输入什么、返回什么"；参数 description 要写清含义；必要时把示例值写进 description。
+`node->ret.ret` 是工具侧的返回值约定，当前主循环不读取它。框架判断失败的依据是 `node->ret.messages == RT_NULL`。
 
-**Q3：工具执行失败，结果如何反馈给模型？**
-把错误信息作为 `TYPE_TEXT` 结果写入 `node->ret.messages`（`node->ret.ret = RT_ERROR`），模型会看到错误原因并尝试其他方案（框架系统提示词已要求工具失败时分析原因）。
+工具结果只支持文本。`append_tool_message()` 只拼接 `TYPE_TEXT` 项，图片、音频等类型会被忽略。需要让模型看到文件时，返回文件路径或 URL 的文本。
 
-**Q4：工具结果能影响后续对话吗？**
-能。结果会以 `role=tool` 消息追加进上下文，LLM 在下一轮基于它继续回答，并计入 `PKG_AGENT_MESSAGE_TRIM` 的裁剪范围。
+## 8. 重复调用与轮次上限
 
-**Q5：多模态工具的文件路径规则？**
-`TYPE_IMAGE` 等消息内容为本地文件路径，`to_content` 会调用 `agent_up_load` 上传到文件服务器并转为 URL；上传失败该条会被跳过并打日志。
+框架对工具循环有四层限制：
+
+- 同一次用户请求中，同一工具、同一参数再次出现时，不再执行。框架会返回一条“结果未变化，请直接回答”的 tool 消息。最近 6 条调用签名会被记住。
+- 同一次用户请求中，同一工具调用超过 3 次时仍会执行，但计为无效调用。两组计数在每次 `agent_loop` 开始时清零。
+- 连续两轮全部是重复或无效调用时，跳出工具循环，强制模型用文本回答。
+- 工具循环最多 6 轮。达到上限后，再发一次不带工具的请求，要求模型给出最终回答。
+
+因此工具结果要尽量包含有效信息。返回空字符串或只有一句“失败”，会让模型继续重试。
+
+## 9. 参数细节
+
+### 9.1 integer 与 number
+
+| 类型 | 含义 | C 端取值 | 典型场景 |
+|---|---|---|---|
+| `integer` | 整数 | `valueint` | 计数、索引、ID、档位 |
+| `number` | 浮点数 | `valuedouble` | 温度、比例、坐标、统计量 |
+
+注意事项：
+
+- cJSON 内部用 double 存储，两种类型都通过 `cJSON_IsNumber`。需要严格区分时，可以比较 `valueint` 与 `valuedouble`。
+- `valueint` 的有效范围受平台 `int` 限制。大数用 `valuedouble` 接收，再自行转换。
+- 模型偶尔会把数字包成字符串。执行函数必须用 `cJSON_IsNumber` 校验；如果经常出现，在描述里写明 `Please send a number, not a string`。
+- 格式化时 `%d` 配 `valueint`，`%f` 配 `valuedouble`，不要混用。
+
+### 9.2 布尔与字符串
+
+- 布尔类型写 `"boolean"`，执行函数用 `cJSON_IsBool` 校验，用 `cJSON_IsTrue` / `cJSON_IsFalse` 判断。
+- 字符串类型写 `"string"`，用 `cJSON_IsString` 校验，取 `valuestring`。
+- 数组类型写 `"array"` 并给出 `items`，用 `cJSON_IsArray` 校验。
+- 对象类型写 `"object"` 并给出 `properties`，用 `cJSON_IsObject` 校验。
+
+### 9.3 长度限制
+
+- 工具参数分片拼接受 `PKG_AGENT_MAX_TOOL_ARG_LEN` 限制，默认 1024 字节。超出后会告警并丢弃后续分片。
+- SSE 单行受 `PKG_AGENT_STREAM_LINE_BUFSZ` 限制，默认 1024 字节。带长参数的工具调用如果整行被丢弃，模型侧会表现为“没有工具结果”，此时需要调大该值。
+- 工具定义没有数量硬限制，但工具越多，每次请求的 payload 越大。按需注册。
+
+## 10. 检查清单
+
+- [ ] 新建 `include/tools/tool_xxx.h`，包含 `tool_base.h` 与函数声明。
+- [ ] 新建 `src/tools/tool_xxx.c`，按约定校验参数、释放旧结果、写入文本结果。
+- [ ] 在 `include/tools/tools.h` 添加 `#include "tool_xxx.h"`。
+- [ ] 在 `src/tool_func.c` 的 `init_tools()` 中注册：properties → required → params → `create_tool_item` → `append_tool`。
+- [ ] 执行 `scons` 编译。
+- [ ] 用 `main_loop_entry` 进入对话，用自然语言触发工具。
+- [ ] 反复执行“进入 → 对话 → 清理 → 再进入”，检查 `[mem] cleanup done` 的 `used` 是否持平。
+
+## 11. 常见问题
+
+**新增工具后没有生效？**
+
+检查 `tools.h` 是否包含新头文件，`init_tools()` 是否调用了 `append_tool`，以及是否重新编译并重启。`init_flag` 在一次 agent 生命周期内保证只注册一次；`cleanup_agent()` 会复位该标志，再次进入时重新注册。
+
+**模型不调用我的工具？**
+
+先改工具描述和参数描述。写清何时使用、输入是什么、返回什么，并给出单位、范围和示例值。
+
+**工具执行失败，结果如何反馈给模型？**
+
+把错误原因作为 `TYPE_TEXT` 结果返回，或者让 `messages` 保持 `RT_NULL`，由框架补一条通用错误消息。模型会在下一轮看到这条结果。
+
+**工具结果能影响后续对话吗？**
+
+能。结果会写入上下文，计入 `PKG_AGENT_MESSAGE_TRIM` 的裁剪范围。裁剪只保留 system 消息和最近若干条消息，较早的工具结果可能被移除。
+
+**多模态工具怎么返回图片？**
+
+当前 `role=tool` 消息只接受文本，不能直接返回 `TYPE_IMAGE`。可以返回图片路径或上传后的 URL，让模型在回答中引用。

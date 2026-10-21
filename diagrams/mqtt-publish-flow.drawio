@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="drawio-skill" version="21.0.0" type="device">
+  <diagram name="MQTT Publish" id="mqtt-publish">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1"
+                   connect="1" arrows="1" fold="1" page="1" pageScale="1"
+                   pageWidth="1000" pageHeight="1030" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="start" value="用户要求向话题发布消息"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="40" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="llm" value="LLM 返回 tool_call&#xa;mqtt_publish(topic, message)"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="130" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="publish" value="tool_mqtt_publish()&#xa;参数与长度校验"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="230" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="valid" value="参数合法？"
+                style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="330" width="240" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="do-publish" value="mqtt_do_publish()"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="460" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="ensure" value="确保客户端已启动&#xa;必要时 mqtt_tool_start()"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="560" width="240" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="connected" value="连接成功？&#xa;默认等待 3 s"
+                style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="680" width="240" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="paho" value="paho_mqtt_publish()&#xa;→ broker"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="810" width="240" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ok" value="publish ok&#xa;回填 role=tool，LLM 继续"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="920" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="err-param" value="error: 参数不合法&#xa;回填 role=tool"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="720" y="340" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="err-conn" value="error: 连接超时&#xa;回填 role=tool"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="720" y="690" width="220" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="start" target="llm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="llm" target="publish">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="publish" target="valid">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="否"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1" source="valid" target="err-param">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="是"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1" source="valid" target="do-publish">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="do-publish" target="ensure">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="ensure" target="connected">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="否"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1" source="connected" target="err-conn">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="是"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1" source="connected" target="paho">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="paho" target="ok">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,145 +1,212 @@
-# 文件服务器搭建流程（仅多模态模式启用）
+# 文件服务器搭建
 
-> 💡 说明：该文件服务器为 Agent 多模态图片上传的配套服务，**仅开启多模态功能时需要部署**，普通文本模式无需配置。
+文件服务器为 Agent 的多模态功能提供文件上传、下载，以及本地语音转写。只使用纯文本对话时不需要部署。
 
----
+## 1. 环境准备
 
-## 1. 环境准备：安装 uv
-
-uv 是高性能 Python 包管理工具，用于统一锁定项目依赖版本，保证开发/运行环境一致性。
+安装 uv：
 
 ```bash
 pip install uv
 ```
 
-> 如果 pip 下载慢，可使用清华源安装：
-> ```bash
-> pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
-> ```
-
-## 2. 部署文件服务器
-
-**① 切换工作目录至文件服务器工程目录**
+下载慢时可以换清华源：
 
 ```bash
-cd Agent-latest\resource\file_server
+pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-**② 使用 uv 同步全部依赖**
+## 2. 安装依赖
 
 ```bash
+cd packages/Agent-latest/resource/file_server
 uv sync
 ```
 
-> `uv sync` 作用：读取 `pyproject.toml` 与 `uv.lock`，完整还原项目锁定版本依赖，等效于 `pip install -r requirements.txt`，保证所有人环境完全一致。
+`uv sync` 读取 `pyproject.toml` 与 `uv.lock`，按锁定版本安装依赖。
 
-> ⚡ 安装慢优化：在 `pyproject.toml` 文件末尾添加清华 PyPI 镜像源配置：
-> ```toml
-> [tool.uv]
-> index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-> ```
+依赖中包含 `openai-whisper`，它会拉取 torch，体积约 2 GB。只需要文件上传下载、不需要语音转写时，可以自行删除 `pyproject.toml` 里的 `openai-whisper`、`soundfile`、`numpy`，并去掉 `/stt` 接口。
 
-## 3. 启动本地文件服务器
+安装慢时，可在 `pyproject.toml` 末尾添加：
 
-> 默认监听端口：**8000**
+```toml
+[tool.uv]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+```
+
+## 3. 启动服务
 
 ```bash
 uv run main.py
 ```
 
-启动成功后，本地可访问：`http://127.0.0.1:8000/docs`
+服务默认监听 `0.0.0.0:8000`。本机可以打开 `http://127.0.0.1:8000/docs` 查看接口文档。
 
-![](../../pictures/本地网页访问.png)
+![本地接口文档](../../pictures/本地网页访问.png)
 
-### 下载 URL 的拼装规则（理解"生成的 URL"）
+服务使用两个本地文件：
 
-- 上传接口 `/upload` **只返回 `file_id`（36 位 UUID），不返回完整下载 URL**；
-- 下载 URL 由客户端拼装：`{下载基址}/download/{file_id}`；
-- 本地调试基址：`http://127.0.0.1:8000`；内网穿透后基址：`https://你的穿透域名`。
+- `file_db.sqlite`：文件元信息。
+- `upload_files/`：上传的文件。
 
-## 4. 内网穿透配置
+## 4. 接口
 
-> 📌 需求：嵌入式 QEMU/硬件板子无法直接访问本机回环地址，需要内网穿透将本机 8000 端口暴露公网，使设备可以完成图片上传，大模型接口能够下载图片资源。
+| 接口 | 方法 | 说明 |
+|---|---|---|
+| `/upload` | POST | 上传文件，form 字段名为 `file`，返回 `file_id` 等信息 |
+| `/download/{file_id}` | GET | 按 `file_id` 下载文件 |
+| `/files/{file_id}` | GET | 查询单个文件的元信息 |
+| `/files` | GET | 列出全部文件 |
+| `/files/{file_id}` | DELETE | 删除文件 |
+| `/stt` | POST | 语音转文本，form 字段名为 `file`，返回 `{"code":0,"data":{"text":"..."}}` |
 
-本项目集成**飞鸽内网穿透** Windows 客户端，也可自行选择其它穿透工具。
+上传接口返回示例：
 
-### 4.1 获取客户端
+```json
+{
+  "code": 0,
+  "msg": "upload ok",
+  "data": {
+    "file_id": "0b0f0c7e-...",
+    "original_name": "photo.jpg",
+    "store_path": "./upload_files/0b0f0c7e-....jpg",
+    "file_size": 12345,
+    "upload_time": "2026-10-20 10:00:00"
+  }
+}
+```
 
-- 官网下载：[飞鸽内网穿透](https://www.fgnwct.com/)
-- 项目内置 GUI 启动器路径：`packages\Agent-latest\resource\飞鸽启动器-0.4.exe`
+浏览器直接访问时，下载地址是：
 
-### 4.2 通道参数配置
+```text
+{服务根地址}/download/{file_id}
+```
 
-1. **通道类型建议优先选择付费通道**，带宽、稳定性更好，避免大文件上传超时。
+本地调试时为 `http://127.0.0.1:8000/download/{file_id}`。
 
-![](../../pictures/飞鸽内网穿透建议通道.png)
+Agent 侧的 `PKG_AGENT_DOWNLOAD_URL` 要填到 `/download` 为止，例如 `http://127.0.0.1:8000/download`。代码会直接追加 `/{file_id}`，不要再带一层 `/download`。内网穿透后把服务根地址换成公网地址。
 
-2. 通道关键配置项：
+## 5. 语音转写
 
-| 配置项 | 填写说明 |
+`/stt` 使用 openai-whisper 在本地识别，不调用外部服务。
+
+服务启动时会在后台加载模型。首次运行会下载模型，可能耗时数十秒；加载完成后，后续请求直接复用。
+
+可用环境变量调整：
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `STT_MODEL` | `tiny` | whisper 模型，可选 `tiny`、`base`、`small` |
+| `STT_LANG` | `zh` | 识别语言 |
+
+Windows PowerShell 示例：
+
+```powershell
+$env:STT_MODEL = "base"
+$env:STT_LANG = "zh"
+uv run main.py
+```
+
+Agent 侧配置：
+
+1. 打开多模态开关 `PKG_AGENT_MULTIMODAL_ENABLE`。
+2. 打开 `PKG_AGENT_STT_ENABLE`。
+3. 把 `PKG_AGENT_STT_URL` 填为 `http://<服务器地址>:8000/stt`。
+
+录音格式固定为 16000 Hz、双声道、16 位 WAV。服务端读取后转成单声道再识别。
+
+STT 失败时，Agent 不会上传音频，而是给模型一条“语音消息转写失败，请再说一次”的提示文本。排查时先看服务端是否返回 500，再确认模型是否已下载完成。
+
+## 6. 内网穿透
+
+开发板和 QEMU 通常访问不到宿主机的 `127.0.0.1`。需要把本机 8000 端口映射到公网。
+
+仓库自带飞鸽内网穿透的 Windows 启动器：`resource/飞鸽启动器-0.4.exe`。也可以使用其他穿透工具。
+
+通道类型优先选付费通道，带宽和稳定性更好，大文件上传不容易超时。
+
+![选择穿透通道](../../pictures/飞鸽内网穿透建议通道.png)
+
+通道配置：
+
+| 配置项 | 填写 |
 |---|---|
-| 备注 | 自定义备注，便于区分通道 |
-| 前置域名 | 自定义访问域名前缀 |
-| 本地地址端口 | **`127.0.0.1:8000`**（必须和文件服务器监听端口一致） |
-| 证书选项 | 选择系统默认证书 |
+| 本地地址端口 | `127.0.0.1:8000`，与文件服务器监听端口一致 |
+| 前置域名 | 自定义前缀 |
+| 证书 | 系统默认证书 |
 
-![](../../pictures/飞鸽内网穿透通道配置.png)
+![通道参数](../../pictures/飞鸽内网穿透通道配置.png)
 
-### 4.3 穿透成功后的两组访问地址
+穿透成功后会得到 HTTP 与 HTTPS 两个地址。
 
-> ✔ 穿透成功后会生成两组访问地址：
+HTTP 地址：
 
-- `http://xxx.fgnwct.com`（HTTP 明文地址）
+![HTTP 访问地址](../../pictures/飞鸽内网穿透http访问.png)
 
-![](../../pictures/飞鸽内网穿透http访问.png)
+HTTPS 地址：
 
-- `https://xxx.fgnwct.com`（HTTPS 加密地址）
+![HTTPS 访问地址](../../pictures/飞鸽内网穿透https服务.png)
 
-![](../../pictures/飞鸽内网穿透https服务.png)
+### 上传地址使用 HTTP
 
-### ⚠️ 重要坑点（极易引发图片上传 20040 错误）
+Agent 的 `PKG_AGENT_UPLOAD_URL` 必须填 HTTP 地址，例如：
 
-> **RT-Thread menuconfig 中，Agent 上传服务器地址必须填写 HTTP 地址，不要填写 HTTPS！**
-> 使用 HTTPS 上传服务时，rt-thread 会出现 bug。
+```text
+http://xxx.fgnwct.com/upload
+```
 
-进入 RT-Thread `menuconfig` → Agent 组件配置，填入飞鸽生成的 **HTTP 公网地址**。
+实测 RT-Thread 通过 HTTPS 上传会遇到问题，表现为上传失败或返回 20040。`PKG_AGENT_STT_URL` 同理，建议使用 HTTP。
 
-![](../../pictures/文件上传服务器menuconfig设置.png)
+`PKG_AGENT_DOWNLOAD_URL` 是给大模型下载文件用的地址，必须是公网可访问的地址。模型服务访问不到内网地址和 `localhost`，使用 HTTPS 时证书也要被公网信任。
 
-## 5. 完整链路校验清单
+## 7. 配置示例
 
-部署完成后按顺序确认，规避多模态上传报错：
+Agent 的多模态配置：
 
-1. ✅ `uv run main.py` 文件服务器正常运行，本地浏览器可打开 `127.0.0.1:8000`
-2. ✅ 飞鸽内网穿透通道正常在线，HTTP 链接浏览器可以正常访问
-3. ✅ Kconfig/menuconfig 配置项填入 **HTTP** 公网地址，禁止直接使用 HTTPS
-4. ✅ 板子网络正常，NTP 时间同步成功（mbedTLS HTTPS 请求依赖系统时间）
-5. ✅ 设备上传返回的 `url` 链接，复制到浏览器无痕窗口可直接访问下载图片
-6. ✅ 下载 URL 中的 `file_id` 与服务器数据库完全一致（36 位 UUID，勿截断）
-7. ✅ `curl -I <下载URL>` 返回 `200` 且 `Content-Type: image/jpeg` 等图片类型
+```text
+PKG_AGENT_UPLOAD_URL   = http://xxx.fgnwct.com/upload
+PKG_AGENT_DOWNLOAD_URL = https://xxx.fgnwct.com/download
+PKG_AGENT_STT_URL      = http://xxx.fgnwct.com/stt
+```
 
+`PKG_AGENT_DOWNLOAD_URL` 只填到 `/download`，不要带 `file_id`。代码会直接追加 `/{file_id}`，拼出 `{PKG_AGENT_DOWNLOAD_URL}/{file_id}`。
 
-## 多模态 聊天demo
-1. 启用的通道为 : `PKG_AGENT_DEBUG_CHANNEL`
+menuconfig 中的填写位置：
 
-![](../../pictures/启用PKG_AGENT_DEBUG_CHANNEL.png)
+![文件服务器地址配置](../../pictures/文件上传服务器menuconfig设置.png)
 
-2. 效果demo
+## 8. 验证
 
-> 上传照片如下
+按顺序检查：
 
-![](../../pictures/多模态测试照片.jpg)
+1. `uv run main.py` 正常运行，浏览器能打开 `127.0.0.1:8000/docs`。
+2. 穿透通道在线，HTTP 地址在浏览器中可访问。
+3. `PKG_AGENT_UPLOAD_URL` 使用 HTTP 公网地址。
+4. 开发板网络正常；使用 HTTPS 下载时，系统时间已同步。
+5. 上传后复制 `file_id` 拼出的下载 URL，在无痕窗口能直接访问。
+6. 下载 URL 中的 `file_id` 是完整的 36 位 UUID，没有截断。
+7. `curl -I <下载URL>` 返回 200，`Content-Type` 为图片或音频类型。
 
-> AI reply
+## 9. 多模态聊天示例
 
-![](../../pictures/多模态照片demo.jpg)
+1. 通道选择 `PKG_AGENT_DEBUG_CHANNEL`。
+   ![](../../pictures/启用PKG_AGENT_DEBUG_CHANNEL.png)
 
-## 6. 常见问题排查
+2. 发送一张图片。
+   ![](../../pictures/多模态测试照片.jpg)
 
-| 现象 | 排查方向 |
+3. 模型回复。
+   ![](../../pictures/多模态照片demo.jpg)
+
+## 10. 常见问题
+
+| 现象 | 排查 |
 |---|---|
-| **uv sync 安装依赖超时** | 确认 `pyproject.toml` 已配置国内镜像源 |
-| **板子上传图片返回 20040** | ① 检查 menuconfig 是否误用 HTTPS 地址（须用 HTTP）；② 确认穿透服务正常、生成的 URL 公网可访问；③ 确认 `file_id` 完整（36 位 UUID，截断会导致 404，LLM 抓到 404 页即报 20040）；④ 下载响应 `Content-Type` 必须是 `image/*` |
-| **设备无法连接文件服务器** | 确认飞鸽通道本地端口填写为 `127.0.0.1:8000`，文件服务器没有被防火墙拦截 |
-| **上传成功，但大模型无法下载图片** | 必须使用公网可访问的 HTTPS 链接；内网地址、localhost 地址 OpenAI/SiliconFlow 接口无法访问；穿透域名证书需被公网信任（浏览器访问无证书告警） |
-| **下载 URL 返回 404** | `file_id` 与数据库不一致（常为手抄截断），可用 `/files` 接口核对完整 file_id |
+| `uv sync` 超时 | 配置国内镜像源后重试 |
+| 板子上传返回 20040 | 确认上传地址是 HTTP；确认穿透地址公网可访问；确认 `file_id` 完整；确认下载响应的 `Content-Type` 是图片类型 |
+| 设备连不上服务器 | 检查穿透通道的本地端口是否为 `127.0.0.1:8000`，检查防火墙 |
+| 上传成功，但模型下载不了图片 | 下载 URL 必须公网可达；HTTPS 证书需被公网信任 |
+| 下载返回 404 | `file_id` 不完整或已被删除，可用 `/files` 核对 |
+| `/stt` 返回 500 | 查看服务端日志，确认 whisper 模型已下载、音频文件可读 |
+| 首次语音识别很慢 | 首次请求会加载模型，等待时间取决于模型大小与磁盘速度 |
+| `/stt` 请求超时 | Agent 侧连接后等待 120 s；模型过大或机器太慢时，换 `tiny` 模型 |

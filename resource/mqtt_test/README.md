@@ -15,7 +15,7 @@
 
 ## 依赖
 
-- QEMU：`D:\rtt\env-windows\tools\qemu\qemu64\qemu-system-arm.exe`（脚本内 `$qemu` 可按需修改）
+- QEMU：脚本默认写死 `D:\rtt\env-windows\tools\qemu\qemu64\qemu-system-arm.exe`。本机 env 装在 `C:\Users\Public\Downloads\rtt\env-windows`，运行前要改脚本里的 `$qemu` / `-Qemu` 参数
 - Python 3（用于 PC 端 MQTT 客户端）
 - 已编译的 `rtthread.bin`、`sd.bin`（BSP 根目录）
 - 网络可达的 broker（默认取 `rtconfig.h` 里配置的 `tcp://47.93.225.100:1883`，PC 与 QEMU 都需要能访问）
@@ -47,7 +47,7 @@ qemu-system-arm -M vexpress-a9 -smp cpus=2 -kernel rtthread.bin -sd sd.bin `
 # 再用 PuTTY / MobaXterm 以 Raw 模式连接 127.0.0.1:5580
 ```
 
-MSH 命令见文档 §6。不需要 broker 也能验证链路：
+MSH 命令见文档 §7。不需要 broker 也能验证链路：
 
 ```
 msh /> mqtt_tool start

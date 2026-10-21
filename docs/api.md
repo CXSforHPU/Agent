@@ -1,134 +1,175 @@
 # Agent API 文档
 
-> 框架全部公开 API 参考，按模块分组。框架整体说明见 [framework.md](./framework.md)。
-
----
+本文按模块列出公开接口。框架结构与数据流见 [framework.md](./framework.md)。
 
 ## 目录
 
-1. [MessageHub —— 消息中心与消息数组](#1-messagehub--消息中心与消息数组)
-2. [Chat —— LLM 通信](#2-chat--llm-通信)
-3. [Context —— 上下文管理器](#3-context--上下文管理器)
-4. [Tool —— 工具系统](#4-tool--工具系统)
-5. [Channels —— 交互通道](#5-channels--交互通道)
-6. [Utils —— 通用工具与多模态](#6-utils--通用工具与多模态)
-7. [AgentConfig —— 运行时配置](#7-agentconfig--运行时配置)
-8. [Prompt —— 系统提示词](#8-prompt--系统提示词)
-9. [MSH 命令](#9-msh-命令)
+1. [MessageHub：消息中心与消息数组](#1-messagehub消息中心与消息数组)
+2. [Chat：LLM 通信](#2-chatllm-通信)
+3. [Context：上下文管理器](#3-context上下文管理器)
+4. [Tool：工具系统](#4-tool工具系统)
+5. [Channels：交互通道](#5-channels交互通道)
+6. [Utils：通用工具、多模态与 STT](#6-utils通用工具多模态与-stt)
+7. [AgentAudio：音频驱动](#7-agentaudio音频驱动)
+8. [AgentConfig：运行时配置](#8-agentconfig运行时配置)
+9. [Prompt：系统提示词](#9-prompt系统提示词)
+10. [MSH 命令](#10-msh-命令)
+11. [已知差异](#11-已知差异)
 
----
+## 1. MessageHub：消息中心与消息数组
 
-## 1. MessageHub —— 消息中心与消息数组
+头文件：`include/MessageHub.h` 实现：`src/MessageHub.c`
 
-**头文件**：`include/MessageHub.h`　**实现**：`src/MessageHub.c`
-
-### 1.1 类型定义
+### 1.1 类型
 
 ```c
-/* 消息类型 */
-typedef enum MessageType { TYPE_TEXT, TYPE_AUDIO, TYPE_IMAGE, TYPE_VIDEO, TYPE_NULL } MessageType;
+typedef enum MessageType
+{
+    TYPE_TEXT,
+    TYPE_AUDIO,
+    TYPE_IMAGE,
+    TYPE_VIDEO,
+    TYPE_NULL
+} MessageType;
 
-/* 单条消息 */
-typedef struct MessageItem { MessageType message_type; char *content; } MessageItem, *MessageItem_t;
+typedef struct MessageItem
+{
+    MessageType message_type;
+    char *content;
+} MessageItem, *MessageItem_t;
 
-/* 不定长消息数组（自动扩容） */
-typedef struct Messages { MessageItem_t message_ptr; int max_size; int current_size; } Messages, *Messages_t;
+typedef struct Messages
+{
+    MessageItem_t message_ptr;
+    int max_size;
+    int current_size;
+} Messages, *Messages_t;
 
-/* 消息中心 */
-typedef struct MessageHub {
-    rt_mailbox_t input_mailbox;      /* 输入邮箱（通道→主循环） */
-    rt_mailbox_t output_mailbox;     /* 输出邮箱（主循环→通道） */
+typedef struct MessageHub
+{
+    rt_mailbox_t input_mailbox;
+    rt_mailbox_t output_mailbox;
     rt_err_t (*put_message)(struct MessageHub *self, Messages_t message, rt_mailbox_t mb);
     Messages_t (*get_message)(struct MessageHub *self, rt_mailbox_t mb);
 } MessageHub, *MessageHub_t;
 ```
 
-邮箱常量：输入 `AgentInputMb`（容量 10）、输出 `AgentOutMb`（容量 10）。
+邮箱：输入 `AgentInputMb`，输出 `AgentOutMb`，容量都是 10。
 
-### 1.2 消息中心接口
+### 1.2 消息中心
 
 #### `MessageHub_t message_hub_create(void)`
-创建消息中心（含两个邮箱）。失败返回 `RT_NULL`（部分创建失败会自动回滚）。
+
+创建消息中心与两个邮箱。失败返回 `RT_NULL`，已创建的资源会回滚。
 
 #### `void message_hub_destroy(MessageHub_t hub)`
-销毁消息中心。**删除前排空两个邮箱并释放残留的 `Messages_t`**（防消息泄漏）。`hub` 为 `RT_NULL` 时安全返回。
+
+销毁消息中心。销毁前排空两个邮箱并释放残留消息。`hub` 为 `RT_NULL` 时直接返回。
 
 #### `rt_err_t message_hub_put(MessageHub_t hub, Messages_t message, rt_mailbox_t mb)`
-发送消息（入队指针）。**入队成功即移交所有权给接收方**，发送方不得再释放 `message`。返回 `RT_EOK` 成功。
+
+把消息指针放入邮箱。成功返回 `RT_EOK`，所有权移交接收方。入队后发送方不得再释放该消息。
 
 #### `Messages_t message_hub_get(MessageHub_t hub, rt_mailbox_t mb)`
-阻塞接收消息（`RT_WAITING_FOREVER`）。返回取到的 `Messages_t`，调用方负责释放。
+
+阻塞接收，等待时间为 `RT_WAITING_FOREVER`。返回的消息由调用方释放。
 
 #### `Messages_t message_hub_get_timeout(MessageHub_t hub, rt_mailbox_t mb, rt_int32_t timeout)`
-带超时接收消息，供通道做**可中断的输出等待**（避免清理卡死）。
-- 参数 `timeout`：tick 超时（`RT_WAITING_NO` 表示不等待）。
-- 返回：超时/失败返回 `RT_NULL`，成功返回 `Messages_t`（调用方负责释放）。
 
-### 1.3 消息数组接口
+带超时接收，供通道做可中断的输出等待。
+
+- `timeout` 单位为 tick，`RT_WAITING_NO` 表示立即返回。
+- 超时返回 `RT_NULL`，成功返回消息，调用方负责释放。
+
+### 1.3 消息数组
 
 #### `Messages_t messages_create(int max_size)`
-创建消息数组。`max_size` 为初始容量，`0` 表示延迟分配（首条 append 时扩容）。失败返回 `RT_NULL`。
+
+创建消息数组。`max_size` 为初始容量，传 0 表示首次追加时再分配。失败返回 `RT_NULL`。
 
 #### `rt_err_t messages_append(Messages_t messages, MessageType message_type, const char *content)`
-追加一条消息（内容内部 `strdup` 拷贝）。容量不足自动 +5 扩容。失败返回 `RT_ERROR`。
+
+追加一条消息，内容会复制一份。容量不足时按 5 条递增。失败返回 `RT_ERROR`。
 
 #### `void messages_destroy(Messages_t messages)`
-释放消息数组及其全部内容。`messages` 为 `RT_NULL` 时安全返回。
+
+释放数组及全部内容。`messages` 为 `RT_NULL` 时直接返回。
 
 #### `char *messages_get_content_idx(Messages_t messages, int idx)`
-获取指定索引的消息内容指针（不拷贝）。越界返回 `RT_NULL`。
+
+返回指定索引的内容指针，不复制。越界返回 `RT_NULL`。
 
 #### `MessageType messages_get_type_idx(Messages_t messages, int idx)`
-获取指定索引的消息类型。越界返回 `TYPE_NULL`。
+
+返回指定索引的消息类型。越界返回 `TYPE_NULL`。
 
 #### `char *get_agent_content_type(MessageType message_type)`
-消息类型 → 字符串（`"text"` / `"audio_url"` / `"image_url"` / `"video_url"`）。
 
----
+消息类型转字符串：`text`、`audio_url`、`image_url`、`video_url`。内部数组只有 4 项，传入 `TYPE_NULL` 会越界读取，不要这样调用。
 
-## 2. Chat —— LLM 通信
+## 2. Chat：LLM 通信
 
-**头文件**：`include/chat.h`　**实现**：`src/chat.c`
+头文件：`include/chat.h` 实现：`src/chat.c`
 
-### 2.1 类型定义
+### 2.1 类型
 
 ```c
-typedef struct ChatResponse {
-    char *reasoning;    /* 思考过程文本 */
-    char *context;      /* 回答内容文本 */
-    cJSON *tool_call;   /* 工具调用数组 [list[Dict]] */
+typedef struct ChatResponse
+{
+    char *reasoning;
+    char *context;
+    cJSON *tool_call;
 } ChatResponse, *ChatResponse_t;
 ```
+
+- `reasoning`：思考文本。
+- `context`：回答正文。
+- `tool_call`：工具调用数组，元素为 OpenAI 格式的 tool call 对象。
 
 ### 2.2 接口
 
 #### `ChatResponse_t chat(cJSON *messages, cJSON *tools, int max_tokens, void (*on_reasoning)(const char *text), void (*on_tool_call)(const char *text), void (*on_context)(const char *text))`
 
-发送聊天请求并流式读取 SSE 响应。
+发送请求并流式读取 SSE 响应。
 
-- `messages`：消息列表 cJSON 数组（内部 Duplicate，不取走所有权）。
-- `tools`：工具定义 cJSON 数组，可传 `RT_NULL`。
-- `max_tokens`：最大 token 数。
-- `on_reasoning` / `on_tool_call` / `on_context`：流式回调，可传 `RT_NULL`。
-- 返回：成功返回 `ChatResponse_t`（**必须 `chat_response_free` 释放**）；失败返回 `RT_NULL`。
-- 内部：30s 网络超时；SSE 解析失败自动复位行缓冲。
+- `messages`：消息数组，函数内部复制，不取走所有权。
+- `tools`：工具定义数组，可传 `RT_NULL`。
+- `max_tokens`：最大 token 数。主循环传 32 × 1024。
+- 回调都在流式解析过程中调用，可传 `RT_NULL`。
+- `on_tool_call` 在响应结束后收到完整的工具调用 JSON。
+- 成功返回 `ChatResponse_t`，必须用 `chat_response_free()` 释放；失败返回 `RT_NULL`。
+- 网络超时为 30 s。
+
+解析规则：
+
+- 只处理以 `data: ` 开头的行，遇到 `[DONE]` 结束。
+- 思考文本优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`。
+- 正文取 `delta.content`。
+- 工具调用按 `index` 合并，`id` 与 `name` 取第一个非空值，`arguments` 逐片拼接。
+- 缺失 `id` 的调用用 `call_<index>` 补齐，空参数改为 `{}`，没有函数名的调用丢弃。
 
 #### `void chat_response_free(ChatResponse_t resp)`
-释放聊天响应（reasoning / context / tool_call / 结构体）。`resp` 为 `RT_NULL` 时安全返回。
 
----
+释放思考文本、正文、工具调用数组与结构体。`resp` 为 `RT_NULL` 时直接返回。
 
-## 3. Context —— 上下文管理器
+## 3. Context：上下文管理器
 
-**头文件**：`include/context.h`　**实现**：`src/context.c`
+头文件：`include/context.h` 实现：`src/context.c`
 
-### 3.1 类型定义
+### 3.1 类型
 
 ```c
-typedef enum RoleType { ROLE_SYSTEM, ROLE_USER, ROLE_ASSISTANT, ROLE_TOOL } RoleType;
+typedef enum RoleType
+{
+    ROLE_SYSTEM,
+    ROLE_USER,
+    ROLE_ASSISTANT,
+    ROLE_TOOL
+} RoleType;
 
-typedef struct Context {
-    cJSON *message;  /* 消息列表 cJSON 数组 */
+typedef struct Context
+{
+    cJSON *message;
     rt_err_t (*build_system_prompt)(struct Context *self);
     rt_err_t (*append_user_message)(struct Context *self, Messages_t messages);
     rt_err_t (*append_assistant_message)(struct Context *self, ChatResponse_t resp);
@@ -141,42 +182,47 @@ typedef struct Context {
 ### 3.2 接口
 
 #### `char *get_role_string(RoleType type)`
-角色枚举 → 字符串（`"system"` / `"user"` / `"assistant"` / `"tool"`）。
+
+角色枚举转字符串：`system`、`user`、`assistant`、`tool`。
 
 #### `Context_t agent_context_create(void)`
-创建上下文管理器并自动构建系统提示词。失败返回 `RT_NULL`。
+
+创建上下文并构建系统提示词。失败返回 `RT_NULL`。
 
 #### `void agent_context_destroy(Context_t context)`
-销毁上下文管理器（释放消息数组与结构体）。`context` 为 `RT_NULL` 时安全返回。
 
-#### 方法指针（通过 `Context_t` 调用）
+释放消息数组与结构体。`context` 为 `RT_NULL` 时直接返回。
+
+#### 方法指针
 
 | 方法 | 说明 |
 |---|---|
-| `build_system_prompt(self)` | 在消息列表头部加入 system 消息 |
-| `append_user_message(self, messages)` | 追加用户消息（内容拷贝，`messages` 所有权仍归调用者） |
-| `append_assistant_message(self, resp)` | 无 tool_calls 时追加正文；有 tool_calls 时追加含 tool_calls 的助手消息（内部 Duplicate） |
-| `append_tool_message(self, tool_call_id, messages)` | 追加工具返回消息（绑定 `tool_call_id`） |
-| `clear_message(self)` | 清空消息数组（不重建系统提示词，需另行调用 `build_system_prompt`） |
-| `trim_context(self, keep_items)` | 保留系统提示词 + 最近 `keep_items` 条消息 |
+| `build_system_prompt(self)` | 在数组头部加入 system 消息 |
+| `append_user_message(self, messages)` | 追加 user 消息，内容复制，调用方保留 `messages` 所有权 |
+| `append_assistant_message(self, resp)` | 无工具调用时追加正文；有工具调用时追加 `content` 为空、带 `tool_calls` 的 assistant 消息 |
+| `append_tool_message(self, tool_call_id, messages)` | 追加 `role=tool` 消息，只拼接 `TYPE_TEXT` 内容，结果是一个字符串 |
+| `clear_message(self)` | 删除全部消息并新建空数组，不重建系统提示词 |
+| `trim_context(self, keep_rounds)` | 保留 system 消息和最近 `keep_rounds` 条消息 |
 
----
+工具结果只支持文本。图片、音频等多模态内容不能放进 `role=tool` 消息。
 
-## 4. Tool —— 工具系统
+`trim_context` 的参数名是 `keep_rounds`，实际按消息条数裁剪，不是按对话轮次。它也可能把 assistant 消息与其后的 tool 消息拆开。保留条数过小时，下一轮请求可能被接口以 400 拒绝。
 
-**头文件**：`include/tool_base.h`、`include/tool_func.h`　**实现**：`src/tool_base.c`、`src/tool_func.c`、`src/tools/*`
+## 4. Tool：工具系统
 
-### 4.1 类型定义
+头文件：`include/tool_base.h`、`include/tool_func.h` 实现：`src/tool_base.c`、`src/tool_func.c`、`src/tools/*`
+
+### 4.1 类型
 
 ```c
-/* 工具返回值 */
-typedef struct AgentToolRet {
+typedef struct AgentToolRet
+{
     rt_err_t ret;
     Messages_t messages;
 } AgentToolRet, *AgentToolRet_t;
 
-/* 工具链表节点 */
-typedef struct AgentToolList {
+typedef struct AgentToolList
+{
     cJSON *tool_obj;
     AgentToolRet ret;
     void (*execute_func)(cJSON *param, struct AgentToolList *node);
@@ -184,241 +230,350 @@ typedef struct AgentToolList {
 } AgentToolList, AgentToolNode, *AgentToolNode_t;
 ```
 
-工具执行函数约定：`void tool_xxx(cJSON *args, AgentToolNode_t node)`，结果写入 `node->ret.messages`（再次执行前内部会释放旧消息）。
+工具函数签名：`void tool_xxx(cJSON *args, AgentToolNode_t node)`。结果写入 `node->ret.messages`。
 
-### 4.2 接口（tool_base.h）
+### 4.2 接口
+
+头文件 `tool_base.h`：
 
 | 函数 | 说明 |
 |---|---|
 | `rt_err_t agent_tool_list_create(void)` | 创建工具链表头节点 |
-| `rt_err_t append_tool(cJSON *tool_obj, void (*execute_func)(cJSON*, AgentToolNode_t))` | 追加工具节点（`tool_obj` 所有权在 `build_tools_json` 时移交 `AgentTools` 数组） |
-| `cJSON *build_tools_json(void)` | 构建工具定义 JSON 数组（首次调用后复用） |
-| `cJSON *get_agent_tools(void)` | 获取已构建的工具 JSON 数组 |
-| `AgentToolNode_t search_agent_tool_node(cJSON *tool_obj)` | 按 `function.name` 查找工具节点 |
-| `void free_agent_tool_node(AgentToolNode_t node)` | 释放节点自身与 `ret.messages`（**不释放** `tool_obj`，其归 `AgentTools` 数组所有） |
-| `void agent_tool_list_destroy(void)` | 销毁整个工具链表 + `AgentTools` 数组 + 节点残留消息 |
+| `rt_err_t append_tool(cJSON *tool_obj, void (*execute_func)(cJSON *, AgentToolNode_t))` | 追加工具节点 |
+| `cJSON *build_tools_json(void)` | 构建工具定义数组，首次调用后复用 |
+| `cJSON *get_agent_tools(void)` | 获取已构建的工具定义数组 |
+| `AgentToolNode_t search_agent_tool_node(cJSON *tool_obj)` | 按 `function.name` 查找节点 |
+| `void free_agent_tool_node(AgentToolNode_t node)` | 只释放节点与结果消息，不释放 `tool_obj`；工具定义由 `AgentTools` 数组统一释放 |
+| `void agent_tool_list_destroy(void)` | 释放整个链表、工具数组与残留消息 |
 
-### 4.3 接口（tool_func.h）
+头文件 `tool_func.h`：
 
 | 函数 | 说明 |
 |---|---|
-| `void init_tools(void)` | 注册内置工具（add / mul / compare），幂等（`init_flag` 保护） |
-| `void agent_tools_cleanup(void)` | 清理全部工具并复位注册标志（由 `cleanup_agent` 调用，再次进入时 `init_tools` 重新注册） |
+| `void init_tools(void)` | 注册内置工具，重复调用不会重复注册 |
+| `void agent_tools_cleanup(void)` | 清理工具并复位注册标志，再次进入时重新注册 |
 
-### 4.4 内置工具
+### 4.3 内置工具
 
-| 工具 | 签名 | 参数 | 结果 |
-|---|---|---|---|
-| `tool_add` | `void tool_add(cJSON *args, AgentToolNode_t node)` | `a`, `b`（double） | `"计算结果: <a+b>"` |
-| `tool_mul` | `void tool_mul(cJSON *args, AgentToolNode_t node)` | `a`, `b`（double） | `<a*b>` |
-| `tool_compare` | `void tool_compare(cJSON *args, AgentToolNode_t node)` | `a`, `b`（double） | 大小比较文本 |
+| 工具 | 参数 | 结果 |
+|---|---|---|
+| `add` | `a`, `b`（number） | 两数之和 |
+| `mul` | `a`, `b`（number） | 两数之积 |
+| `compare` | `a`, `b`（number） | 大小比较文本 |
 
-### 4.5 MQTT 工具（`PKG_AGENT_TOOL_MQTT_ENABLE`）
+### 4.4 MQTT 工具
 
-**头文件**：`include/tools/tool_mqtt/tool_mqtt.h`　**实现**：`src/tools/tool_mqtt/tool_mqtt.c`　**使用说明**：[tool_mqtt.md](./tool_mqtt.md)
+头文件：`include/tools/tool_mqtt/tool_mqtt.h`
+实现：`src/tools/tool_mqtt/`
+使用说明：[tool_mqtt.md](./tool_mqtt.md)
 
-| 工具（LLM 可见名） | 签名 | 参数 | 结果 |
-|---|---|---|---|
-| `mqtt_publish` | `void tool_mqtt_publish(cJSON *args, AgentToolNode_t node)` | `topic?`（string）, `message`（string） | `publish ok: topic=... bytes=... qos=1` |
-| `mqtt_subscribe` | `void tool_mqtt_subscribe(cJSON *args, AgentToolNode_t node)` | `action`（subscribe/unsubscribe/list）, `topic?`, `mode?`（filter/auto/poll） | 订阅状态 / 订阅列表 |
-| `mqtt_rule` | `void tool_mqtt_rule(cJSON *args, AgentToolNode_t node)` | `action`（set/clear/list）, `topic?`, `field?`, `op?`, `value?` | 规则设置结果 / 规则列表 |
-| `mqtt_receive` | `void tool_mqtt_receive(cJSON *args, AgentToolNode_t node)` | `max?`（number）, `topic?`（string） | 缓存/滚动窗口里的消息 |
+启用 `PKG_AGENT_TOOL_MQTT_ENABLE` 后注册 7 个工具：
 
-投递模式（`mqtt_subscribe` 的 `mode` 参数，默认 `filter`）：
+| 工具 | 参数 | 说明 |
+|---|---|---|
+| `mqtt_connect` | `timeout_ms?`（number） | 启动并连接 broker，返回连接状态 |
+| `mqtt_disconnect` | 无 | 断开连接并释放工作线程，订阅意图保留 |
+| `mqtt_publish` | `message`（string，必填），`topic?`（string） | 发布消息，省略话题时使用默认发布话题 |
+| `mqtt_subscribe` | `action`（subscribe / unsubscribe / list），`topic?`，`mode?`（filter / auto / poll） | 订阅、退订或列出话题 |
+| `mqtt_receive` | `max?`（number），`topic?`（string） | 取出缓存消息，默认最多 8 条，受 `PKG_AGENT_TOOL_MQTT_POLL_DEPTH` 限制 |
+| `mqtt_rule` | `action`（set / clear / list），`topic?`，`field?`，`op?`，`value?` | 设置、清除或列出阈值规则 |
+| `mqtt_history` | `topic?`（string），`max?`（number） | 汇总近期消息与数值统计，只读 |
+
+投递模式：
 
 | 模式 | 行为 |
 |---|---|
-| `filter` | 只有「报文像咨询」或「命中 `mqtt_rule` 阈值规则」的消息才注入 agent；其余只统计并进滚动窗口 |
-| `auto` | 该话题每条消息都注入 agent |
-| `poll` | 都不自动注入，全部由 `mqtt_receive` 取用 |
+| `filter` | 只有报文像咨询或命中阈值规则时才注入 agent，其余留在本地 |
+| `auto` | 每条消息都注入 agent |
+| `poll` | 不自动注入，由 `mqtt_receive` 取用 |
 
-生命周期与调试接口（应用层可显式调用，工具内部会按需自动启动）：
+### 4.5 MQTT 应用层接口
 
 | 函数 | 说明 |
 |---|---|
-| `rt_err_t mqtt_tool_start(void)` | 启动 MQTT 客户端（幂等）：建接收队列/接收线程并启动 paho 工作线程 |
-| `void mqtt_tool_stop(void)` | 停止客户端并释放接收线程/队列（幂等） |
+| `rt_err_t mqtt_tool_add_topic(const char *topic, mqtt_deliver_mode_t mode)` | 增加或更新订阅，客户端未启动时自动启动 |
+| `rt_err_t mqtt_tool_remove_topic(const char *topic)` | 删除订阅，由接收线程异步退订 |
+| `int mqtt_tool_topic_count(void)` | 当前有效订阅数 |
+| `rt_err_t mqtt_tool_start(void)` | 启动客户端，幂等 |
+| `void mqtt_tool_stop(void)` | 停止客户端并释放接收线程与队列，幂等 |
 | `rt_bool_t mqtt_tool_is_started(void)` | 客户端是否已启动 |
-| MSH `mqtt_tool` | `start/stop/status/sub/unsub/pub/recv/sim/flush` 调试命令 |
+| `rt_err_t mqtt_tool_publish(const char *topic, const char *payload, char *out, rt_size_t out_size)` | 主动发布，自动启动并连接 broker |
+| `rt_bool_t mqtt_tool_topic_latest(const char *topic_filter, double *value_out, rt_tick_t *tick_out)` | 读取订阅话题的最新数值，只读 |
+| `const char *mqtt_tool_conn_state(void)` | 返回 `stopped`、`connecting` 或 `connected` |
+| `rt_bool_t mqtt_tool_ensure_connected(char *out, rt_size_t out_size)` | 确保已启动并已连接，返回是否成功 |
 
-### 4.6 Agent 运行时访问器（`include/AgentRuntime.h`）
+`mqtt_tool_publish()` 与 LLM 调用的 `mqtt_publish` 走同一条发布路径，受 100 ms 最小发布间隔限制。
 
-供需要主动向 agent 注入消息的模块使用（MQTT 订阅回调即通过它投递消息）：
+`mqtt_tool_topic_latest()` 的查找规则：
+
+- `topic_filter` 与订阅记录精确匹配；传 `RT_NULL` 或空字符串时取任意话题。
+- 读取该话题最新一条历史消息。
+- 优先解析 JSON 中的 `val` 字段；没有时按整段报文解析数值。
+- 不消费历史，可重复调用。
+
+### 4.6 Agent 运行时访问器
+
+头文件：`include/AgentRuntime.h`
 
 | 函数 | 说明 |
 |---|---|
-| `MessageHub_t agent_get_message_hub(void)` | 取当前消息中心句柄；agent 未运行时返回 `NULL` |
-| `rt_bool_t agent_is_running(void)` | 主循环是否在运行 |
-| `rt_bool_t agent_is_busy(void)` | 是否正在处理一轮对话（含 LLM 请求与工具执行）；注入方据此错峰投递 |
+| `MessageHub_t agent_get_message_hub(void)` | 当前消息中心，agent 未运行时返回 `RT_NULL` |
+| `rt_bool_t agent_is_running(void)` | 主循环是否正在运行 |
+| `rt_bool_t agent_is_busy(void)` | 是否正在处理一次用户请求，注入方可据此错峰 |
 
-### 4.7 文本注入（`include/utils.h`）
+### 4.7 文本注入
 
-把一段外部文本作为**用户消息**交给 agent 分析，工具/驱动/其它模块都可用这一个入口，不必自己拼 `MessageHub`：
+头文件：`include/utils.h`
 
 | 函数 | 说明 |
 |---|---|
-| `rt_err_t agent_inject_text(const char *text)` | 注入一段非空文本（`role=user`），等待 LLM 分析/总结/告警。成功 `RT_EOK`；agent 未运行、消息中心未就绪、输入 mailbox 满时返回 `RT_ERROR`（调用方需自行缓存或丢弃）。`put` 成功后消息所有权移交 agent 主循环，调用方不得再释放 |
+| `rt_err_t agent_inject_text(const char *text)` | 把一段非空文本作为 user 消息交给 agent |
+
+成功返回 `RT_EOK`，消息所有权移交主循环。agent 未运行、消息中心未就绪或输入邮箱已满时返回 `RT_ERROR`，调用方需要自行缓存或丢弃。
 
 ```c
 #include "utils.h"
 
-/* 例：把一条设备事件交给 agent 分析（MQTT 路由线程即这样调用） */
 if (agent_inject_text("topic: device/1/data\npayload: {\"temp\":42}") != RT_EOK)
 {
-    /* agent 未运行 / mailbox 满：自行缓存或丢弃 */
+    /* agent 未运行或邮箱已满 */
 }
 ```
 
-> 需要错峰时先判断 `agent_is_busy()`；实现见 `src/utils.c`（由原先 MQTT 模块内的 `mqtt_inject_text()` 提升而来，MQTT 特有的注入计数/错峰时间戳仍留在 `tool_mqtt_route.c` 维护）。
+需要错峰时先判断 `agent_is_busy()`。
 
----
+## 5. Channels：交互通道
 
-## 5. Channels —— 交互通道
+头文件：`include/channels/*` 实现：`src/channels/*`
 
-**头文件**：`include/channels/*`　**实现**：`src/channels/*`
-
-### 5.1 通道 ops 接口（`include/channels/AgentChannel.h`）
+### 5.1 通道接口
 
 ```c
-typedef struct AgentChannelOps {
-    int  (*init)(MessageHub_t hub, Context_t ctx);  /* 通道初始化：绑定 hub/context */
-    void (*reset)(void);                            /* 通道清理：停止线程/释放句柄/置空缓存（幂等） */
+typedef struct AgentChannelOps
+{
+    int  (*init)(MessageHub_t hub, Context_t ctx);
+    void (*reset)(void);
 } AgentChannelOps;
 ```
 
-`AgentLoop` 通过全局 `g_channel_ops`（`AGENT_CHANNEL_OPS` 宏，`include/channels/AgentChannels.h` 单点选择）统一调用 init/reset，调用点无 `#ifdef`。
+`AgentLoop` 通过 `AGENT_CHANNEL_OPS` 选择通道，选择点在 `include/channels/AgentChannels.h`。优先级为 LVGL → CLI → WebNet → Debug，未配置时返回 `RT_NULL`。
 
-### 5.2 CLI 通道（`include/channels/CLI.h`，宏 `PKG_AGENT_CLI_CHANNEL`）
+### 5.2 CLI 通道
 
-| 函数 | 说明 |
-|---|---|
-| `int agent_cli_channel(MessageHub_t message_hub, Context_t context)` | 通道初始化：创建 readline 线程与信号量；hub/context 为 NULL 返回 `-RT_EINVAL` |
-| `void agent_cli_stop(void)` | 停止线程并等待退出，随后释放信号量与句柄、置空全局（幂等） |
-| `extern AgentChannelOps agent_cli_ops` | ops 实例 `{ agent_cli_channel, agent_cli_stop }` |
-
-### 5.3 WebNet 通道（`include/channels/AgentWebChannel.h`，宏 `PKG_AGENT_WEBNET_CHANNEL`）
+宏：`PKG_AGENT_CLI_CHANNEL`
 
 | 函数 | 说明 |
 |---|---|
-| `void webnet_agent_mode(MessageHub_t hub, Context_t ctx)` | 注册 CGI（`chat` / `config` / `get_config`）并启动 webnet |
-| `void agent_webnet_reset(void)` | 置空缓存的 hub/context 指针（幂等）；CGI 带 NULL 检查，优雅失败 |
-| `extern AgentChannelOps agent_webnet_ops` | ops 实例 `{ webnet_agent_channel_init, agent_webnet_reset }` |
+| `int agent_cli_channel(MessageHub_t hub, Context_t ctx)` | 创建 readline 线程与信号量，参数为空返回 `-RT_EINVAL` |
+| `void agent_cli_stop(void)` | 停止线程，释放信号量与句柄，幂等 |
+| `extern AgentChannelOps agent_cli_ops` | `{ agent_cli_channel, agent_cli_stop }` |
 
-WebNet HTTP 接口（会话内）：`POST /chat`（`message` / `stream` / `reset` 字段，支持 SSE 流式）、`POST /config`、`GET /get_config`。
+按 CTRL+D（0x04）退出 CLI。
 
-### 5.4 Debug 通道（`include/channels/AgentDebugChannel.h`，宏 `PKG_AGENT_DEBUG_CHANNEL`）
+### 5.3 WebNet 通道
+
+宏：`PKG_AGENT_WEBNET_CHANNEL`
 
 | 函数 | 说明 |
 |---|---|
-| `int agent_debug_channel(MessageHub_t message_hub, Context_t context)` | 绑定 hub/context（无条件刷新缓存指针） |
-| `void agent_debug_reset(void)` | 置空缓存的 hub/context 指针（幂等） |
-| `extern AgentChannelOps agent_debug_ops` | ops 实例 `{ agent_debug_channel, agent_debug_reset }` |
+| `void webnet_agent_mode(MessageHub_t hub, Context_t ctx)` | 注册 CGI 并启动 webnet |
+| `void agent_webnet_reset(void)` | 置空缓存的 hub 与 ctx，幂等 |
+| `extern AgentChannelOps agent_webnet_ops` | `{ webnet_agent_channel_init, agent_webnet_reset }` |
 
----
+CGI：
 
-## 6. Utils —— 通用工具与多模态
+| 接口 | 说明 |
+|---|---|
+| `POST /cgi-bin/chat` | 字段 `message`、`stream`、`reset`；`stream` 为真时返回 SSE |
+| `POST /cgi-bin/config` | 更新运行时配置 |
+| `GET /cgi-bin/get_config` | 读取当前配置 |
 
-**头文件**：`include/utils.h`　**实现**：`src/utils.c`
+SSE 事件依次为 `delta`、`final`、`done`。输出等待超时 30 s，失败返回 502。
 
-### 6.1 消息/JSON 工具
+### 5.4 Debug 通道
+
+宏：`PKG_AGENT_DEBUG_CHANNEL`
+
+| 函数 | 说明 |
+|---|---|
+| `int agent_debug_channel(MessageHub_t hub, Context_t ctx)` | 绑定 hub 与 ctx |
+| `void agent_debug_reset(void)` | 置空缓存指针，幂等 |
+| `extern AgentChannelOps agent_debug_ops` | `{ agent_debug_channel, agent_debug_reset }` |
+
+通过 `agent_send_message <type> <content>` 注入消息，类型 0–4 对应 text、audio、image、video、null。命令会等待输出最多 30 s，超时返回 -1。
+
+### 5.5 LVGL 通道
+
+宏：`PKG_AGENT_LVGL_CHANNEL`
+头文件：`include/channels/AgentLvglChannel.h`
+
+| 函数 | 说明 |
+|---|---|
+| `int agent_lvgl_channel(MessageHub_t hub, Context_t ctx)` | 保存 hub，不使用 ctx |
+| `void agent_lvgl_channel_reset(void)` | 清空 hub，幂等 |
+| `MessageHub_t agent_lvgl_channel_hub(void)` | 取当前 hub，未初始化时返回 `RT_NULL` |
+| `extern AgentChannelOps agent_lvgl_ops` | `{ agent_lvgl_channel, agent_lvgl_channel_reset }` |
+
+包内只有接口，`agent_lvgl_ops` 由应用实现。本仓库示例在 `applications/lvgl/demo/lv_home_agent.c`：用 `message_hub_get_timeout()` 轮询输出，通过 MSH 命令启动 agent。
+
+## 6. Utils：通用工具、多模态与 STT
+
+头文件：`include/utils.h` 实现：`src/utils.c`
+
+### 6.1 文本与 JSON
 
 | 函数 | 说明 |
 |---|---|
 | `cJSON *format_text(const char *text)` | 生成 `{ "type": "text", "text": ... }` |
 | `cJSON *create_content_array(void)` | 创建空内容数组 |
-| `cJSON *to_content(Messages_t messages)` | Messages → API content：非多模态返回 `{content}`，多模态返回 `[{type,...},...]`（音频/图片/视频自动上传） |
-| `void print_reasoning(const char *text)` / `print_tool_call(const char *text)` / `print_context(const char *text)` | 回调打印函数 |
+| `cJSON *to_content(Messages_t messages)` | 把消息数组转成 API content |
+| `void print_reasoning(const char *text)` | 打印思考文本，首次打印时加 `[thinking]` 前缀 |
+| `void print_tool_call(const char *text)` | 打印工具调用 |
+| `void print_context(const char *text)` | 打印正文，并复位思考前缀状态 |
+
+`to_content()` 的行为：
+
+- 未启用多模态：返回字符串内容。
+- 文本：`{type: "text", text: ...}`。
+- 图片、视频：上传后生成 `image_url` 或 `video_url`。
+- 音频：
+  - 启用 STT：转写后删除本地文件；成功时生成文本项，失败时生成提示文本。
+  - 未启用 STT：上传后生成 `audio_url`。
+- 上传失败的消息跳过。
 
 ### 6.2 工具 JSON 构建
 
 | 函数 | 说明 |
 |---|---|
-| `cJSON *create_tool_item(const char *func_name, const char *desc, cJSON *params_obj)` | 生成工具项 `{type:"function", function:{name, description, parameters}}` |
+| `cJSON *create_tool_item(const char *func_name, const char *desc, cJSON *params_obj)` | 生成工具定义 |
 | `cJSON *create_param_obj(cJSON *props_obj, cJSON *required_arr)` | 生成 `{type:"object", properties, required}` |
-| `void create_property(cJSON *props_obj, const char *name, const char *type, const char *desc)` | 向属性对象添加单个属性 |
+| `void create_property(cJSON *props_obj, const char *name, const char *type, const char *desc)` | 添加一个属性 |
 
-### 6.3 多模态文件服务器（`PKG_AGENT_MULTIMODAL_ENABLE`）
+### 6.3 本地语音转写
+
+仅在 `PKG_AGENT_STT_ENABLE` 时编译。内部函数 `agent_stt_transcribe(const char *path)` 在 `to_content()` 处理音频时调用，没有公开头文件声明。
+
+- 向 `PKG_AGENT_STT_URL` 发送 multipart POST。
+- 连接建立后把收发超时放宽到 120 s，首次加载 whisper 模型可能耗时较久。
+- 解析 `{"code":0,"data":{"text":"..."}}`。
+- 响应缓冲为静态 1024 字节。
+- 失败返回 `RT_NULL`，由调用方生成提示文本。
+
+文件服务器端的 `/stt` 接口见 [resource/file_server/README.md](../resource/file_server/README.md)。
+
+### 6.4 多模态文件操作
+
+启用 `PKG_AGENT_MULTIMODAL_ENABLE` 后可用：
 
 ```c
-typedef enum {
-    CMD_AGENT_FILE_UPLOAD, CMD_AGENT_FILE_DOWNLOAD, CMD_AGENT_FILE_EXIT,
-    CMD_AGENT_FILE_EXIT_COMPLETE, CMD_AGENT_FILE_URL
+typedef enum
+{
+    CMD_AGENT_FILE_UPLOAD,
+    CMD_AGENT_FILE_DOWNLOAD,
+    CMD_AGENT_FILE_EXIT,
+    CMD_AGENT_FILE_EXIT_COMPLETE,
+    CMD_AGENT_FILE_URL
 } file_op_type_t;
 
-typedef struct { file_op_type_t op; char path[128]; char file_id[128]; } file_op_req;
+typedef struct
+{
+    file_op_type_t op;
+    char path[128];
+    char file_id[128];
+} file_op_req;
 ```
 
 | 函数 | 说明 |
 |---|---|
-| `rt_thread_t agent_file_op_init(void)` | 创建文件操作线程与消息队列 |
-| `void agent_file_op_deinit(void)` | 发送退出命令、等待线程退出并释放队列/信号量 |
-| `char *agent_up_load(const char *path)` | 上传文件，返回 URL（静态缓冲，调用方需及时拷贝） |
-| `rt_err_t down_load(const char *path, const char *file_id)` | 下载文件到本地路径 |
-| `rt_mq_t get_agent_file_op_mq_input(void)` / `get_agent_file_op_mq_output(void)` | 获取文件操作消息队列 |
+| `rt_thread_t agent_file_op_init(void)` | 创建文件操作线程与两个消息队列 |
+| `void agent_file_op_deinit(void)` | 发送退出命令，等待线程退出，释放队列与信号量 |
+| `char *agent_up_load(const char *path)` | 上传文件，返回静态 128 字节 URL 缓冲，调用方需及时复制 |
+| `rt_err_t agent_down_load(const char *path, const char *file_id)` | 下载文件，参数顺序是保存路径、文件 ID |
+| `rt_mq_t get_agent_file_op_mq_input(void)` | 取输入消息队列 |
+| `rt_mq_t get_agent_file_op_mq_output(void)` | 取输出消息队列 |
 
----
+文件操作线程名为 `fileop_wk`，栈大小由 `PKG_AGENT_FILE_OP_THREAD_SIZE` 配置，优先级 9。
 
-## 7. AgentConfig —— 运行时配置
+`utils.h` 的声明与实际符号存在差异，见第 11 节。
 
-**头文件**：`config/AgentConfig.h`　**实现**：`config/AgentConfig.c`
+## 7. AgentAudio：音频驱动
 
-### 7.1 类型定义
+头文件：`include/driver/audio/AgentAudio.h` 实现：`src/driver/audio/AgentAudio.c`
+
+启用宏：`PKG_AGENT_DRIVER_AUDIO`
+
+| 函数 | 说明 |
+|---|---|
+| `int agent_driver_audio_play(const char *path)` | 播放 WAV，`wavplay` 内部自带线程，调用不阻塞 |
+| `int agent_driver_audio_stop(void)` | 停止播放 |
+| `int agent_driver_audio_pause(void)` | 暂停播放 |
+| `int agent_driver_audio_resume(void)` | 继续播放 |
+| `int agent_driver_audio_set_volume(int vol)` | 设置音量 |
+| `int agent_driver_audio_record(const char *path)` | 开始录音，内部线程执行，不阻塞调用者 |
+| `int agent_driver_audio_record_stop(void)` | 停止录音 |
+
+录音参数固定：
 
 ```c
-typedef struct agent_runtime_config {
-    char api_key[AGENT_CFG_API_KEY_MAX];    /* 128 */
-    char model_name[AGENT_CFG_MODEL_MAX];   /* 128 */
-    char api_url[AGENT_CFG_API_URL_MAX];    /* 128 */
+#define REC_SAMPLE_RATE  16000
+#define REC_CHANNELS     2
+#define REC_SAMPLE_BITS  16
+```
+
+录音线程名为 `rec_work`，栈 1024 字节，优先级 13。底层调用 `wavrecord -s <path> 16000 2 16`。
+
+## 8. AgentConfig：运行时配置
+
+头文件：`config/AgentConfig.h` 实现：`config/AgentConfig.c`
+
+```c
+typedef struct agent_runtime_config
+{
+    char api_key[AGENT_CFG_API_KEY_MAX];
+    char model_name[AGENT_CFG_MODEL_MAX];
+    char api_url[AGENT_CFG_API_URL_MAX];
     rt_bool_t is_configured;
 } rt_align(RT_ALIGN_SIZE) agent_runtime_config_t;
 ```
 
-### 7.2 接口
-
 | 函数 | 说明 |
 |---|---|
-| `agent_runtime_config_t *agent_config_get(void)` | 获取运行时配置指针（静态存储，无堆分配） |
-| `void agent_config_set(const char *api_key, const char *model_name, const char *api_url)` | 热更新运行时配置（参数可部分为 NULL，有边界检查） |
-| `const char *get_dynamic_agent_api_key(void)` | 优先返回运行时配置，否则返回编译期宏 `PKG_AGENT_API_KEY` |
+| `agent_runtime_config_t *agent_config_get(void)` | 取静态配置指针 |
+| `void agent_config_set(const char *api_key, const char *model_name, const char *api_url)` | 热更新配置，参数可为 `RT_NULL` |
+| `const char *get_dynamic_agent_api_key(void)` | 优先返回运行时值，否则返回 `PKG_AGENT_API_KEY` |
 | `const char *get_dynamic_agent_model_name(void)` | 同上，回退 `PKG_AGENT_MODEL_NAME` |
 | `const char *get_dynamic_agent_api_url(void)` | 同上，回退 `PKG_AGENT_API_URL` |
 
----
+三个字符串参数各自最多 127 字节。超过上限的参数会被忽略，其余参数照常更新，接口不返回错误。
 
-## 8. Prompt —— 系统提示词
+## 9. Prompt：系统提示词
 
-**头文件**：`include/prompt.h`　**实现**：`src/prompt.c`
+头文件：`include/prompt.h` 实现：`src/prompt.c`
 
 | 函数 | 说明 |
 |---|---|
-| `char *get_system_prompt(void)` | 获取系统提示词（静态字符串，勿释放） |
+| `char *get_system_prompt(void)` | 返回静态系统提示词，不要释放 |
 
----
+当前内容是仓库示例，接入产品时应按场景修改。
 
-## 9. MSH 命令
+## 10. MSH 命令
 
 | 命令 | 来源 | 说明 |
 |---|---|---|
-| `main_loop_entry` | AgentLoop | 启动代理主循环（进入对话） |
-| `cleanup_agent_entry` | AgentLoop | 停止并清理代理（退出对话，释放全部资源） |
-| `init_tools` | tool_func | 手动注册工具（通常由 `init_agent` 自动调用） |
-| `agent_send_message <type> <content>` | Debug 通道 | 向代理发送一条消息（0=text，1=audio，2=image，3=video） |
-| `show_llm_config` | WebNet 通道 | 显示当前 LLM 配置与通道状态 |
+| `main_loop_entry` | AgentLoop | 启动主循环 |
+| `cleanup_agent_entry` | AgentLoop | 停止并清理全部资源 |
+| `init_tools` | tool_func | 手动注册工具，通常由 `init_agent` 调用 |
+| `agent_send_message <type> <content>` | Debug 通道 | 注入消息，类型 0–4 |
+| `show_llm_config` | WebNet 通道 | 打印 API Key 是否设置、模型与地址 |
+| `msh_agent_upload_download up <file_path>` | utils | 上传文件 |
+| `msh_agent_upload_download down <file_id> <save_path>` | utils | 按文件 ID 下载 |
+| `mqtt_tool connect\|disconnect\|start\|stop\|status\|list\|sub\|unsub\|pub\|recv\|history\|rule\|rules\|sim\|flush` | MQTT 工具 | MQTT 调试命令 |
 
----
+`msh_agent_upload_download` 支持 `up` / `upload` 与 `down` / `download` 两组写法，也接受 `-h`、`--help`、`help`。
 
-## 10. 变更记录（本次会话）
+## 11. 已知差异
 
-| 变更 | 说明 |
-|---|---|
-| `message_hub_get_timeout()` | 新增：可中断输出等待，解决清理卡死 |
-| `message_hub_destroy()` | 增强：销毁前排放残留消息 |
-| `agent_tool_list_destroy()` / `agent_tools_cleanup()` | 新增：工具系统整体释放 |
-| `free_agent_tool_node()` | 修正：不再释放已移交 `AgentTools` 的 `tool_obj` |
-| `AgentChannelOps` + `agent_*_ops` | 新增：通道 init/reset 函数指针统一分发 |
-| `AGENT_CHANNEL_OPS` | 新增单点宏选择（替代 `AGENT_CHANNEL_IMPL`） |
-| `agent_debug_reset()` / `agent_webnet_reset()` | 新增：通道缓存指针清理 |
-| `agent_cli_stop()` | 增强：停止后释放句柄与信号量 |
-| 输入消息所有权 | 修正：通道不再在入队后释放，由 main_loop 消费后释放（消除 use-after-free） |
-| `chat()` | SSE 解析失败复位行缓冲；新增 30s 网络超时 |
-| `LOG_TAG`/`LOG_LVL`/`<ulog.h>` | 从头文件迁移至各 .c 文件（消除重定义警告） |
+- `include/utils.h` 声明的是 `rt_err_t down_load(const char *path, const char *file_id)`，`src/utils.c` 实际定义的是 `agent_down_load(...)`。按声明调用会出现链接错误，当前应使用 `agent_down_load()`；也可以直接用 MSH 命令下载。
+- `get_agent_file_op_mq_input()` 与 `get_agent_file_op_mq_output()` 已在实现中导出，但 `utils.h` 没有声明。需要调用时，先补声明或改用 MSH 命令。
+- LVGL 通道的 ops 实现不在包内，由应用工程提供。只启用宏而不实现 `agent_lvgl_ops`，链接会失败。
+- `cleanup_agent_entry` 不停止 MQTT 客户端。需要断开时先执行 `mqtt_tool stop` 或调用 `mqtt_tool_stop()`。

@@ -1,12 +1,12 @@
 # Agent Kconfig 校验（离线，不参与编译）
 
-`SConscript` 只遍历 `src/`，所以本目录既不会被编译，也不会被 `menuconfig` 加载；
+`SConscript` 不会收录本目录，所以这里的文件既不会被编译，也不会被 `menuconfig` 加载；
 这里放的是 **Agent 包 Kconfig 的修改版**以及用来验证它的脚本。
 
 | 文件 | 说明 |
 |---|---|
-| `Agent.Kconfig` | **交付用的修改版**（基于 `Agent.Kconfig.current`，改动见下） |
-| `Agent.Kconfig.current` | 修改前的原文（从 `D:\rtt\env-windows\packages\packages\ai\Agent\Kconfig` 复制，便于 `git diff --no-index` 对比） |
+| `Agent.Kconfig` | 离线校验用修改版（基于早期安装包 Kconfig，改动见下） |
+| `Agent.Kconfig.current` | 修改前的原文（从当时的安装包目录复制，便于 `git diff --no-index` 对比） |
 | `stubs/Kconfig.base` | 依赖桩：klibc / mbedtls / webclient / pahomqtt(含 PIPE-UDP choice) / webnet / wavplayer 等外部符号（**不含** `RT_VER_NUM`） |
 | `stubs/Kconfig.deps` | `source` 上面的桩 + 定义 `RT_VER_NUM`（真实内核里它是隐藏 hex 符号，这里给了 prompt 以便脚本模拟不同内核） |
 | `kparse.py` | 解析检查：语法错误 + kconfiglib 警告（两个文件都能跑） |
@@ -15,10 +15,12 @@
 | `audio_check.py` | 验证音频驱动 select 修复（旧文件里该选项实际无法生效） |
 | `Kconfig.test` | 脚本生成的临时入口（source 桩 + 被测文件） |
 
+注意：这两份 Kconfig 是早期快照，不包含当前安装包里的 `PKG_AGENT_STT_*`、`PKG_AGENT_LVGL_CHANNEL` 以及后续新增的 MQTT 选项，不能用于校验当前安装包。`kparse.py`、`scenarios.py`、`audio_check.py` 写死了 `D:\rtt\env-windows` 的 kconfiglib 路径，`inventory.py` 与 `audio_check.py` 还写死了旧的 Desktop 工程路径，运行前都要改成本机路径。
+
 运行（用 env 自带的 python + kconfiglib，无需编译）：
 
 ```powershell
-$py = 'D:\rtt\env-windows\.venv\Scripts\python.exe'
+$py = 'C:\Users\Public\Downloads\rtt\env-windows\.venv\Scripts\python.exe'
 & $py .\kparse.py Agent.Kconfig         # 也接受 Agent.Kconfig.current
 & $py .\scenarios.py Agent.Kconfig
 & $py .\inventory.py

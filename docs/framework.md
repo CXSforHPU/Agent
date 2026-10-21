@@ -1,318 +1,415 @@
 # Agent 框架文档
 
-> 基于 RT-Thread 的智能代理（Agent）框架：通过 LLM API 交互、工具调用、多通道交互与完整生命周期管理。
-> 本文档描述框架的架构、组件、数据流与内存管理约定。API 细节见 [api.md](./api.md)。
-
----
+本文档说明框架的架构、组件、数据流、内存约定与配置。接口细节见 [api.md](./api.md)。
 
 ## 1. 概述
 
-本框架实现一个可对话、可调用工具的智能代理，运行于 RT-Thread 实时操作系统上。核心能力：
+框架运行在 RT-Thread 上，处理一次用户请求的完整过程：接收消息、请求 LLM、执行工具、写回结果、输出回答。主要能力：
 
-- **对话**：与 LLM API 流式交互（SSE），支持思考过程、回答正文与工具调用三种流式数据。
-- **工具系统**：注册、查找、执行本地工具（内置 add / mul / compare 示例）。
-- **上下文管理**：按角色（system/user/assistant/tool）维护对话历史，支持清空与裁剪。
-- **多通道交互**：CLI / WebNet / Debug 三种通道，通过统一的通道 ops 函数指针接入。
-- **生命周期**：支持"进入对话 → 对话 → 清理 → 再次进入"的完整循环，清理后内存回到基线。
-- **多模态（可选）**：文件上传/下载，通过独立文件操作线程与文件服务器交互。
-
----
+- 流式对话：解析 SSE 中的思考过程、正文与工具调用。
+- 工具系统：注册、查找、执行本地工具，内置运算示例与 7 个 MQTT 工具。
+- 上下文管理：按 system / user / assistant / tool 角色维护历史，支持清空与裁剪。
+- 多通道：CLI、WebNet、Debug、LVGL，通过 `AgentChannelOps` 接入。
+- 多模态：图片、视频和未启用 STT 的音频上传到文件服务器。
+- 本地语音转写：音频先转成文本，再发给模型。
+- 音频驱动：播放与录音命令封装。
+- 生命周期：进入对话、清理、再次进入，清理后堆内存回到基线。
 
 ## 2. 架构总览
 
-```mermaid
-flowchart TD
-    subgraph CH["Channels（交互通道）"]
-        CLI["CLI 通道<br/>readline 线程"]
-        WEB["WebNet 通道<br/>HTTP CGI"]
-        DBG["Debug 通道<br/>MSH 命令"]
-    end
+![Agent 分层架构](../diagrams/architecture-layers.png)
 
-    subgraph AL["AgentLoop（主循环）"]
-        MAIN["main_loop 线程<br/>收消息 → 调 LLM → 执行工具 → 回结果"]
-        LIFE["init_agent() / cleanup_agent()<br/>生命周期管理"]
-    end
+draw.io 源文件：[architecture-layers.drawio](../diagrams/architecture-layers.drawio)
 
-    subgraph CORE["第二层核心组件"]
-        CHAT["Chat<br/>LLM SSE 流式解析"]
-        CTX["Context<br/>对话历史"]
-        HUB["MessageHub<br/>邮箱消息传递"]
-        TOOL["Tool<br/>工具注册与执行"]
-    end
-
-    subgraph BASE["基础依赖"]
-        WC["webclient<br/>HTTPS 客户端"]
-        JSON["cJSON<br/>JSON 解析"]
-        CFG["AgentConfig<br/>运行时配置"]
-    end
-
-    CLI -->|init / reset 函数指针统一分发| MAIN
-    WEB -->|init / reset 函数指针统一分发| MAIN
-    DBG -->|init / reset 函数指针统一分发| MAIN
-
-    MAIN --> CHAT
-    MAIN --> CTX
-    MAIN --> HUB
-    MAIN --> TOOL
-
-    CHAT --> WC
-    CHAT --> JSON
-    CTX --> JSON
-    TOOL --> JSON
-    CFG -. 提供 API Key / 模型 / URL .-> CHAT
-```
+AgentAudio 由应用直接调用，不参与对话主循环。
 
 ### 分层职责
 
 | 层 | 组件 | 职责 |
 |---|---|---|
-| 顶层调度 | `AgentLoop` | 初始化/清理全部组件；对话主循环；工具调度 |
-| 第二层 | `MessageHub` | 基于 RT-Thread 邮箱的组件间消息传递 |
-| 第二层 | `Context` | 对话历史：追加/清空/裁剪各类角色消息 |
-| 第二层 | `Chat` | LLM API 通信，SSE 流式解析（思考/正文/工具调用） |
-| 第二层 | `Tool` | 工具注册、查找、执行、结果回填 |
-| 通道 | `CLI / WebNet / Debug` | 外部交互界面，通过 `AgentChannelOps` 接入 |
-| 基础 | `AgentConfig` / `Utils` / `Prompt` | 运行时配置、工具函数、系统提示词 |
-
----
+| 顶层调度 | `AgentLoop` | 初始化与清理、对话主循环、工具调度、重复调用保护 |
+| 核心 | `MessageHub` | 基于 RT-Thread 邮箱的组件间消息传递 |
+| 核心 | `Context` | 对话历史的追加、清空、裁剪 |
+| 核心 | `Chat` | LLM API 通信与 SSE 解析 |
+| 核心 | `Tool` | 工具注册、查找、执行、结果回填 |
+| 通道 | `CLI / WebNet / Debug / LVGL` | 外部交互界面，通过 `AgentChannelOps` 接入 |
+| 基础 | `AgentConfig / Utils / Prompt` | 运行时配置、多模态与文本注入、系统提示词 |
+| 驱动 | `AgentAudio` | 播放与录音的命令封装 |
 
 ## 3. 核心组件
 
-### 3.1 AgentLoop（代理主循环）
+### 3.1 AgentLoop
 
-**文件**：`src/AgentLoop.c`
+文件：`src/AgentLoop.c`
 
-- `main_loop` 线程（栈 10KB，优先级 10）：阻塞等待输入消息 → `append_user_message` → `agent_loop` 执行对话 → 裁剪上下文。
-- `agent_loop`：最多 10 轮工具循环。每轮调用 `chat()`；若返回无 tool_calls 的最终回答，投递输出消息并结束；若返回 tool_calls，逐个执行本地工具并把工具结果追加进上下文后进入下一轮。
-- **生命周期命令**（MSH）：
-  - `main_loop_entry`：创建并启动主循环线程（内含 `init_agent`）。
-  - `cleanup_agent_entry`：停止通道 → 发送停止信号 → 等待主循环退出 → 清理全部资源。
+主循环线程名为 `AgentLoop`，栈 10240 字节，优先级 10。
 
-### 3.2 MessageHub（消息中心）
+- 启动时调用 `init_agent()` 创建工具、MessageHub、Context，并调用通道的 `init`。
+- 阻塞等待输入邮箱。收到消息后追加为 user 消息，释放消息对象，再调用 `agent_loop`。
+- 一次请求结束后裁剪上下文，保留最近 `PKG_AGENT_MESSAGE_TRIM` 条。
+- 处理期间 `g_agent_busy` 为真，`agent_is_busy()` 返回 `RT_TRUE`；等待新消息时返回 `RT_FALSE`。MQTT 注入等外部模块可据此错峰。
 
-**文件**：`src/MessageHub.c`、`include/MessageHub.h`
+`agent_loop` 的规则：
 
-基于 RT-Thread 邮箱（mailbox）实现消息传递：
+- 工具循环最多 6 轮，`loop_max = 6` 写死在代码里，不是 Kconfig 选项。
+- 每轮调用 `chat()`。请求失败最多尝试 3 次，退避间隔为 1 s、2 s。
+- 没有 `tool_calls` 时，本轮回答即为最终回答。
+- 有 `tool_calls` 时，先追加带 `tool_calls` 的 assistant 消息，再逐个执行工具，把结果写成 `role=tool` 消息。
+- 同一工具、同一参数再次出现时跳过执行，回一条“结果未变化，请直接回答”的 tool 消息。
+- 同一次用户请求中，同一工具调用超过 3 次时仍会执行，但计为无效调用。
+- 连续两轮全部是重复或无效调用时，跳出循环，强制生成文本回答。
+- 重复签名缓存与工具计数在 `agent_loop` 开始时清零，不跨用户请求累计。
+- 达到 6 轮上限时，再发一次不带工具的请求，要求模型给出最终回答。
+- 工具不存在、参数不是合法 JSON、参数校验失败时，补一条 tool 错误消息，保证每个 `tool_call_id` 都有结果。
 
-- **输入邮箱** `AgentInputMb`（容量 10）：通道 → 主循环。
-- **输出邮箱** `AgentOutMb`（容量 10）：主循环 → 通道。
-- 消息载体为 `Messages_t`（不定长消息数组，自动扩容）。
-- **所有权约定**（见 §5）：`put_message` 入队即移交所有权；消费者（`main_loop` 或通道）取到后负责释放。
+兜底文本通过 `agent_notify()` 同时写入输出邮箱和流式打印路径。CLI 通道只打印流式内容，这样用户能看到“工具循环超限”“请求失败”等提示。
 
-### 3.3 Context（上下文管理器）
+MSH 命令：
 
-**文件**：`src/context.c`、`include/context.h`
+- `main_loop_entry`：创建并启动主循环线程。
+- `cleanup_agent_entry`：停止通道，发送停止信号，等待主循环退出。
 
-维护 `cJSON` 消息数组，角色包括 system / user / assistant / tool：
+### 3.2 MessageHub
 
-- 创建时自动构建系统提示词（`get_system_prompt`）。
-- `append_user_message` / `append_assistant_message` / `append_tool_message`：追加各类消息。
-- `clear_message`：清空并重建数组（需重新 `build_system_prompt`）。
-- `trim_context(keep_items)`：保留系统提示词 + 最近 N 条消息，防止上下文无限膨胀。
+文件：`src/MessageHub.c`、`include/MessageHub.h`
 
-### 3.4 Chat（LLM 通信）
+- 输入邮箱 `AgentInputMb`，容量 10，方向为通道 → 主循环。
+- 输出邮箱 `AgentOutMb`，容量 10，方向为主循环 → 通道。
+- 消息载体是 `Messages_t`，容量不足时按 5 条递增。
+- `message_hub_get_timeout()` 提供带超时的接收，供通道做可中断等待。
+- `message_hub_destroy()` 会排空两个邮箱，释放残留消息。
 
-**文件**：`src/chat.c`、`include/chat.h`
+所有权规则见第 5 节。
 
-- 组装请求 JSON（model / messages / tools / max_tokens / stream），通过 webclient POST 到 API。
-- 流式解析 SSE：`data: {...}` 行；解析 `delta.reasoning`（思考）、`delta.content`（正文）、`delta.tool_calls`（工具调用分片按 index 合并）。
-- 30s 网络超时，避免网络卡死阻塞清理流程。
-- 返回 `ChatResponse_t`（reasoning / context / tool_call），用后必须 `chat_response_free`。
+### 3.3 Context
+
+文件：`src/context.c`、`include/context.h`
+
+维护一个 cJSON 消息数组，角色包括 system、user、assistant、tool。
+
+- 创建时调用 `build_system_prompt`，系统提示词来自 `src/prompt.c`。
+- `append_assistant_message`：
+  - 没有工具调用时，写入 assistant 的正文。
+  - 有工具调用时，写入 `content` 为空的 assistant 消息，并复制 `tool_calls`。
+- `append_tool_message`：把工具结果拼成一个字符串，写入 `content`。只拼接 `TYPE_TEXT` 项，多模态数组不适用于 `role=tool`。
+- `clear_message`：删除全部消息并新建空数组，不会自动重建 system 提示词。
+- `trim_context(keep_rounds)`：保留 system 提示词和最近 `keep_rounds` 条消息，其余从数组头部删除。参数名是 `keep_rounds`，实际按消息条数计算，不是按对话轮次。
+
+assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容接口会返回 400。
+
+### 3.4 Chat
+
+文件：`src/chat.c`、`include/chat.h`
+
+- 请求体包含 `model`、`messages`、`tools`、`max_tokens`、`stream: true`，使用 Bearer 认证。
+- `max_tokens` 固定为 32 × 1024。
+- webclient 超时为 30 s。
+- 解析 `data: ` 开头的 SSE 行，遇到 `[DONE]` 结束。
+- 思考内容优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`。
+- 正文取 `delta.content`。
+- 工具调用按 `index` 合并。`id`、`name` 取第一个非空值，`arguments` 逐片追加，超过 `PKG_AGENT_MAX_TOOL_ARG_LEN` 后丢弃后续分片并打印告警。
+- 单行超过 `PKG_AGENT_STREAM_LINE_BUFSZ` 时整行丢弃，并提示调大该选项。
+- JSON 解析失败时重置行缓冲，继续处理后续数据。
+- 响应结束后归一化工具调用：缺失 `id` 用 `call_<index>`，空参数改为 `{}`，没有函数名的调用丢弃。
+- 返回 `ChatResponse_t`，使用后必须调用 `chat_response_free()`。
 
 ### 3.5 Tool 工具系统
 
-**文件**：`src/tool_base.c`、`src/tool_func.c`、`src/tools/*`
+文件：`src/tool_base.c`、`src/tool_func.c`、`src/tools/*`
 
-- 全局单例工具链表：`head` + 各 `AgentToolList` 节点。
-- `init_tools()` 注册内置工具（add / mul / compare），`build_tools_json()` 构建工具定义数组。
-- 工具执行函数签名：`void tool_xxx(cJSON *args, AgentToolNode_t node)`，结果写入 `node->ret.messages`。
-- 生命周期：`agent_tools_cleanup()`（内部 `agent_tool_list_destroy()` + 复位注册标志）在清理时释放全部工具资源，再次进入时自动重新注册。
+- 全局单例工具链表，节点保存工具定义 JSON 与执行函数。
+- 工具函数签名：`void tool_xxx(cJSON *args, AgentToolNode_t node)`，结果写入 `node->ret.messages`。
+- `init_tools()` 注册内置工具，重复调用不会重复注册。
+- 内置运算工具：`add`、`mul`、`compare`。
+- 内置 MQTT 工具：`mqtt_connect`、`mqtt_disconnect`、`mqtt_publish`、`mqtt_subscribe`、`mqtt_receive`、`mqtt_rule`、`mqtt_history`。
+- `build_tools_json()` 把工具定义交给请求体，节点不再持有这部分 JSON。
+- `agent_tools_cleanup()` 释放链表、残留结果与注册标志，再次进入时重新注册。
 
-### 3.6 Channels（交互通道）
+### 3.6 Channels
 
-**文件**：`src/channels/*`、`include/channels/*`
+文件：`src/channels/*`、`include/channels/*`
 
-三个通道实现相同的 **`AgentChannelOps`** 接口（见 `include/channels/AgentChannel.h`）：
+四个通道实现同一个接口：
 
 ```c
-typedef struct AgentChannelOps {
-    int  (*init)(MessageHub_t hub, Context_t ctx);  /* 绑定 hub/context */
-    void (*reset)(void);                            /* 停止线程/置空缓存（幂等） */
+typedef struct AgentChannelOps
+{
+    int  (*init)(MessageHub_t hub, Context_t ctx);
+    void (*reset)(void);
 } AgentChannelOps;
 ```
 
-| 通道 | 宏开关 | ops 实例 | init | reset |
+| 通道 | 宏 | ops 实例 | init | reset |
 |---|---|---|---|---|
-| CLI | `PKG_AGENT_CLI_CHANNEL` | `agent_cli_ops` | `agent_cli_channel`（创建 readline 线程） | `agent_cli_stop`（停止线程+释放句柄） |
-| WebNet | `PKG_AGENT_WEBNET_CHANNEL` | `agent_webnet_ops` | `webnet_agent_channel_init`（包装 `webnet_agent_mode`，注册 CGI） | `agent_webnet_reset`（置空缓存指针） |
-| Debug | `PKG_AGENT_DEBUG_CHANNEL` | `agent_debug_ops` | `agent_debug_channel`（绑定指针） | `agent_debug_reset`（置空缓存指针） |
+| LVGL | `PKG_AGENT_LVGL_CHANNEL` | `agent_lvgl_ops` | 应用侧实现，保存 hub | 应用侧实现，清空 hub |
+| CLI | `PKG_AGENT_CLI_CHANNEL` | `agent_cli_ops` | 创建 readline 线程 | 停止线程并释放句柄 |
+| WebNet | `PKG_AGENT_WEBNET_CHANNEL` | `agent_webnet_ops` | 注册 CGI | 置空缓存指针 |
+| Debug | `PKG_AGENT_DEBUG_CHANNEL` | `agent_debug_ops` | 保存 hub 与 ctx | 置空缓存指针 |
 
-- **单点宏选择**：`include/channels/AgentChannels.h` 中的 `AGENT_CHANNEL_OPS` 是唯一的通道判断点（`#ifdef PKG_AGENT_*_CHANNEL` 三选一），`AgentLoop` 通过 `g_channel_ops` 函数指针统一调用，调用点零 `#ifdef`。
-- 未配置通道时 `AGENT_CHANNEL_OPS` 为 NULL，AgentLoop 安全跳过。
+`include/channels/AgentChannels.h` 是唯一的通道选择点，优先级为 LVGL → CLI → WebNet → Debug。Kconfig 的通道选项是单选，正常配置只会定义一个宏。
 
-### 3.7 AgentConfig（运行时配置）
+LVGL 通道在包内只有头文件 `AgentLvglChannel.h`。`agent_lvgl_ops` 由应用实现，本仓库的示例在 `applications/lvgl/demo/lv_home_agent.c`：保存 hub、用 `message_hub_get_timeout()` 轮询输出、用 MSH 命令启动 agent。
 
-**文件**：`config/AgentConfig.c`、`config/AgentConfig.h`
+WebNet 通道提供三个 CGI：
 
-- 编译期默认值来自 Kconfig 宏（`PKG_AGENT_API_KEY` / `PKG_AGENT_API_URL` / `PKG_AGENT_MODEL_NAME`）。
-- 运行时可热更新：`agent_config_set()`；`get_dynamic_agent_*()` 优先返回运行时配置。
-- 纯静态存储，无堆分配。
+- `POST /cgi-bin/chat`：JSON 请求，字段为 `message`、`stream`、`reset`。
+- `POST /cgi-bin/config`：更新运行时配置。
+- `GET /cgi-bin/get_config`：读取当前配置。
 
-### 3.8 Utils 与多模态文件服务器
+`stream` 为真时返回 `text/event-stream`，事件依次为 `delta`、`final`、`done`。
 
-**文件**：`src/utils.c`、`include/utils.h`
+包内自带一个 WebNet 聊天页面 `resource/index.html`，调用 `/cgi-bin/chat`、`/cgi-bin/config`、`/cgi-bin/get_config`。把它放到 webnet 能访问的根目录后，打开 `http://<设备IP>/index.html` 即可使用。
 
-- 通用工具：`format_text` / `create_content_array` / `to_content`（Messages → API content 格式）/ 工具 JSON 构建（`create_tool_item` / `create_param_obj` / `create_property`）。
-- 多模态（`PKG_AGENT_MULTIMODAL_ENABLE`）：独立文件操作线程 + 两个消息队列，`agent_up_load` 上传返回 URL、`down_load` 下载；`to_content` 把音频/图片/视频消息转成 `{type, url}` 格式。
+页面删除对话时还会请求 `/cgi-bin/cleanup`，包内没有注册这个 CGI。请求失败只在浏览器控制台打日志，不影响聊天。
 
----
+### 3.7 AgentConfig
+
+文件：`config/AgentConfig.c`、`config/AgentConfig.h`
+
+- 编译期默认值来自 `PKG_AGENT_API_KEY`、`PKG_AGENT_MODEL_NAME`、`PKG_AGENT_API_URL`。
+- 运行时可用 `agent_config_set()` 修改，`get_dynamic_agent_*()` 优先返回运行时值。
+- 纯静态存储，不使用堆。
+
+### 3.8 Utils 与多模态
+
+文件：`src/utils.c`、`include/utils.h`
+
+- 文本转换：`format_text()`、`create_content_array()`、`to_content()`。
+- 工具 JSON 构造：`create_tool_item()`、`create_param_obj()`、`create_property()`。
+- 文本注入：`agent_inject_text()` 把一段文本作为 user 消息投递给 agent。agent 未运行时返回错误。
+- 多模态开启后：
+  - 图片、视频先上传，再生成 `image_url` 或 `video_url`。
+  - 音频未启用 STT 时上传，生成 `audio_url`。
+  - 上传失败的消息跳过，不影响其他内容。
+- 多模态使用独立文件操作线程，栈大小由 `PKG_AGENT_FILE_OP_THREAD_SIZE` 配置，默认 4096。
+- 上传返回 URL，下载按 `file_id` 保存到本地。
+- MSH 命令 `msh_agent_upload_download` 可手工上传、下载。
+
+### 3.9 本地语音转写
+
+文件：`src/utils.c`
+
+- 仅在 `PKG_AGENT_STT_ENABLE` 时编译。
+- `to_content()` 处理 `TYPE_AUDIO` 时调用 `agent_stt_transcribe()`。
+- 使用 multipart POST 把 WAV 发到 `PKG_AGENT_STT_URL`。
+- 连接超时 120 s，响应缓冲为静态 1024 字节。
+- 解析 `{"code":0,"data":{"text":"..."}}`。
+- 转写后删除本地录音，无论成功与否；成功时生成文本项，失败时生成一条提示文本，不上传音频。原因是纯文本模型收到 `audio_url` 会直接返回 422。
+
+### 3.10 AgentAudio
+
+文件：`src/driver/audio/AgentAudio.c`、`include/driver/audio/AgentAudio.h`
+
+音频驱动封装 `wavplay` 与 `wavrecord` 命令，与多模态开关无关。
+
+- 播放：`agent_driver_audio_play()`、`stop`、`pause`、`resume`、`set_volume`。
+- 录音：`agent_driver_audio_record()` 在 `rec_work` 线程里执行，栈 1024 字节，优先级 13，不阻塞调用者。
+- 录音参数固定为 16000 Hz、双声道、16 位。
+- `agent_driver_audio_record_stop()` 停止录音。
+
+### 3.11 MQTT 工具
+
+文件：`src/tools/tool_mqtt/`
+
+- 使用 paho MQTT 的 pipe 模式，QoS 固定为 1。
+- 订阅、过滤、阈值规则、历史缓存都在本地完成。
+- 三种投递模式：`filter`、`auto`、`poll`。默认 `filter`。
+- 发布有 100 ms 最小间隔。
+- 工具可调用 `mqtt_tool_publish()` 主动发布，也可用 `mqtt_tool_topic_latest()` 读取最新值。
+- agent 忙时，注入侧会等待空闲，避免连续请求压垮 API 与网络。
+
+完整说明见 [tool_mqtt.md](./tool_mqtt.md)。
 
 ## 4. 数据流
 
-### 4.1 一次完整对话
+### 4.1 一次请求
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant CLI as CLI 线程
-    participant MB as MessageHub<br/>输入/输出邮箱
-    participant ML as main_loop 线程
+    participant CH as 通道
+    participant MB as MessageHub
+    participant ML as main_loop
     participant LLM as LLM API
+    participant TL as 本地工具
 
-    CLI->>CLI: messages_create / messages_append
-    CLI->>MB: put_message(输入邮箱)（所有权移交）
-    MB-->>ML: get_message 取到输入消息
-    ML->>ML: append_user_message
-    ML->>ML: messages_destroy（消费者释放）
+    CH->>MB: put_message(输入邮箱)
+    MB-->>ML: get_message
+    ML->>ML: 追加 user 消息
 
-    loop 工具循环（最多 10 轮）
-        ML->>LLM: chat()：POST + SSE 流式
-        LLM-->>ML: reasoning / content / tool_calls 分片
-        alt 返回 tool_calls
-            ML->>ML: 执行本地工具 → 追加 tool 消息 → 再 chat()
-        else 无 tool_calls（最终回答）
-            ML->>MB: put_message(输出邮箱)（所有权移交）
-            MB-->>CLI: message_hub_get_timeout 取到
-            CLI->>CLI: messages_destroy（消费者释放）
+    loop 最多 6 轮
+        Note over ML,LLM: 请求失败最多重试 3 次，间隔 1 s、2 s
+        ML->>LLM: chat()，流式请求
+        LLM-->>ML: reasoning / content / tool_calls
+
+        alt 请求失败
+            ML->>MB: 输出失败提示
+        else 无 tool_calls
+            ML->>MB: 输出最终回答
+            Note over ML: 结束循环
+        else 有 tool_calls
+            ML->>ML: 追加 assistant(tool_calls)
+            ML->>TL: 逐个执行工具
+            TL-->>ML: Messages_t
+            ML->>ML: 追加 tool 消息
         end
     end
+
+    opt 达到 6 轮或连续两轮无效调用
+        ML->>LLM: chat(tools=NULL) 收尾
+        LLM-->>ML: 纯文本回答
+        ML->>MB: 输出最终回答
+    end
+
+    MB-->>CH: get_message_timeout
+    CH->>CH: 打印并释放消息
 ```
 
-### 4.2 清理流程（cleanup_agent_entry → cleanup_agent）
+### 4.2 工具消息顺序
 
-1. `g_channel_ops->reset()`：停止通道线程、释放句柄、置空通道缓存指针（幂等）。
-2. 向输出邮箱发送 NULL 哨兵，唤醒可能阻塞的输出等待。
-3. `message_hub_destroy`：排空两个邮箱中残留的 `Messages_t` 并释放，再删除邮箱与 hub。
-4. `agent_context_destroy`：释放上下文与消息数组。
-5. `agent_tools_cleanup`：释放工具链表、工具定义 JSON、残留的工具结果消息，复位注册标志。
-6. 多模态文件线程 deinit（如启用）。
-7. 释放 `g_cleanup_sem` 通知清理完成。
+一轮工具调用在上下文中的顺序固定为：
 
----
+1. `assistant` 消息，`content` 为空，带 `tool_calls`。
+2. 每个 `tool_call_id` 对应一条 `tool` 消息。
+
+即使工具不存在或参数错误，也要补一条 tool 消息。缺一条就会破坏 OpenAI 兼容接口的校验。
+
+### 4.3 清理流程
+
+`cleanup_agent_entry` 先调用通道 `reset`，再向输入邮箱发送 NULL 唤醒主循环。主循环退出后执行 `cleanup_agent`：
+
+1. 再次调用通道 `reset`（幂等）。
+2. 向输出邮箱发送 NULL 哨兵，唤醒阻塞的输出等待。
+3. 摘除全局 hub 引用，再销毁 MessageHub，内部排空两个邮箱。
+4. 销毁 Context。
+5. 清理工具链表与残留消息。
+6. 停止文件操作线程（启用多模态时）。
+7. 打印堆内存快照，释放清理完成信号量。
+
+MQTT 客户端由 MQTT 工具自行管理，agent 清理不会断开连接。需要断开时执行 `mqtt_tool stop` 或 `mqtt_disconnect`。
 
 ## 5. 内存管理约定
 
 | 对象 | 分配者 | 释放者 | 说明 |
 |---|---|---|---|
-| 输入 `Messages_t` | 通道 | **main_loop** | `put_message` 成功即移交所有权；通道仅在发送失败时释放 |
-| 输出 `Messages_t` | `agent_loop` | **通道** | 投递输出邮箱后所有权归通道 |
-| `ChatResponse_t` | `chat()` | 调用者 | 必须调用 `chat_response_free` |
-| hub / 邮箱 | `message_hub_create` | `message_hub_destroy` | 销毁前排空邮箱 |
+| 输入 `Messages_t` | 通道 | 主循环 | `put_message` 成功后移交所有权 |
+| 输出 `Messages_t` | 主循环 | 通道 | 投递输出邮箱后移交所有权 |
+| `ChatResponse_t` | `chat()` | 调用者 | 必须调用 `chat_response_free()` |
+| hub 与邮箱 | `message_hub_create` | `message_hub_destroy` | 销毁前排空邮箱 |
 | context | `agent_context_create` | `agent_context_destroy` | — |
-| 工具链表/JSON | `init_tools` | `agent_tools_cleanup` | 清理时整体释放，再次进入重新注册 |
-| CLI 句柄/信号量 | `agent_cli_channel` | `agent_cli_stop` | reset 时释放 |
-| 通道缓存指针 | 通道 init | 通道 reset | 置空防止悬垂 |
-| HTTP 会话/缓冲 | `chat()` | `chat()` 内部 | webclient_close / web_free / cJSON_free |
+| 工具链表与 JSON | `init_tools` | `agent_tools_cleanup` | 再次进入时重新注册 |
+| 通道缓存指针 | 通道 init | 通道 reset | 置空，避免悬垂 |
+| HTTP 会话与缓冲 | `chat()` | `chat()` | 使用 `webclient_close` 与 `web_free` 释放 |
+| 工具结果消息（`node->ret.messages`） | 工具函数 | 工具节点 | 下次执行前或 `agent_tools_cleanup` 时释放；`append_tool_message` 只复制文本到上下文 |
+| MQTT 注入消息 | 注入方 | 主循环 | 注入失败时由注入方释放 |
 
-**关键规则**：mailbox 是异步队列，`put_message` 只入队指针——**入队即交接所有权**，发送方不得在入队后释放，接收方取到后负责释放（防 use-after-free 与泄漏）。
+邮箱是异步队列，`put_message` 只入队指针。入队即交接所有权，发送方不能立即释放，接收方负责释放。
 
----
-
-## 6. 生命周期与"进入→清理→再进入"
+## 6. 生命周期
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户（MSH）
-    participant AL as AgentLoop 线程
-    participant CH as 通道（Channel）
+    participant U as 用户
+    participant ML as main_loop
+    participant CH as 通道
 
-    U->>AL: main_loop_entry
-    AL->>AL: init_agent()：tools → message_hub → context
-    AL->>CH: g_channel_ops->init(hub, context)
-    Note over AL: while (g_agent_running)：处理消息
+    U->>ML: main_loop_entry
+    ML->>ML: init_agent()：工具 → hub → context
+    ML->>CH: init(hub, context)
+    Note over ML: 循环处理消息
 
-    U->>AL: cleanup_agent_entry
-    AL->>CH: g_channel_ops->reset()（停止通道/释放句柄/置空缓存）
-    U->>AL: signal_agent_stop()（输入邮箱 NULL 唤醒）
-    AL->>AL: cleanup_agent()：完整释放全部资源
-    AL-->>U: g_cleanup_sem 通知清理完成
-
-    Note over U,AL: 再次 main_loop_entry → 全部资源重新创建，无残留
+    U->>ML: cleanup_agent_entry
+    ML->>CH: reset()
+    ML->>ML: 发送 NULL 唤醒
+    ML->>ML: cleanup_agent() 释放全部资源
+    ML-->>U: 清理完成信号量
 ```
 
-支持无限循环。每次清理后堆内存回到基线（残留仅来自网络栈 TIME_WAIT 等外部时序，约 176B/连接，过期自动回收）。
+清理后可以再次执行 `main_loop_entry`。每轮 `cleanup done` 的 `used` 持平，说明没有泄漏；逐轮上涨说明存在泄漏。
 
----
+## 7. 配置项
 
-## 7. 配置项（Kconfig 宏）
-
-### 通道选择（三选一）
+### 通道
 
 | 宏 | 说明 |
 |---|---|
-| `PKG_AGENT_CLI_CHANNEL` | CLI 通道（默认） |
-| `PKG_AGENT_WEBNET_CHANNEL` | WebNet HTTP 通道 |
-| `PKG_AGENT_DEBUG_CHANNEL` | Debug MSH 命令通道 |
+| `PKG_AGENT_CLI_CHANNEL` | CLI 通道，默认 |
+| `PKG_AGENT_WEBNET_CHANNEL` | WebNet 通道 |
+| `PKG_AGENT_DEBUG_CHANNEL` | Debug 通道 |
+| `PKG_AGENT_LVGL_CHANNEL` | LVGL 通道 |
 
-### LLM 配置
-
-| 宏 | 说明 |
-|---|---|
-| `PKG_AGENT_API_KEY` / `PKG_AGENT_API_URL` / `PKG_AGENT_MODEL_NAME` | 默认 API 配置（可运行时覆盖） |
-
-### 缓冲/行为
+### LLM 与缓冲
 
 | 宏 | 说明 |
 |---|---|
-| `PKG_AGENT_RESP_BUFSZ` | HTTP 响应接收缓冲 |
-| `PKG_AGENT_WEB_SOCKET_BUFSZ` | webclient 会话头部缓冲 |
-| `PKG_AGENT_MAX_REASONING_LEN` / `PKG_AGENT_MAX_CONTENT_LEN` | 思考/正文最大长度 |
-| `PKG_AGENT_STREAM_LINE_BUFSZ` | SSE 单行缓冲 |
-| `PKG_AGENT_MAX_TOOL_ARG_LEN` | 工具参数拼接上限 |
-| `PKG_AGENT_MESSAGE_TRIM` | 上下文裁剪保留条数 |
+| `PKG_AGENT_API_KEY` / `PKG_AGENT_API_URL` / `PKG_AGENT_MODEL_NAME` | 默认 API 配置 |
+| `PKG_AGENT_RESP_BUFSZ` | HTTP 响应接收缓冲，默认 2048 |
+| `PKG_AGENT_WEB_SOCKET_BUFSZ` | webclient 会话缓冲，默认 2048 |
+| `PKG_AGENT_MAX_REASONING_LEN` | 思考文本上限，默认 2048 |
+| `PKG_AGENT_MAX_CONTENT_LEN` | 正文上限，默认 2048 |
+| `PKG_AGENT_STREAM_LINE_BUFSZ` | SSE 单行缓冲，默认 1024 |
+| `PKG_AGENT_MAX_TOOL_ARG_LEN` | 工具参数上限，默认 1024 |
+| `PKG_AGENT_MESSAGE_TRIM` | 上下文保留条数，默认 6 |
 
-### 多模态（可选）
+### 多模态与语音
 
 | 宏 | 说明 |
 |---|---|
-| `PKG_AGENT_MULTIMODAL_ENABLE` / `PKG_AGENT_MULTIMODAL_DISABLE` | 多模态开关 |
-| `PKG_AGENT_FILE_OP_THREAD_SIZE` | 文件操作线程栈大小 |
+| `PKG_AGENT_MULTIMODAL_ENABLE` / `PKG_AGENT_MULTIMODAL_DISABLE` | 多模态开关，默认关闭 |
 | `PKG_AGENT_UPLOAD_URL` / `PKG_AGENT_DOWNLOAD_URL` | 文件服务器地址 |
+| `PKG_AGENT_FILE_OP_THREAD_SIZE` | 文件操作线程栈，默认 4096 |
+| `PKG_AGENT_STT_ENABLE` / `PKG_AGENT_STT_DISABLE` | 语音转写开关，默认启用 |
+| `PKG_AGENT_STT_URL` | STT 接口地址 |
+| `PKG_AGENT_DRIVER_AUDIO` | 音频驱动开关，独立于多模态 |
 
----
+### MQTT
+
+MQTT 选项较多，见 [tool_mqtt.md](./tool_mqtt.md) 的配置章节。常用项：
+
+- `PKG_AGENT_TOOL_MQTT_ENABLE`
+- `PKG_AGENT_TOOL_MQTT_BROKER_URL`
+- `PKG_AGENT_TOOL_MQTT_MAX_SUB_TOPICS`
+- `PKG_AGENT_TOOL_MQTT_HISTORY_DEPTH`
+- `PKG_AGENT_TOOL_MQTT_LOCK_WAIT_MS`
 
 ## 8. 构建与依赖
 
-- 构建：RT-Thread `menuconfig` 启用本包（`RT-Thread online packages → AI packages → AI packages lightweight agent software`），`pkgs --update` 后 `scons` 编译。
-- 依赖组件：RT-Thread 内核、cJSON、webclient（HTTPS 建议启用 MbedTLS，`Maxium fragment length` 需 ≥6144）、ulog、webnet（仅 WebNet 通道）、dfs_posix/unistd（仅多模态）。
-- 源文件清单由 `SConscript` 管理：`src/*.c` + 按宏启用的 `src/channels/*.c` + `src/tools/*.c` + `config/AgentConfig.c`。
+- menuconfig 中启用 `RT-Thread online packages → AI packages → Lightweight Agent software for RT-Thread`。
+- 执行 `pkgs --update`，再执行 `scons`。
+- 依赖：RT-Thread 内核、cJSON、webclient、ulog。
+- HTTPS 需要 mbedtls，`Maxium fragment length` 至少 6144。
+- WebNet 通道需要 webnet 与 CGI。
+- MQTT 工具需要 paho-mqtt。
+- 音频驱动需要 wavplayer、录音支持与音频框架。
+- 多模态需要 DFS 与 POSIX 文件接口。
 
----
+`SConscript` 的编译范围：
+
+- `src/*.c`
+- 通道：`CLI.c`、`AgentWebChannel.c`、`AgentDebugChannel.c`
+- 工具目录
+- MQTT 目录
+- `config/AgentConfig.c`
+- 音频驱动（启用 `PKG_AGENT_DRIVER_AUDIO` 时）
+
+LVGL 通道的实现不在包内，由应用工程编译。
 
 ## 9. 内存快照日志
 
-清理流程内置堆内存快照（`RT_USING_HEAP` 时启用），用于验证无泄漏：
+启用 `RT_USING_HEAP` 时，启动与清理会打印堆内存：
 
-```
+```text
 [mem] agent started: heap total=..., used=..., max_used=...
 [mem] cleanup done: heap total=..., used=..., max_used=...
 ```
 
-对比每轮 `cleanup done` 的 `used`：持平说明无泄漏；逐轮线性上涨说明存在泄漏。
-
----
+比较每轮 `cleanup done` 的 `used` 即可判断是否泄漏。
 
 ## 10. 已知说明
 
-- 串口中文乱码为控制台编码（UTF-8 按 GBK 显示）问题，与框架内存无关。
-- `LOG_TAG`/`LOG_LVL`/`<ulog.h>` 已从各头文件迁移至各 .c 文件，每个编译单元一个日志标签，避免重定义警告。
+- 串口中文乱码是控制台编码问题，不影响框架内存与功能。
+- `src/prompt.c` 里的系统提示词是示例内容，接入自己的产品时应按场景修改。
+- `cleanup_agent_entry` 不停止 MQTT 客户端。需要断开连接时，先执行 `mqtt_tool stop`。
+- LVGL 通道只提供接口，包内不包含聊天界面。
+- `utils.h` 中下载函数的声明名与实际定义不一致，详见 [api.md](./api.md) 的“已知差异”。
+- `trim_context()` 按消息条数裁剪，可能把 `assistant(tool_calls)` 与后续 `tool` 消息拆开。`PKG_AGENT_MESSAGE_TRIM` 小于一轮工具调用的消息数时，下一轮请求可能被接口以 400 拒绝。

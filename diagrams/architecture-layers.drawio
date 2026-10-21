@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="drawio-skill" version="21.0.0" type="device">
+  <diagram name="Agent Layers" id="agent-layers">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1"
+                   connect="1" arrows="1" fold="1" page="1" pageScale="1"
+                   pageWidth="1100" pageHeight="890" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="background" value=""
+                style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=none;"
+                vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="1010" height="800" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer-channel" value="交互&#xa;通道"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=18;fontStyle=1;verticalAlign=middle;align=center;"
+                vertex="1" parent="1">
+          <mxGeometry x="60" y="60" width="100" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="container-channel" value=""
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=60;"
+                vertex="1" parent="1">
+          <mxGeometry x="180" y="60" width="830" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="channel-cli" value="CLI&#xa;命令通道"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="232" y="85" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="channel-web" value="WebNet&#xa;网页 / CGI"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="417" y="85" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="channel-debug" value="Debug&#xa;调试命令"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="602" y="85" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="channel-lvgl" value="LVGL&#xa;图形聊天界面"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="787" y="85" width="170" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer-hub" value="消息&#xa;中心"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=18;fontStyle=1;verticalAlign=middle;align=center;"
+                vertex="1" parent="1">
+          <mxGeometry x="60" y="190" width="100" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="container-hub" value=""
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=60;"
+                vertex="1" parent="1">
+          <mxGeometry x="180" y="190" width="830" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="hub-input" value="输入邮箱&#xa;深度 10"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="345" y="215" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="hub-output" value="输出邮箱&#xa;深度 10"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="605" y="215" width="240" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer-loop" value="调度&#xa;层"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=18;fontStyle=1;verticalAlign=middle;align=center;"
+                vertex="1" parent="1">
+          <mxGeometry x="60" y="320" width="100" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="container-loop" value=""
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=60;"
+                vertex="1" parent="1">
+          <mxGeometry x="180" y="320" width="830" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="loop-main" value="main_loop&#xa;循环 / 重试 / 收尾"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="210" y="345" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="loop-guard" value="重复调用保护&#xa;签名缓存 / 无效轮次"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="475" y="345" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="loop-life" value="生命周期&#xa;init / cleanup"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="740" y="345" width="240" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer-core" value="核心&#xa;组件"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=18;fontStyle=1;verticalAlign=middle;align=center;"
+                vertex="1" parent="1">
+          <mxGeometry x="60" y="450" width="100" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="container-core" value=""
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=60;"
+                vertex="1" parent="1">
+          <mxGeometry x="180" y="450" width="830" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="core-context" value="Context&#xa;消息数组 / 裁剪"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="210" y="475" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="core-chat" value="Chat&#xa;SSE / tool_calls 解析"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="475" y="475" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="core-tool" value="Tool&#xa;注册 / 执行 / 回填"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="740" y="475" width="240" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer-base" value="基础&#xa;能力"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=18;fontStyle=1;verticalAlign=middle;align=center;"
+                vertex="1" parent="1">
+          <mxGeometry x="60" y="580" width="100" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="container-base" value=""
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=60;"
+                vertex="1" parent="1">
+          <mxGeometry x="180" y="580" width="830" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="base-config" value="AgentConfig&#xa;API / 模型 / 地址"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="202" y="605" width="145" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="base-utils" value="Utils&#xa;多模态 / STT"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="362" y="605" width="145" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="base-audio" value="AgentAudio&#xa;应用侧调用"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="522" y="605" width="145" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="base-web" value="webclient&#xa;HTTP / SSE"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="682" y="605" width="145" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="base-json" value="cJSON&#xa;报文解析"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="842" y="605" width="145" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="layer-external" value="外部&#xa;服务"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=18;fontStyle=1;verticalAlign=middle;align=center;"
+                vertex="1" parent="1">
+          <mxGeometry x="60" y="710" width="100" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="container-external" value=""
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;opacity=60;"
+                vertex="1" parent="1">
+          <mxGeometry x="180" y="710" width="830" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="external-llm" value="LLM API&#xa;OpenAI 兼容"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="210" y="735" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="external-fs" value="文件服务器&#xa;上传 / 下载 / STT"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="475" y="735" width="240" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="external-mqtt" value="MQTT broker&#xa;订阅 / 发布"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="740" y="735" width="240" height="60" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

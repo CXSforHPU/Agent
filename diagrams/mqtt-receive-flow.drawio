@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="drawio-skill" version="21.0.0" type="device">
+  <diagram name="MQTT Receive" id="mqtt-receive">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1"
+                   connect="1" arrows="1" fold="1" page="1" pageScale="1"
+                   pageWidth="1150" pageHeight="1260" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="device" value="设备 / 服务"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="440" y="40" width="260" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="broker" value="broker"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="440" y="130" width="260" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="callback" value="paho 工作线程&#xa;mqtt_sub_callback()&#xa;只做拷贝 + 入队，不阻塞 keepalive"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="440" y="210" width="260" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="queue" value="接收队列 rt_mq&#xa;深度 16，满则丢最旧"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="440" y="320" width="260" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="rx" value="接收线程 mqtt_rx&#xa;mqtt_route_item()"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="440" y="420" width="260" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="sync" value="周期同步订阅状态&#xa;subs_sync_with_client()"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="850" y="420" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="mode" value="投递模式？"
+                style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="450" y="530" width="240" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="gate" value="本地门控&#xa;payload_looks_like_ask()&#xa;rule_gate()（边沿 + 冷却）"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="440" y="670" width="260" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="pass" value="任一命中？"
+                style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="450" y="800" width="240" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="suppress" value="本地拦截&#xa;suppressed++"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="210" y="815" width="200" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="forward" value="放行&#xa;reason=咨询 / 规则"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="850" y="815" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="inject" value="错峰：等 agent 空闲&#xa;合并同批 ≤5 条&#xa;注入输入邮箱"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="850" y="930" width="220" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="loop" value="main_loop chat()"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="850" y="1055" width="220" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ring" value="滚动窗口 s_poll_ring&#xa;每话题最近 8 条"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="80" y="930" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="fetch" value="mqtt_receive 按需取用&#xa;mqtt_do_receive()"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="80" y="1050" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="output" value="LLM 简短总结 / 告警&#xa;经通道输出"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="850" y="1160" width="220" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="device" target="broker">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="broker" target="callback">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="callback" target="queue">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="queue" target="rx">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;"
+                edge="1" parent="1" source="rx" target="sync">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="rx" target="mode">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" value="poll"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;entryX=0.3;entryY=0;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1" source="mode" target="ring">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" value="auto"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.2;entryX=0.5;entryY=0;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1" source="mode" target="forward">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" value="filter"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1" source="mode" target="gate">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="gate" target="pass">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" value="是"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1" source="pass" target="forward">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" value="否"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;entryX=1;entryY=0.5;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1" source="pass" target="suppress">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="forward" target="inject">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="inject" target="loop">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.7;entryY=0;"
+                edge="1" parent="1" source="suppress" target="ring">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="ring" target="fetch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e18" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;"
+                edge="1" parent="1" source="fetch" target="loop">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e19" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;"
+                edge="1" parent="1" source="loop" target="output">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
