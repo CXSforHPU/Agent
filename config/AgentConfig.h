@@ -7,18 +7,6 @@
 #define AGENT_CFG_MODEL_MAX       128
 #define AGENT_CFG_API_URL_MAX     128
 
-
-#ifdef PKG_AGENT_API_KEY
-#define API_KEY PKG_AGENT_API_KEY
-#define API_URL PKG_AGENT_API_URL
-#define API_MODEL PKG_AGENT_MODEL_NAME
-#else
-#define API_KEY ""
-#define API_URL ""
-#define API_MODEL ""
-#endif
-
-
 typedef struct agent_runtime_config
 {
     char api_key[AGENT_CFG_API_KEY_MAX];

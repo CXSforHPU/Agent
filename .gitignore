@@ -1,8 +1,5 @@
 # 编译产物
-src/*.o
-src/channels/*.o
-src/tools/*.o
-config/*.o
+*.o
 
 # IDE / AI工具目录
 .vscode/
@@ -29,5 +26,5 @@ __pycache__/
 *.log
 .DS_Store
 
-src/driver/audio/AgentAudio.o
-src/tools/tool_mqtt/*.o
+# kconfig
+Kconfig
