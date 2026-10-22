@@ -728,7 +728,56 @@ rt_err_t mqtt_tool_publish(const char *topic, const char *payload,
     return mqtt_do_publish(topic, payload, out, out_size);
 }
 
-/* 取 {"val":X,...} 的 val；非 JSON 时把整条 payload 当数值 */
+/* 时间戳、单位等字段不是测量值，泛化取值时跳过 */
+static rt_bool_t payload_meta_key(const char *key)
+{
+    static const char *skip[] = {"ts", "time", "timestamp", "id", "unit", "type"};
+    rt_size_t i;
+
+    for (i = 0; i < sizeof(skip) / sizeof(skip[0]); i++)
+    {
+        if (rt_strcmp(key, skip[i]) == 0) return RT_TRUE;
+    }
+    return RT_FALSE;
+}
+
+/* 取 val/value，否则取对象里第一个非元数据数值字段 */
+static rt_bool_t payload_value_from_json(const char *p, double *out)
+{
+    static const char *preferred[] = {"val", "value"};
+    cJSON *root = cJSON_Parse(p);
+    cJSON *item;
+    rt_bool_t ok = RT_FALSE;
+    rt_size_t i;
+
+    if (root == RT_NULL) return RT_FALSE;
+
+    if (cJSON_IsNumber(root))
+    {
+        *out = root->valuedouble;
+        ok = RT_TRUE;
+    }
+    else if (cJSON_IsObject(root))
+    {
+        for (i = 0; i < sizeof(preferred) / sizeof(preferred[0]) && !ok; i++)
+        {
+            item = cJSON_GetObjectItemCaseSensitive(root, preferred[i]);
+            if (item != RT_NULL && mqtt_json_node_number(item, out)) ok = RT_TRUE;
+        }
+
+        cJSON_ArrayForEach(item, root)
+        {
+            if (ok) break;
+            if (item->string == RT_NULL || payload_meta_key(item->string)) continue;
+            if (mqtt_json_node_number(item, out)) ok = RT_TRUE;
+        }
+    }
+
+    cJSON_Delete(root);
+    return ok;
+}
+
+/* 解析测量值：val/value、首个非元数据数值字段，非 JSON 时把整条 payload 当数值 */
 static rt_bool_t parse_payload_value(const char *payload, double *out)
 {
     const char *p;
@@ -738,28 +787,8 @@ static rt_bool_t parse_payload_value(const char *payload, double *out)
     p = payload;
     while (*p == ' ' || *p == '\t') p++;
 
-    /* JSON 形如 {"val":384.0,"ts":1234}：取 "val" 字段 */
-    {
-        const char *key = rt_strstr(p, "\"val\"");
-        if (key != RT_NULL)
-        {
-            key += 5;
-            while (*key == ' ' || *key == ':' || *key == '\t') key++;
-            if (*key != '\0')
-            {
-                char *endp = RT_NULL;
-                double v = strtod(key, &endp);
+    if (payload_value_from_json(p, out)) return RT_TRUE;
 
-                if (endp != key)
-                {
-                    *out = v;
-                    return RT_TRUE;
-                }
-            }
-        }
-    }
-
-    /* 退化为整条 payload 视为数值 */
     {
         char *endp = RT_NULL;
         double v = strtod(p, &endp);
@@ -777,6 +806,53 @@ static rt_bool_t parse_payload_value(const char *payload, double *out)
  * @brief 读取已订阅话题（精确匹配）的最新一条消息数值，只读、不消费历史
  * @note  历史为环形缓冲，最新一条在 (hist_head + hist_count - 1) % DEPTH
  */
+rt_bool_t mqtt_tool_topic_payload(const char *topic_filter,
+                                  char *buf, rt_size_t size)
+{
+    rt_bool_t found = RT_FALSE;
+    rt_tick_t newest_tick = 0;
+    char newest[MQTT_TOOL_HISTORY_PAYLOAD_LEN];
+    int i;
+
+    if (buf == RT_NULL || size == 0) return RT_FALSE;
+    buf[0] = '\0';
+
+    if (!lock_take()) return RT_FALSE;
+
+    for (i = 0; i < MQTT_TOOL_MAX_SUB_TOPICS; i++)
+    {
+        const mqtt_sub_entry_t *e = &s_subs[i];
+
+        if (!e->want || e->hist_count == 0) continue;
+
+        if (topic_filter != RT_NULL && topic_filter[0] != '\0')
+        {
+            if (rt_strcmp(e->topic, topic_filter) != 0) continue;
+        }
+
+        rt_uint8_t last_idx = (rt_uint8_t)((e->hist_head + e->hist_count - 1) %
+                                            MQTT_TOOL_HISTORY_DEPTH);
+        const mqtt_hist_item_t *h = &e->hist[last_idx];
+
+        if (h->tick >= newest_tick && h->payload[0] != '\0')
+        {
+            newest_tick = h->tick;
+            rt_strncpy(newest, h->payload, sizeof(newest) - 1);
+            newest[sizeof(newest) - 1] = '\0';
+            found = RT_TRUE;
+        }
+    }
+
+    lock_give();
+
+    if (found)
+    {
+        rt_strncpy(buf, newest, size - 1);
+        buf[size - 1] = '\0';
+    }
+    return found;
+}
+
 rt_bool_t mqtt_tool_topic_latest(const char *topic_filter,
                                   double *value_out, rt_tick_t *tick_out)
 {

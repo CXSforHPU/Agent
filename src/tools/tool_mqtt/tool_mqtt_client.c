@@ -602,3 +602,39 @@ int mqtt_tool_topic_count(void)
     return count;
 }
 
+/*
+ * @brief 枚举当前有效的订阅记录
+ * @param out 输出数组，可为 NULL（仅取数量）
+ * @param max 数组容量
+ * @return 写入条数
+ */
+int mqtt_tool_topic_list(mqtt_tool_topic_info_t *out, int max)
+{
+    int i;
+    int count = 0;
+
+    if (!lock_take())
+    {
+        return 0;
+    }
+    for (i = 0; i < MQTT_TOOL_MAX_SUB_TOPICS; i++)
+    {
+        if (s_subs[i].topic[0] == '\0' || !s_subs[i].want)
+        {
+            continue;
+        }
+        if (out != RT_NULL && count < max)
+        {
+            rt_strncpy(out[count].topic, s_subs[i].topic, sizeof(out[count].topic) - 1);
+            out[count].topic[sizeof(out[count].topic) - 1] = '\0';
+            out[count].subscribed = s_subs[i].subscribed;
+            out[count].mode = s_subs[i].mode;
+            out[count].rx_count = s_subs[i].rx_count;
+        }
+        count++;
+    }
+    lock_give();
+
+    return (out != RT_NULL && count > max) ? max : count;
+}
+

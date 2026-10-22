@@ -400,6 +400,23 @@ rt_err_t mqtt_tool_remove_topic(const char *topic);
  */
 int mqtt_tool_topic_count(void);
 
+/* 订阅记录快照：供应用层 UI 展示 topic 管理页 */
+typedef struct
+{
+    char                topic[MQTT_TOOL_TOPIC_MAX_LEN];
+    rt_bool_t           subscribed;  /* broker 已确认订阅 */
+    mqtt_deliver_mode_t mode;        /* 投递模式 */
+    rt_uint32_t         rx_count;    /* 该话题累计收到消息数 */
+} mqtt_tool_topic_info_t;
+
+/*
+ * @brief 枚举当前有效的订阅记录（只读快照）
+ * @param out 输出数组，可为 NULL（仅取数量）
+ * @param max 数组容量
+ * @return 写入条数（不超过 max）
+ */
+int mqtt_tool_topic_list(mqtt_tool_topic_info_t *out, int max);
+
 /* ==========================================================================
  * 五、生命周期接口（工具内部按需自动调用，也可从应用层显式控制）
  * ========================================================================== */
@@ -443,6 +460,17 @@ rt_err_t mqtt_tool_publish(const char *topic, const char *payload,
  */
 rt_bool_t mqtt_tool_topic_latest(const char *topic_filter,
                                   double *value_out, rt_tick_t *tick_out);
+
+/*
+ * @brief 取某订阅话题的最近一条原始报文
+ * @note  只读、不消费；用于应用层识别报文字段/单位，比 topic_latest 的数值视图信息更全
+ * @param topic_filter 话题过滤器（精确匹配订阅记录里的 topic，或传 NULL/空取任意话题）
+ * @param buf          输出缓冲
+ * @param size         缓冲大小
+ * @return RT_TRUE 至少收到过一条消息且已拷贝；RT_FALSE 该话题从未收到
+ */
+rt_bool_t mqtt_tool_topic_payload(const char *topic_filter,
+                                  char *buf, rt_size_t size);
 
 /*
  * @brief 查询当前连接状态（用于结果文本与排查）
