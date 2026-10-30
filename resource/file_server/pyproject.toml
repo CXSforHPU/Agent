@@ -3,13 +3,115 @@ name = "file-server"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
+# 只有文件服务器本体与 /stt 需要的包。GPT-SoVITS 的依赖全部放在 tts 组。
 dependencies = [
-    "fastapi[standard]>=0.128.8",
+    "fastapi[standard]>=0.115.2",
     "openai>=2.48.0",
     "requests>=2.32.5",
     # Local STT (used by /stt endpoint). openai-whisper pulls torch (~2GB).
     "openai-whisper",
     "soundfile",
-    "numpy",
+    "numpy<2.0",
+    # /stt 收到非 16 kHz 音频要用它重采样；whisper 只在传路径时才自己重采样。
+    # 代价是把 numba + llvmlite 一起拉进核心环境（约 30 MB）。
+    "resampy>=0.4.3",
+]
+
+# torch 按 CUDA 工具链分构建，三个后端组互斥；默认 cpu，保证无 GPU 的机器
+# 裸跑 uv sync 也能装出可用环境。setup_env.sh / setup_env.ps1 探测显卡后选组。
+# torchaudio / torchcodec 跟 torch 同组：uv 不允许组作用域的索引绑定指向其他组里的包。
+[dependency-groups]
+cpu = [
+    "torch",
+    "torchaudio>=2.11",
+    "torchcodec>=0.11",
+]
+# CUDA 12.6: compute capability 5.0 .. 9.0 (GTX 10, Volta, Turing, Ampere, Ada, Hopper)
+gpu-cu126 = [
+    "torch ; sys_platform != 'darwin'",
+    "torchaudio ; sys_platform != 'darwin'",
+    "torchcodec ; sys_platform != 'darwin'",
+]
+# CUDA 13.0: compute capability >= 10.0 (Blackwell). cu126 wheels stop at sm_90.
+gpu-cu130 = [
+    "torch ; sys_platform != 'darwin'",
+    "torchaudio ; sys_platform != 'darwin'",
+    "torchcodec ; sys_platform != 'darwin'",
+]
+# GPT-SoVITS 推理链。与上面三个后端组正交，可自由组合：
+#   uv sync --group tts                                  # CPU
+#   uv sync --no-default-groups --group gpu-cu126 --group tts
+tts = [
+    "pytorch-lightning>=2.4",
+    "tensorboard>=2.21.0",
+    "librosa==0.10.2",
+    "numba>=0.60.0",
+    "gradio<5",
+    "ffmpeg-python>=0.2.0",
+    "onnxruntime>=1.20.1 ; platform_machine == 'aarch64' or platform_machine == 'arm64'",
+    "onnxruntime-gpu>=1.20.2 ; platform_machine == 'AMD64' or platform_machine == 'x86_64'",
+    "tqdm>=4.70.0",
+    "funasr>=1.3.7",
+    "cn2an>=0.5.24",
+    "pypinyin>=0.55.0",
+    "pyopenjtalk>=0.4.1",
+    "g2p-en>=2.1.0",
+    "modelscope>=1.37.1",
+    "sentencepiece>=0.2.2",
+    "transformers>=4.51,<5",
+    "peft<0.18.0",
+    "chardet>=5.2.0",
+    "pyyaml>=6.0.3",
+    "psutil>=7.2.2",
+    "jieba-fast>=0.53",
+    "jieba>=0.42.1",
+    "split-lang>=2.1.1",
+    "fast-langdetect>=0.3.1",
+    "wordsegment>=1.3.1",
+    "rotary-embedding-torch>=0.9.1",
+    "tojyutping>=3.2.0",
+    "g2pk2>=0.0.3",
+    "ko-pron>=1.3",
+    "opencc>=1.4.2",
+    "python-mecab-ko>=1.3.7 ; sys_platform != 'win32'",
+    "x-transformers>=2.31.10",
+    "torchmetrics<=1.5",
+    "pydantic<=2.10.6",
+    "ctranslate2>=4.0,<5",
+    "av>=11",
+]
+
+[tool.uv]
+index-strategy = "unsafe-best-match"
+default-groups = ["cpu"]
+conflicts = [[{ group = "cpu" }, { group = "gpu-cu126" }, { group = "gpu-cu130" }]]
+# TUNA 没有 python-build-standalone 镜像；uv 需要自行下载解释器且 GitHub 不可达时启用
+# （第三方代理，非官方镜像，按需取舍）。
+# python-install-mirror = "https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download"
+
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+# 组作用域的索引绑定：包本身列在 tts 组，只要启用了 GPU 后端组就改走 pytorch 索引。
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu126", group = "gpu-cu126", marker = "sys_platform != 'darwin'" },
+    { index = "pytorch-cu130", group = "gpu-cu130", marker = "sys_platform != 'darwin'" },
+]
+torchcodec = [
+    { index = "pytorch-cu126", group = "gpu-cu126", marker = "sys_platform != 'darwin'" },
+    { index = "pytorch-cu130", group = "gpu-cu130", marker = "sys_platform != 'darwin'" },
 ]

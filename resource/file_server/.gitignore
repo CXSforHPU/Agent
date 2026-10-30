@@ -1,0 +1,36 @@
+# 推理代码（third_party/gpt-sovits-infer）是上游 MIT 源码的子集，入库；它跑起来要的
+# 预训练模型、词表大文件、FFmpeg 二进制不入库，由 fetch_tts.py 获取。
+# 自家微调出来的音色（GPT_weights_v2Pro/、SoVITS_weights_v2Pro/、refs/）已经入库，
+# 许可见 README.md 的「第三方与许可」。
+
+# 旧的整仓上游 clone（抽出推理代码后不再需要）
+GPT-SoVITS/
+_fetch_tmp/
+
+# fetch_tts.py assets / voice 落地的大目录
+third_party/gpt-sovits-infer/GPT_SoVITS/pretrained_models/
+third_party/gpt-sovits-infer/GPT_SoVITS/text/G2PWModel/
+third_party/gpt-sovits-infer/runtime/
+third_party/gpt-sovits-infer/output/
+third_party/gpt-sovits-infer/GPT_weights_v2/
+third_party/gpt-sovits-infer/SoVITS_weights_v2/
+
+# fetch_tts.py dicts：上游放在 git 里、单个就超 0.5 MB 的 8 个文件
+third_party/gpt-sovits-infer/GPT_SoVITS/text/cmudict.rep
+third_party/gpt-sovits-infer/GPT_SoVITS/text/cmudict-fast.rep
+third_party/gpt-sovits-infer/GPT_SoVITS/text/engdict_cache.pickle
+third_party/gpt-sovits-infer/GPT_SoVITS/text/namedict_cache.pickle
+third_party/gpt-sovits-infer/GPT_SoVITS/text/g2pw/polyphonic.pickle
+third_party/gpt-sovits-infer/GPT_SoVITS/text/g2pw/polyphonic-fix.rep
+third_party/gpt-sovits-infer/GPT_SoVITS/text/ja_userdic/
+third_party/gpt-sovits-infer/GPT_SoVITS/Accel/vendor/
+
+__pycache__/
+*.py[cod]
+.venv/
+upload_files/
+file_db.sqlite
+
+# 上游 TTS_Config 每次建管线都会把解析后的权重绝对路径写回这个 yaml
+# （TTS_infer_pack/TTS.py:451 _load_configs，缺文件就自己生成），入库只会让工作区常脏
+third_party/gpt-sovits-infer/GPT_SoVITS/configs/tts_infer.yaml
