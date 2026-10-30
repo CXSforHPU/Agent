@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 # torch 按 CUDA 工具链分构建，三个后端组互斥；默认 cpu，保证无 GPU 的机器
-# 裸跑 uv sync 也能装出可用环境。setup_env.sh / setup_env.ps1 探测显卡后选组。
+# 裸跑 uv sync 也能装出可用环境。deploy.sh / deploy.bat 探测显卡后选组。
 # torchaudio / torchcodec 跟 torch 同组：uv 不允许组作用域的索引绑定指向其他组里的包。
 [dependency-groups]
 cpu = [

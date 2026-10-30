@@ -27,13 +27,13 @@ uv run main.py
 
 `/tts` 是可选功能，依赖 `third_party/gpt-sovits-infer/` 里的推理代码和 `da_fei_yv` 的权重。没装配时这两个接口返回 503，其余接口照常工作。
 
-装配要三步，权重从 ModelScope 拉：
+装配一条命令，权重从 ModelScope 拉：
 
 ```bash
-bash setup_env.sh --tts
-python fetch_tts.py dicts voice assets
-python fetch_tts.py check
+bash deploy.sh --tts
 ```
+
+Windows 用 `deploy.bat --tts`。手动分步时是先 `python fetch_tts.py dicts voice assets`，再 `python fetch_tts.py check`。
 
 运行时板端发一个 JSON：`text`、`sample_rate`（16000）、`channels`（2）。服务端在同一进程内调 GPT-SoVITS 的 `TTS_Config` 与 `TTS`，把 int16 PCM 归一化后按 `sample_rate` 重采样，写成 WAV 返回。详细说明见 [README.md 的第 11 节](./README.md)。
 

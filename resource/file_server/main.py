@@ -317,7 +317,7 @@ _TTS_LANG_ALIAS = {
     "中英混合": "zh", "日英混合": "ja", "粤英混合": "yue", "韩英混合": "ko",
     "多语种混合": "auto", "多语种混合(粤语)": "auto_yue",
 }
-_TTS_UNAVAILABLE = ("TTS 未装配：先跑 setup_env.sh --tts（或 .\\setup_env.ps1 -Tts）"
+_TTS_UNAVAILABLE = ("TTS 未装配：先跑 bash deploy.sh --tts（或 deploy.bat --tts）"
                     "与 python fetch_tts.py dicts voice assets")
 
 

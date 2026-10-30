@@ -18,12 +18,12 @@ pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 ## 2. 安装依赖
 
-用工程下的探测脚本安装，它先判断显卡算力，再选对应的 torch 构建：
+用工程下的部署脚本装，它先判断显卡算力，再选对应的 torch 构建：
 
 ```bash
 cd packages/Agent-latest/resource/file_server
-bash setup_env.sh          # Linux / macOS，Windows 下 Git Bash 也可
-.\setup_env.ps1            # Windows PowerShell
+bash deploy.sh --tts      # Linux / macOS，Windows 下 Git Bash 也可
+deploy.bat --tts          # Windows
 ```
 
 脚本取 `nvidia-smi --query-gpu=compute_cap`，按结果同步 `pyproject.toml` 里的依赖组：
@@ -36,7 +36,7 @@ bash setup_env.sh          # Linux / macOS，Windows 下 Git Bash 也可
 
 cu126 的预编译核函数止于 sm_90，50 系显卡装了会在推理时报 no kernel image is available，所以要分开。
 
-只想看结论不安装：`bash setup_env.sh --print`、`.\setup_env.ps1 -Print`。手工指定：`bash setup_env.sh cpu`、`bash setup_env.sh cu130`。
+只想看要执行的 uv 命令、不装东西：`bash deploy.sh --print`、`deploy.bat --print`。手工指定后端：`bash deploy.sh --cpu`、`bash deploy.sh --cu130`。
 
 等价的 uv 命令：
 
@@ -48,7 +48,7 @@ uv sync --no-default-groups --group gpu-cu126 --group tts
 uv sync --no-default-groups --group gpu-cu130  # CUDA 13.0（Blackwell）
 ```
 
-`cpu` / `gpu-cu126` / `gpu-cu130` 三组只决定 torch 的后端，`tts` 组与它们正交：文件服务器本体只需要 `fastapi`、`openai`、`requests`、`openai-whisper`、`soundfile`、`numpy`、`resampy`，GPT-SoVITS 那套（`gradio`、`transformers`、`funasr`、`modelscope`、`onnxruntime-gpu` 等）全部在 `tts` 组里，不带 `--group tts` 就不会装。探测脚本用 `--tts` / `-Tts` 追加该组，详见第 11 节。
+`cpu` / `gpu-cu126` / `gpu-cu130` 三组只决定 torch 的后端，`tts` 组与它们正交：文件服务器本体只需要 `fastapi`、`openai`、`requests`、`openai-whisper`、`soundfile`、`numpy`、`resampy`，GPT-SoVITS 那套（`gradio`、`transformers`、`funasr`、`modelscope`、`onnxruntime-gpu` 等）全部在 `tts` 组里，不带 `--group tts` 就不会装。脚本用 `--tts` 追加该组，详见第 11 节。
 
 三个组在 `[tool.uv]` 的 `conflicts` 里声明为互斥，`uv sync --group gpu-cu126` 会直接报错，必须先 `--no-default-groups` 关掉默认的 `cpu` 组。
 
@@ -248,7 +248,7 @@ menuconfig 中的填写位置：
 | 现象 | 排查 |
 |---|---|
 | `uv sync` 超时 | 配置国内镜像源后重试 |
-| `no kernel image is available for execution on the device` | torch 的 CUDA 构建与显卡算力不匹配：Blackwell 误装了 `gpu-cu126`，或老卡装了 `gpu-cu130`。重跑 `setup_env.sh` / `.\setup_env.ps1` 让脚本重新判定 |
+| `no kernel image is available for execution on the device` | torch 的 CUDA 构建与显卡算力不匹配：Blackwell 误装了 `gpu-cu126`，或老卡装了 `gpu-cu130`。重跑 `bash deploy.sh` / `deploy.bat` 让脚本重新判定 |
 | GPU 环境莫名变回 CPU | 跑过不带 `--group` 的 `uv sync`，或不带 `--no-sync` 的 `uv run`。默认组是 `cpu`，重新按组同步即可 |
 | 板子上传返回 20040 | 确认上传地址是 HTTP；确认穿透地址公网可访问；确认 `file_id` 完整；确认下载响应的 `Content-Type` 是图片类型 |
 | 设备连不上服务器 | 检查穿透通道的本地端口是否为 `127.0.0.1:8000`，检查防火墙 |
@@ -262,15 +262,9 @@ menuconfig 中的填写位置：
 
 ## 11. 可选：GPT-SoVITS 语音合成
 
-`main.py` 里的 `/tts` 是可选功能。推理代码已经抽进仓库，放在 `third_party/gpt-sovits-infer/`，只留合成一条链。预训练模型、大词表、FFmpeg 不入库，装配前该接口返回 503，其余接口照常工作。音色是自家微调的 `da_fei_yv`：参考音频、`manifest.json` 与音色注册表在仓库里，两个权重文件 148 MiB 与 129 MiB 放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `voice` 步骤拉回并核对 SHA256。需要时三步补齐：
+`main.py` 里的 `/tts` 是可选功能。推理代码已经抽进仓库，放在 `third_party/gpt-sovits-infer/`，只留合成一条链。预训练模型、大词表、FFmpeg 不入库，装配前该接口返回 503，其余接口照常工作。音色是自家微调的 `da_fei_yv`：参考音频、`manifest.json` 与音色注册表在仓库里，两个权重文件 148 MiB 与 129 MiB 放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `voice` 步骤拉回并核对 SHA256。
 
-```bash
-bash setup_env.sh --tts                      # 或 .\setup_env.ps1 -Tts
-python fetch_tts.py dicts voice assets       # 都要联网，assets 要几 GB 空间
-python fetch_tts.py check                    # 逐项自检，缺什么一眼看到
-```
-
-不想一步步敲，用两个脚本串起来：
+装配这条链有三个动作，装环境、拉第三方资产、逐项自检。脚本一次跑完：
 
 ```bash
 bash deploy.sh --tts             # Linux/macOS：装配 + 拉取 + 自检 + 启动
@@ -287,12 +281,23 @@ deploy.bat --tts                 :: Windows：同样的流程
 | `--tts` | 装 TTS 依赖组，并拉词表、权重与底模 |
 | `--check` | 只部署不起服务，装完自检完就退出 |
 | `--start-only` | 跳过装配与拉取，直接起服务 |
+| `--print` | 只打印要执行的 uv 命令，什么都不改 |
 | `--port N`、`--host ADDR` | 换监听地址，默认 `0.0.0.0:8000` |
 | `--autoload` | 启动时在后台预热 TTS 模型 |
 | `--cpu`、`--cu126`、`--cu130` | 指定 torch 后端，默认按显卡探测 |
 | `--mirror` | GitHub 下载走 gh-proxy，`deploy.bat` 默认开 |
 
-`deploy.bat` 把环境装配交给 `setup_env.ps1`（PowerShell），批处理本身只做编排。两个脚本都会先跑 `uv sync`，这一步会剪掉锁文件里没有的包，其中 `eunjeon` 是韩语那条路要用的，它又依赖 `setuptools<81` 才有的 `pkg_resources`，所以脚本在同步之后查一次，缺了就把这两个补回去。
+脚本先跑 `uv sync`，这一步会剪掉锁文件里没有的包，其中 `eunjeon` 是韩语那条路要用的，它又依赖 `setuptools<81` 才有的 `pkg_resources`，所以同步之后查一次，缺了就把这两个补回去。
+
+`deploy.bat` 要用 CRLF 行尾保存。cmd 找标签时按 CRLF 断行，文件一大，LF 行尾会让 `goto` 报“系统找不到指定的批处理文件”。本仓库的 `core.autocrlf` 是 true，检出时会是 CRLF，手工改完记得确认。
+
+想手动分步跑时，顺序是这样：
+
+```bash
+bash deploy.sh --tts --check                    # 装配 + 拉取 + 自检，不起服务
+python fetch_tts.py dicts voice assets          # 都要联网，assets 要几 GB 空间
+python fetch_tts.py check                       # 逐项自检，缺什么一眼看到
+```
 
 ![TTS 部署流程](../../diagrams/tts-deploy-flow.png)
 
@@ -451,7 +456,7 @@ curl -s -X POST -H "Content-Type: application/json" --data @req.json localhost:8
 
 | 步骤 | 结果 |
 |---|---|
-| `setup_env.sh --tts` | torch 2.14.1+cu126，CUDA 可用，`.venv` 5.2 GB |
+| `bash deploy.sh --tts` | torch 2.14.1+cu126，CUDA 可用，`.venv` 5.2 GB |
 | `fetch_tts.py dicts` | 8 个词表逐个核对 SHA256 通过 |
 | `fetch_tts.py voice` | 两个权重从 ModelScope 拉回，SHA256 对上 |
 | `fetch_tts.py assets` | 解出 `pretrained_models.zip` 4.24 GB，`third_party` 合计 5.8 GB |
@@ -476,7 +481,7 @@ draw.io 源文件：[tts-runtime-flow.drawio](../../diagrams/tts-runtime-flow.dr
 
 ## 12. 第三方与许可
 
-`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及运行时改写的两个文件：上游每次建管线都会把权重绝对路径写回 `GPT_SoVITS/configs/tts_infer.yaml`，G2PW 词典重建后会改写 `GPT_SoVITS/text/g2pw/polyphonic.md5`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`setup_env.ps1`、`setup_env.sh`、`deploy.bat`、`deploy.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 164 个文件。两个权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
+`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及运行时改写的两个文件：上游每次建管线都会把权重绝对路径写回 `GPT_SoVITS/configs/tts_infer.yaml`，G2PW 词典重建后会改写 `GPT_SoVITS/text/g2pw/polyphonic.md5`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`deploy.bat`、`deploy.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 164 个文件。两个权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
 
 | 组件 | 来源 | 许可 | 入库 |
 |---|---|---|---|

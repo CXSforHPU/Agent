@@ -1,0 +1,2 @@
+# cmd 按 CRLF 断行找标签，批处理用 LF 行尾会让 goto 找不到标签。
+*.bat text eol=crlf
