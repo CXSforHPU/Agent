@@ -258,22 +258,23 @@ menuconfig 中的填写位置：
 
 ## 11. 可选：GPT-SoVITS 语音合成
 
-`main.py` 里的 `/tts` 是可选功能。推理代码已经抽进仓库，放在 `third_party/gpt-sovits-infer/`，只留合成一条链。预训练模型、大词表、FFmpeg 不入库，装配前该接口返回 503，其余接口照常工作。音色是自家微调的 `da_fei_yv`，权重和参考音频已经入库。需要时两步补齐：
+`main.py` 里的 `/tts` 是可选功能。推理代码已经抽进仓库，放在 `third_party/gpt-sovits-infer/`，只留合成一条链。预训练模型、大词表、FFmpeg 不入库，装配前该接口返回 503，其余接口照常工作。音色是自家微调的 `da_fei_yv`：参考音频、`manifest.json` 与音色注册表在仓库里，两个权重文件 155 MB 与 135 MB 放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `voice` 步骤拉回。需要时三步补齐：
 
 ```bash
 bash setup_env.sh --tts                      # 或 .\setup_env.ps1 -Tts
-python fetch_tts.py dicts assets              # dicts 要联网，assets 要几 GB 空间
+python fetch_tts.py dicts voice assets       # 都要联网，assets 要几 GB 空间
 python fetch_tts.py check                    # 逐项自检，缺什么一眼看到
 ```
 
 `fetch_tts.py` 做的事，全部幂等（已存在即跳过）：
 
 - `dicts`：取 8 个上游放在 git 里、单个就超过 500 KB 的数据文件（`text/cmudict.rep`、`text/engdict_cache.pickle`、`text/ja_userdic/userdict.csv`、`Accel/vendor/cuda/bin/cudart64_12.dll` 等），共 35.3 MB。按钉住的 commit 从 `raw.githubusercontent.com` 下载，逐个核对 SHA256；本地已经存在且校验通过就跳过，校验失败则删掉重下。
+- `voice`：从 ModelScope 的 `Caoxiansong/da_fei_yv` 拉 `GPT_weights_v2Pro/da_fei_yv-e40.ckpt` 与 `SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth`，落到同名目录，逐个核对 SHA256，值与 `refs/da_fei_yv/manifest.json` 一致。直链匿名可下，不需要 token；curl 带 `-C -`，断点续传。
 - `assets`：从 ModelScope 的 `XXXXRT/GPT-SoVITS-Pretrained` 解出 `pretrained_models.zip`（hubert、bert 等）到 `third_party/gpt-sovits-infer/GPT_SoVITS/`、`G2PWModel.zip` 到 `GPT_SoVITS/text/`、`nltk_data.zip` 到 `runtime/`，解压目录沿用上游 `install.sh:262`、`:275`、`:362` 的目标；再从 fastText 官方下 `lid.176.bin` 并校验 MD5；Windows 上额外解一份 FFmpeg 共享库到 `runtime/`，因为 venv 里 torchaudio 2.11 的 `load()` 已转发 TorchCodec，没有外部 FFmpeg 就报 `Could not find module libtorchcodec_coreN.dll`。
 
 换源与代理：`--source hf` / `--source hf-mirror` 切 zip 来源，`--mirror` 让 GitHub 走 gh-proxy。国内直连 BtbN 的 FFmpeg Release 会报 curl 退出码 35（SSL 连接被断），所以 Windows 上这一步基本要配 `--mirror`；gh-proxy 实测只有 80 KB/s ~ 400 KB/s，88 MB 的 zip 得等几分钟。`lid.176.bin` 已随 `pretrained_models.zip` 落地，脚本仍按 MD5 复核一遍。
 
-取完之后 `third_party/gpt-sovits-infer/` 是 5.8 GB：`GPT_SoVITS/pretrained_models/` 4.6 GB、`GPT_SoVITS/text/G2PWModel/` 608 MB、`runtime/` 231 MB、8 个词表 35 MB，入库的 v2Pro 权重 277 MB（148 MB 与 129 MB）、参考音频 0.3 MB。入库的代码只有 1.4 MB。
+取完之后 `third_party/gpt-sovits-infer/` 是 5.8 GB：`GPT_SoVITS/pretrained_models/` 4.6 GB、`GPT_SoVITS/text/G2PWModel/` 608 MB、`runtime/` 231 MB、8 个词表 35 MB、自家 v2Pro 权重 277 MB（148 MB 与 129 MB）、参考音频 0.3 MB。入库的代码和配置只有 1.4 MB。
 
 推理子集怎么选出来的，记在 `third_party/gpt-sovits-infer/README.md`：判据是一次真实中文合成在 `sys.modules` 里留下的 97 个上游 .py，再按目录规则放宽到其它语种的文本模块和各个 `__init__.py`；训练、导出、WebUI、ASR、人声分离全部丢掉。落库 167 个文件，其中 158 个是上游推理文件，另加上游 MIT `LICENSE`、本说明、一份音色注册表和自家音色的 6 个文件。升级或重抽用同目录的 `extract_infer.py`，取舍清单是里面的 `DROP_PREFIX`。
 
@@ -335,19 +336,19 @@ uv pip install --python ./.venv/Scripts/python.exe eunjeon "setuptools<81"
 
 ### 导入本地导出的权重
 
-自己微调导出的权重不经过 `fetch_tts.py`，按下图的布局摆放：两套权重、参考音频与它的转写文本、一份音色注册表。仓库里现在带的就是 `da_fei_yv`，训练导出目录里的原始文件名是 `dafeiyu2_v2Pro-e40.ckpt`、`dafeiyu2_v2Pro_e6_s162.pth`、`refs/dwg_0002.wav` 和一份 `manifest.json`，入库时统一换成 `da_fei_yv` 前缀，`manifest.json` 里留了 `renamed_from` 字段：
+自己微调导出的权重按下面的布局摆放：两套权重、参考音频与它的转写文本、一份音色注册表。仓库里带的 `da_fei_yv` 就是这么放的，训练导出目录里的原始文件名是 `dafeiyu2_v2Pro-e40.ckpt`、`dafeiyu2_v2Pro_e6_s162.pth`、`refs/dwg_0002.wav` 和一份 `manifest.json`，入库时统一换成 `da_fei_yv` 前缀，`manifest.json` 里留了 `renamed_from` 字段：
 
 ```text
 third_party/gpt-sovits-infer/
-├── GPT_weights_v2Pro/da_fei_yv-e40.ckpt        入库，走 git-lfs
-├── SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth   入库，走 git-lfs
+├── GPT_weights_v2Pro/da_fei_yv-e40.ckpt         fetch_tts.py voice 从 ModelScope 拉
+├── SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth   同上
 ├── refs/da_fei_yv/dwg_0002.wav                  入库，参考音频
 ├── refs/da_fei_yv/manifest.json                 入库，导出时的测量值留档
 ├── refs/da_fei_yv/prompt.txt                    入库，从 manifest 的 prompt_text 落一份
 └── tts_speakers/da_fei_yv.json                  入库，只有三个字段
 ```
 
-两个权重过了 100 MB，走 Git LFS，仓库里存的是指针，`git lfs pull` 之后才是真实文件。换音色时照这个布局再放一套即可，目录名决定推理版本。
+两个权重合计 277 MB，超过 GitHub 的单文件上限，仓库里不带：`fetch_tts.py voice` 从 ModelScope 取，SHA256 对得上才留下。换音色时照这个布局再放一套即可，目录名决定推理版本。
 
 文件名要能配成对：`.ckpt` 去掉 `-e\d+` 之后的前缀，和 `.pth` 去掉 `_e\d+_s\d+` 之后的前缀要一致，两边都得到 `da_fei_yv`。权重名里带不带版本都行，版本由所在目录决定。
 
@@ -414,12 +415,12 @@ curl -s -X POST -H "Content-Type: application/json" --data @req.json localhost:8
 
 ## 12. 第三方与许可
 
-`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_v2/` 与 `SoVITS_weights_v2/`、8 个 `dicts` 大文件），以及上游每次建管线都会重写的 `GPT_SoVITS/configs/tts_infer.yaml`。推理代码、自家音色权重与参考音频都入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`.gitattributes`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`setup_env.ps1`、`setup_env.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 167 个文件。两个权重走 Git LFS，仓库里存的是指针，真实内容在 `.git/lfs/objects/`；clone 下来要 `git lfs pull` 才有权重。表里“入库”一列说的就是这个边界。
+`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及上游每次建管线都会重写的 `GPT_SoVITS/configs/tts_infer.yaml`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`setup_env.ps1`、`setup_env.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 165 个文件。两个权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
 
 | 组件 | 来源 | 许可 | 入库 |
 |---|---|---|---|
 | GPT-SoVITS 推理代码 | `RVC-Boss/GPT-SoVITS` @ `b4570b8`，只抽合成链 | MIT，随上游 `LICENSE` 一起进 | 是，158 个文件 |
-| 自家音色 `da_fei_yv` 的权重与参考音频 | 本工程自训，训练数据 `YinZilu/da-fei-yu-girl-voice-zh` | 训练数据是 **CC BY-NC 4.0**：仅限非商业，须署名「尹紫鹭幻想社（Bilibili）」，不得用于冒充真人。权重是衍生作品，同受此约束 | 是，两个权重走 git-lfs，参考音频 0.3 MB 直接入库 |
+| 自家音色 `da_fei_yv` 的权重与参考音频 | 本工程自训，训练数据 `YinZilu/da-fei-yu-girl-voice-zh`；权重发布在 ModelScope `Caoxiansong/da_fei_yv` | 训练数据是 **CC BY-NC 4.0**：仅限非商业，须署名「尹紫鹭幻想社（Bilibili）」，不得用于冒充真人。权重是衍生作品，同受此约束 | 权重否，`fetch_tts.py voice` 从 ModelScope 拉；参考音频 0.3 MB 入库 |
 | 上游 git 里的词表与 CUDA 运行库 | 同一 commit 的 `raw.githubusercontent.com` | 随上游仓库（MIT） | 否，`fetch_tts.py dicts` 取，8 个 35.3 MB，逐个校验 SHA256 |
 | chinese-hubert-base、chinese-roberta-wwm-ext-large、G2PWModel、nltk_data | 上游 `XXXXRT/GPT-SoVITS-Pretrained` 的 zip | 以各自来源页声明为准，本仓库不重新授权 | 否 |
 | `lid.176.bin` | fastText 官方 supervised models | CC BY-SA 3.0（fastText 文档页写明，不是常见的 NC 误传） | 否 |
@@ -431,7 +432,7 @@ curl -s -X POST -H "Content-Type: application/json" --data @req.json localhost:8
 
 1. 不要用 `git add -f` 把被忽略的路径塞进仓库。预训练模型和 GPL 二进制一旦进历史就很难干净撤回。
 2. 权重是自己训的，但训练数据是 CC BY-NC 4.0，权重是衍生作品，同样受非商业与署名约束。仓库首页、发行物和对外演示都要写明音色数据来自「尹紫鹭幻想社（Bilibili）」，按 CC BY-NC 4.0 使用。
-3. 两个权重分别是 148 MB 与 129 MB，超过 GitHub 普通 git 对象和 GitHub LFS（Free/Pro 计划）的 100 MB 单文件上限。要推上 GitHub，得换成支持更大单文件的计划，或者把权重改成 Release 附件或自建下载源，仓库里改回用 fetch 脚本取。
+3. 两个权重分别是 155 MB 与 135 MB，超过 GitHub 普通 git 对象的 100 MB 上限，LFS 又要占配额，所以放到 ModelScope（`Caoxiansong/da_fei_yv`），由 `fetch_tts.py voice` 匿名直链拉取并校验 SHA256。CC BY-NC 4.0 的衍生权重本来也不适合再分发到 GitHub。
 
-历史核对：`git log --all -- resource/file_server/GPT-SoVITS` 无输出，整仓上游 clone、第三方权重与二进制从未进过任何提交。这次提交首次把自家 v2Pro 权重与参考音频写进历史，之前仓库里没有任何模型权重。推理子集是首次入库的第三方代码，MIT 允许再分发，保留 `LICENSE` 和出处记录即可，公开这个仓库不需要改写历史。
+历史核对：`git log --all -- resource/file_server/GPT-SoVITS` 无输出，整仓上游 clone、第三方权重与二进制从未进过任何提交。第一次提交把自家 v2Pro 参考音频写进历史，权重只存在于 ModelScope。推理子集是首次入库的第三方代码，MIT 允许再分发，保留 `LICENSE` 和出处记录即可，公开这个仓库不需要改写历史。
 

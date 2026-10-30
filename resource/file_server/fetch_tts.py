@@ -2,7 +2,7 @@
 """Fetch the third-party pieces this repository does not carry.
 
     python fetch_tts.py check                  # only report what is missing
-    python fetch_tts.py dicts assets           # fetch everything
+    python fetch_tts.py dicts voice assets     # fetch everything
     python fetch_tts.py assets --source hf     # pull zips from HuggingFace
     python fetch_tts.py dicts --mirror         # route GitHub through gh-proxy
 
@@ -10,7 +10,8 @@ Stdlib only, so it runs before any virtualenv exists. The inference code itself 
 in third_party/gpt-sovits-infer (MIT, pinned upstream commit); what stays out are
 the blobs: the 35 MB of dictionaries that upstream keeps in git, the pretrained
 models, and the FFmpeg/nltk runtime. The voice that ships with the repo is our own
-fine-tune and is committed, not fetched.
+fine-tune; its two weight files live on ModelScope (the git host rejects them),
+the reference audio and manifest stay in the repo.
 See the 第三方与许可 section in README.md.
 """
 
@@ -38,6 +39,17 @@ UPSTREAM_RAW = "https://raw.githubusercontent.com/RVC-Boss/GPT-SoVITS/" + UPSTRE
 # pretrained_models.zip but the zip is skipped once chinese-hubert-base is there,
 # so it gets its own marker.
 SV_CKPT = INFER / "GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt"
+
+# 自家微调的音色权重：单个 155 MB / 135 MB，GitHub 传不上去，放在 ModelScope。
+# 仓库里的 refs/da_fei_yv/manifest.json 记录哈希，这里只列要拉的两个文件。
+# 直链匿名可下，不需要 token。
+VOICE_REPO = "https://www.modelscope.cn/models/Caoxiansong/da_fei_yv/resolve/master"
+VOICE_WEIGHTS = {
+    "GPT_weights_v2Pro/da_fei_yv-e40.ckpt":
+        "d28c801091e668ebe0b3751b931d22c0c9b2824bf22919bafa54609b6bd39217",
+    "SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth":
+        "9872a80e4e1f82821ef679c67602eac46bbd9b7afecb9403ee7d0bf2f127449b",
+}
 
 # Checked into upstream's git but too big for ours. Path -> sha256 of that commit.
 DICT_BLOBS = {
@@ -210,6 +222,21 @@ def step_assets(source, mirror):
         print("note: torchcodec on Linux/macOS uses the system FFmpeg; install ffmpeg-libs if loading fails")
 
 
+def step_voice():
+    """Pull our fine-tuned weights from ModelScope into the dirs TTS_Config reads."""
+    for rel, digest in sorted(VOICE_WEIGHTS.items()):
+        target = INFER / rel
+        if target.is_file() and sha256(target) == digest:
+            print("exists: " + rel)
+            continue
+        download(VOICE_REPO + "/" + rel, target)
+        actual = sha256(target)
+        if actual != digest:
+            target.unlink(missing_ok=True)
+            sys.exit("sha256 mismatch for " + rel + "\n  expected " + digest + "\n  actual   " + actual)
+        print("fetched " + rel)
+
+
 def step_check():
     probes = {
         "inference code": INFER / "GPT_SoVITS/TTS_infer_pack/TTS.py",
@@ -238,7 +265,7 @@ def step_check():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("steps", nargs="*", choices=["dicts", "assets", "check"], default=["check"])
+    ap.add_argument("steps", nargs="*", choices=["dicts", "voice", "assets", "check"], default=["check"])
     ap.add_argument("--source", choices=sorted(ZIP_SOURCES), default="modelscope")
     ap.add_argument("--mirror", action="store_true", help="route github.com downloads through gh-proxy.com")
     a = ap.parse_args()
@@ -248,6 +275,8 @@ def main():
     for s in a.steps:
         if s == "dicts":
             step_dicts(a.mirror)
+        elif s == "voice":
+            step_voice()
         elif s == "assets":
             step_assets(a.source, a.mirror)
     return step_check() if "check" in a.steps or a.steps == ["check"] else 0

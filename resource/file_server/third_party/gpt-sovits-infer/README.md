@@ -50,6 +50,6 @@ python extract_infer.py --apply  # 复制进来
 
 ## 入库的自家音色
 
-`GPT_weights_v2Pro/`、`SoVITS_weights_v2Pro/`、`refs/` 与 `tts_speakers/` 入库，是本工程自训的 `da_fei_yv` 音色：两个权重分别是 148 MB 与 129 MB，走 Git LFS，仓库里存的是指针；参考音频 0.3 MB 直接入库。训练数据是 CC BY-NC 4.0，权重是衍生作品，同样受非商业与署名约束，详见 `../../README.md` 的「第三方与许可」。`GPT_weights_v2/` 与 `SoVITS_weights_v2/` 留空、放第三方 v2 权重用，被 `.gitignore` 挡住。
+`refs/` 与 `tts_speakers/` 入库，是本工程自训的 `da_fei_yv` 音色：参考音频 0.3 MB、一份导出记录、一份提示词文本和一个三字段注册表。两个权重分别是 155 MB 与 135 MB，GitHub 收不下，放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `fetch_tts.py voice` 拉进 `GPT_weights_v2Pro/` 与 `SoVITS_weights_v2Pro/` 并校验 SHA256。训练数据是 CC BY-NC 4.0，权重是衍生作品，同样受非商业与署名约束，详见 `../../README.md` 的「第三方与许可」。`GPT_weights_v2/` 与 `SoVITS_weights_v2/` 留空、放第三方 v2 权重用，被 `.gitignore` 挡住。
 
 `GPT_SoVITS/configs/tts_infer.yaml` 不入库。上游 `TTS_Config` 每次建管线都会把解析后的权重绝对路径写回这个文件，文件不在就先生成一份默认的（`TTS_infer_pack/TTS.py:451` 的 `_load_configs`）。跟踪进来只会让工作区一直是脏的。

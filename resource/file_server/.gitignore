@@ -1,7 +1,7 @@
 # 推理代码（third_party/gpt-sovits-infer）是上游 MIT 源码的子集，入库；它跑起来要的
 # 预训练模型、词表大文件、FFmpeg 二进制不入库，由 fetch_tts.py 获取。
-# 自家微调出来的音色（GPT_weights_v2Pro/、SoVITS_weights_v2Pro/、refs/）已经入库，
-# 许可见 README.md 的「第三方与许可」。
+# 自家微调音色的两个权重文件也由 fetch_tts.py voice 从 ModelScope 拉；参考音频、
+# manifest 与 tts_speakers/ 很小，照常入库。许可见 README.md 的「第三方与许可」。
 
 # 旧的整仓上游 clone（抽出推理代码后不再需要）
 GPT-SoVITS/
@@ -12,8 +12,8 @@ third_party/gpt-sovits-infer/GPT_SoVITS/pretrained_models/
 third_party/gpt-sovits-infer/GPT_SoVITS/text/G2PWModel/
 third_party/gpt-sovits-infer/runtime/
 third_party/gpt-sovits-infer/output/
-third_party/gpt-sovits-infer/GPT_weights_v2/
-third_party/gpt-sovits-infer/SoVITS_weights_v2/
+third_party/gpt-sovits-infer/GPT_weights_*/
+third_party/gpt-sovits-infer/SoVITS_weights_*/
 
 # fetch_tts.py dicts：上游放在 git 里、单个就超 0.5 MB 的 8 个文件
 third_party/gpt-sovits-infer/GPT_SoVITS/text/cmudict.rep
