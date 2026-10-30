@@ -172,10 +172,23 @@ WebNet 通道提供三个 CGI：
 
 ### 3.8 Utils 与多模态
 
-文件：`src/utils.c`、`include/utils.h`
+Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include/utils/` 下一个同名 .h。`include/utils/utils_internal.h` 负责按启用的宏导入这些模块头，`include/utils.h` 只做一行转发，包内其它模块仍然只 include `utils.h`。
 
-- 文本转换：`format_text()`、`create_content_array()`、`to_content()`。
-- 工具 JSON 构造：`create_tool_item()`、`create_param_obj()`、`create_property()`。
+| 文件 | 内容 |
+|---|---|
+| `src/utils/message.c` | 流式打印 `print_reasoning()`、`print_tool_call()`、`print_context()` |
+| `src/utils/format.c` | `format_text()`、`create_content_array()`、`to_content()` |
+| `src/utils/tool_json.c` | `create_tool_item()`、`create_param_obj()`、`create_property()` |
+| `src/utils/file_op.c` | 文件操作线程与 `msh_agent_upload_download` |
+| `src/utils/stt.c` | 本地语音转写，见 3.9 |
+| `src/utils/tts.c` | 文本转语音，见 3.10 |
+
+`file_op`、`stt`、`tts` 三个模块各带一个开关，分别是 `PKG_AGENT_MULTIMODAL_ENABLE`、`PKG_AGENT_STT_ENABLE`、`PKG_AGENT_TTS_ENABLE`。同名 .c 与 .h 用同一个宏整文件包住，`utils_internal.h` 也按这组宏决定是否导入。两个语音开关在 Kconfig 里位于多模态菜单之下，不开多模态就没有这两个宏。其余三个模块没有开关，始终编译。
+
+可调常量放在模块头里，用 `AGENT_` 前缀，例如 `AGENT_TTS_IO_BUF_SZ`、`AGENT_FILE_OP_TIMEOUT_MS`。.c 里不再写 `#define`，改缓冲大小或超时只动头文件。能在 menuconfig 里改的参数不放这里，它们保留 `PKG_AGENT_` 前缀，由 `rtconfig.h` 提供。
+
+日志按模块分路，每个 .c 的 `LOG_TAG` 写成 `Agent.utils.<模块名>`，ulog 输出能直接定位到模块，例如 `I/Agent.utils.tts: [tts] /tts.wav saved, 111404 bytes`。`tool_json.c` 不打日志，没有 `LOG_TAG`。
+
 - 文本注入：`agent_inject_text()` 把一段文本作为 user 消息投递给 agent。agent 未运行时返回错误。
 - 多模态开启后：
   - 图片、视频先上传，再生成 `image_url` 或 `video_url`。
@@ -187,7 +200,7 @@ WebNet 通道提供三个 CGI：
 
 ### 3.9 本地语音转写
 
-文件：`src/utils.c`
+文件：`src/utils/stt.c`
 
 - 仅在 `PKG_AGENT_STT_ENABLE` 时编译。
 - `to_content()` 处理 `TYPE_AUDIO` 时调用 `agent_stt_transcribe()`。
@@ -196,7 +209,22 @@ WebNet 通道提供三个 CGI：
 - 解析 `{"code":0,"data":{"text":"..."}}`。
 - 转写后删除本地录音，无论成功与否；成功时生成文本项，失败时生成一条提示文本，不上传音频。原因是纯文本模型收到 `audio_url` 会直接返回 422。
 
-### 3.10 AgentAudio
+### 3.10 文本转语音
+
+文件：`src/utils/tts.c`
+
+- 仅在 `PKG_AGENT_TTS_ENABLE` 时编译。
+- `agent_tts_synth()` 向 `PKG_AGENT_TTS_URL` POST 一个 JSON：`text`、`sample_rate`（16000）、`channels`（2）。
+- 响应体是 `audio/wav` 二进制，按 Content-Length 分块 `webclient_read()` 落盘，不整段进内存。
+- 连上之后把收发超时放宽到 5 min。服务端没预热时，首帧要先建管线再做一次即时编译，实测冷启动 203 s；模型常驻后同样一句只要 2～3 s。
+- 请求 `channels=2` 是因为 AC97 一帧固定携带左右两个 PCM 槽。喂单声道数据时，`wavplay` 会把相邻两个采样当成一帧，播放速度和音调都翻倍。
+- 落盘成功后调 `agent_driver_audio_play()` 播放，需要同时打开 `PKG_AGENT_DRIVER_AUDIO`。
+- MSH 命令 `msh_agent_tts`：默认合成并播放，`-f` 只合成不播放，`-o <path>` 改落盘路径，其余参数拼成待合成文本。
+- 打开 `PKG_AGENT_TTS_AUTO_PLAY` 后，`agent_emit_answer()` 每轮把回复文本交给播报线程：队列深度 2，线程 `tts_spk` 优先级 12、栈 8 K。合成要 3~5 s，放在主循环里会把下一轮消息一起堵住。
+- 回复超过 512 字节时按 UTF-8 字符边界截断。从字节中间截断会留下半个汉字，服务端解析 JSON 直接失败，整段播报就没了。
+- 播报走 `agent_put_text()` 之后的独立分支，兜底提示（请求失败、无回答、工具循环超限）不发声。
+
+### 3.11 AgentAudio
 
 文件：`src/driver/audio/AgentAudio.c`、`include/driver/audio/AgentAudio.h`
 
@@ -207,7 +235,7 @@ WebNet 通道提供三个 CGI：
 - 录音参数固定为 16000 Hz、双声道、16 位。
 - `agent_driver_audio_record_stop()` 停止录音。
 
-### 3.11 MQTT 工具
+### 3.12 MQTT 工具
 
 文件：`src/tools/tool_mqtt/`
 
@@ -360,6 +388,9 @@ sequenceDiagram
 | `PKG_AGENT_FILE_OP_THREAD_SIZE` | 文件操作线程栈，默认 4096 |
 | `PKG_AGENT_STT_ENABLE` / `PKG_AGENT_STT_DISABLE` | 语音转写开关，默认启用 |
 | `PKG_AGENT_STT_URL` | STT 接口地址 |
+| `PKG_AGENT_TTS_ENABLE` / `PKG_AGENT_TTS_DISABLE` | 语音合成开关，默认启用 |
+| `PKG_AGENT_TTS_URL` | TTS 接口地址 |
+| `PKG_AGENT_TTS_AUTO_PLAY` | 回复自动播报，依赖 `PKG_AGENT_DRIVER_AUDIO`，默认关闭 |
 | `PKG_AGENT_DRIVER_AUDIO` | 音频驱动开关，独立于多模态 |
 
 ### MQTT

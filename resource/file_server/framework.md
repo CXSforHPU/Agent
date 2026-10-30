@@ -1,6 +1,6 @@
 # 文件服务器（file_server）
 
-FastAPI 实现的嵌入式文件服务器：接收 RT-Thread webclient 的 multipart 流式上传，按 `file_id` 提供下载与元信息查询，并用本地 whisper 提供语音转写。
+FastAPI 实现的嵌入式文件服务器：接收 RT-Thread webclient 的 multipart 流式上传，按 `file_id` 提供下载与元信息查询，用本地 whisper 提供语音转写，另外接了可选的 GPT-SoVITS 语音合成。
 
 ## 启动
 
@@ -20,6 +20,29 @@ uv run main.py
 | GET | `/files` | 全部文件列表 |
 | DELETE | `/files/{file_id}` | 删除文件 |
 | POST | `/stt` | multipart 上传音频，form 字段 `name=file`；本地 whisper 转写，返回 `{"code":0,"data":{"text":"..."}}` |
+| GET | `/tts/speakers` | 列出已装配的音色与可用语种码 |
+| POST | `/tts` | 文本转语音，请求体是 JSON，响应体是 `audio/wav` 字节 |
+
+## 语音合成（TTS）
+
+`/tts` 是可选功能，依赖 `third_party/gpt-sovits-infer/` 里的推理代码和 `da_fei_yv` 的权重。没装配时这两个接口返回 503，其余接口照常工作。
+
+装配要三步，权重从 ModelScope 拉：
+
+```bash
+bash setup_env.sh --tts
+python fetch_tts.py dicts voice assets
+python fetch_tts.py check
+```
+
+运行时板端发一个 JSON：`text`、`sample_rate`（16000）、`channels`（2）。服务端在同一进程内调 GPT-SoVITS 的 `TTS_Config` 与 `TTS`，把 int16 PCM 归一化后按 `sample_rate` 重采样，写成 WAV 返回。详细说明见 [README.md 的第 11 节](./README.md)。
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `TTS_AUTOLOAD` | `0` | 填 `1` 时启动即在后台线程预热模型 |
+| `TTS_SPEAKER` | 音色名排序首个 | 默认音色 |
+| `TTS_DEVICE` | 有 CUDA 用 `cuda`，否则 `cpu` | 填 `cpu` 可在无显卡机器上跑 |
+| `TTS_IS_HALF` | `cuda` 时 `1`，否则 `0` | 半精度开关 |
 
 ## 重要：下载 URL 的拼装规则
 
@@ -27,7 +50,7 @@ uv run main.py
 - 浏览器直接访问的地址是 `{服务根地址}/download/{file_id}`，本地为 `http://127.0.0.1:8000/download/{file_id}`。
 - 内网穿透后服务根地址换成公网域名（如 `https://files.l2.bb1a.cn`），下载地址为 `{根地址}/download/{file_id}`。
 - 嵌入式侧把宏 `PKG_AGENT_DOWNLOAD_URL` 配到 `/download` 为止，例如 `http://127.0.0.1:8000/download`。
-  `utils.c::agent_multi_get_file` 和 `agent_upload_file` 会直接追加 `/{file_id}`，拼成
+  `file_op.c::agent_multi_get_file` 和 `agent_upload_file` 会直接追加 `/{file_id}`，拼成
   `{PKG_AGENT_DOWNLOAD_URL}/{file_id}`，不要再重复 `/download`。
 
 ## 多模态（LLM 抓取图片 URL）注意事项

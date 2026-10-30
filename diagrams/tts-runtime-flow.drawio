@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="drawio-skill" version="21.0.0" type="device">
+  <diagram name="TTS Runtime Flow" id="tts-runtime-flow">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1"
+                   connect="1" arrows="1" fold="1" page="1" pageScale="1"
+                   pageWidth="1200" pageHeight="1300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="r1" value="回复文本&#xa;LLM 回答或 msh 命令"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="120" y="80" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="r2" value="src/utils/tts.c&#xa;agent_tts_synth()"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="120" y="230" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="r3" value="file_server 的 /tts&#xa;FastAPI 接口"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="120" y="380" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="r4" value="TTS_Config + TTS&#xa;gpt-sovits-infer 推理"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="120" y="530" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="r5" value="WAV 字节&#xa;16 kHz、双声道、int16"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="120" y="680" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="r6" value="落盘 /tts.wav"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="120" y="830" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="r7" value="wavplayer 播放&#xa;AC97 一帧带左右两个 PCM 槽"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="120" y="980" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="r8" value="喇叭出声"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="120" y="1130" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="w1" value="da_fei_yv 权重&#xa;参考音频与音色注册表"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="680" y="530" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t1" value="冷启动：首次请求 203 s&#xa;建管线 + G2PW 与 numba 即时编译"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="680" y="680" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t2" value="热请求：2.6 s 出 4.20 s 音频&#xa;16 kHz、双声道、无削顶"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="680" y="830" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t3" value="板侧超时放宽到 5 min&#xa;首帧要等服务端把模型拉起来"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="680" y="980" width="380" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+                edge="1" parent="1" source="r1" target="r2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="POST {text, sample_rate:16000, channels:2}"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
+                edge="1" parent="1" source="r2" target="r3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="同一进程内调用，不另起服务"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
+                edge="1" parent="1" source="r3" target="r4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="Content-Type: audio/wav"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
+                edge="1" parent="1" source="r4" target="r5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+                edge="1" parent="1" source="r5" target="r6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+                edge="1" parent="1" source="r6" target="r7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+                edge="1" parent="1" source="r7" target="r8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;"
+                edge="1" parent="1" source="w1" target="r4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

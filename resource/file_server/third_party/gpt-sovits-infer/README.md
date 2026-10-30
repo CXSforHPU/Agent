@@ -12,7 +12,7 @@
 
 ## 怎么选出来的
 
-判据是运行时真实加载的文件，不是目录猜测。跑一次中文合成（v2 权重、大肥鱼音色），记录 `sys.modules` 里属于上游的 .py，共 97 个；再按目录规则放宽，补上其它语种的文本模块和各包的 `__init__.py`。这样落进来的是 158 个上游文件（119 个 .py，1.38 MB），加上上游 `LICENSE`、本说明、一份音色注册表和自家音色的 6 个文件，仓库里一共 167 个文件。
+判据是运行时真实加载的文件，不是目录猜测。跑一次中文合成（v2 权重、大肥鱼音色），记录 `sys.modules` 里属于上游的 .py，共 97 个；再按目录规则放宽，补上其它语种的文本模块和各包的 `__init__.py`。这样落进来的是 158 个上游文件（119 个 .py，1.38 MB），加上上游 `LICENSE`、本说明、一份音色注册表和自家音色的 6 个文件，仓库里一共 165 个文件。
 
 重抽或升级用上层的维护脚本：
 
@@ -45,11 +45,18 @@ python extract_infer.py --apply  # 复制进来
 | `GPT_SoVITS/pretrained_models/` | 4.6 GB | GPT-SoVITS-Pretrained（modelscope / hf / hf-mirror） |
 | `GPT_SoVITS/text/G2PWModel/` | 608 MB | 同上 |
 | `runtime/`（nltk_data、FFmpeg） | 231 MB | 同上与 BtbN 构建 |
+| 自家 `da_fei_yv` 的两个权重 | 277 MiB | ModelScope `Caoxiansong/da_fei_yv`（`voice` 步骤） |
 
 取完之后整棵树 5.8 GB，代码只占 1.4 MB。
 
 ## 入库的自家音色
 
-`refs/` 与 `tts_speakers/` 入库，是本工程自训的 `da_fei_yv` 音色：参考音频 0.3 MB、一份导出记录、一份提示词文本和一个三字段注册表。两个权重分别是 155 MB 与 135 MB，GitHub 收不下，放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `fetch_tts.py voice` 拉进 `GPT_weights_v2Pro/` 与 `SoVITS_weights_v2Pro/` 并校验 SHA256。训练数据是 CC BY-NC 4.0，权重是衍生作品，同样受非商业与署名约束，详见 `../../README.md` 的「第三方与许可」。`GPT_weights_v2/` 与 `SoVITS_weights_v2/` 留空、放第三方 v2 权重用，被 `.gitignore` 挡住。
+`refs/` 与 `tts_speakers/` 入库，是本工程自训的 `da_fei_yv` 音色：参考音频 0.3 MB、一份导出记录、一份提示词文本和一个三字段注册表。两个权重分别是 148 MiB 与 129 MiB，GitHub 收不下，放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `fetch_tts.py voice` 拉进 `GPT_weights_v2Pro/` 与 `SoVITS_weights_v2Pro/` 并校验 SHA256。训练数据是 CC BY-NC 4.0，权重是衍生作品，同样受非商业与署名约束，详见 `../../README.md` 的「第三方与许可」。`GPT_weights_v2/` 与 `SoVITS_weights_v2/` 留空、放第三方 v2 权重用，被 `.gitignore` 挡住。
 
 `GPT_SoVITS/configs/tts_infer.yaml` 不入库。上游 `TTS_Config` 每次建管线都会把解析后的权重绝对路径写回这个文件，文件不在就先生成一份默认的（`TTS_infer_pack/TTS.py:451` 的 `_load_configs`）。跟踪进来只会让工作区一直是脏的。
+
+## 许可与署名
+
+训练数据 YinZilu/da-fei-yu-girl-voice-zh 采用 CC BY-NC 4.0，因此本模型权重同样仅限非商业用途，使用时须署名： 「尹紫鹭幻想社（Bilibili）」。
+GPT-SoVITS 代码与预训练权重遵循其原始 MIT 许可。
+请勿将本模型用于冒充他人、伪造身份、诈骗或其他违法违规用途；由此产生的后果由使用者自行承担。

@@ -9,7 +9,7 @@
 3. [Context：上下文管理器](#3-context上下文管理器)
 4. [Tool：工具系统](#4-tool工具系统)
 5. [Channels：交互通道](#5-channels交互通道)
-6. [Utils：通用工具、多模态与 STT](#6-utils通用工具多模态与-stt)
+6. [Utils：通用工具、多模态与语音](#6-utils通用工具多模态与语音)
 7. [AgentAudio：音频驱动](#7-agentaudio音频驱动)
 8. [AgentConfig：运行时配置](#8-agentconfig运行时配置)
 9. [Prompt：系统提示词](#9-prompt系统提示词)
@@ -416,9 +416,9 @@ SSE 事件依次为 `delta`、`final`、`done`。输出等待超时 30 s，失�
 
 包内只有接口，`agent_lvgl_ops` 由应用实现。本仓库示例在 `applications/lvgl/demo/lv_home_agent.c`：用 `message_hub_get_timeout()` 轮询输出，通过 MSH 命令启动 agent。
 
-## 6. Utils：通用工具、多模态与 STT
+## 6. Utils：通用工具、多模态与语音
 
-头文件：`include/utils.h` 实现：`src/utils.c`
+头文件：`include/utils.h`，它只转发到 `include/utils/utils_internal.h`，由后者按启用的宏导入模块头。声明在 `include/utils/`、实现在 `src/utils/`，两边同名：`message`、`format`、`tool_json`、`file_op`、`stt`、`tts`。
 
 ### 6.1 文本与 JSON
 
@@ -451,7 +451,7 @@ SSE 事件依次为 `delta`、`final`、`done`。输出等待超时 30 s，失�
 
 ### 6.3 本地语音转写
 
-仅在 `PKG_AGENT_STT_ENABLE` 时编译。内部函数 `agent_stt_transcribe(const char *path)` 在 `to_content()` 处理音频时调用，没有公开头文件声明。
+仅在 `PKG_AGENT_STT_ENABLE` 时编译。`agent_stt_transcribe(const char *path)` 定义在 `src/utils/stt.c`，声明在 `include/utils/stt.h`，由 `to_content()` 处理音频时调用。
 
 - 向 `PKG_AGENT_STT_URL` 发送 multipart POST。
 - 连接建立后把收发超时放宽到 120 s，首次加载 whisper 模型可能耗时较久。
@@ -461,7 +461,26 @@ SSE 事件依次为 `delta`、`final`、`done`。输出等待超时 30 s，失�
 
 文件服务器端的 `/stt` 接口见 [resource/file_server/README.md](../resource/file_server/README.md)。
 
-### 6.4 多模态文件操作
+### 6.4 文本转语音
+
+仅在 `PKG_AGENT_TTS_ENABLE` 时编译。`agent_tts_synth(const char *text, const char *save_path, rt_off_t *out_len)` 是 `src/utils/tts.c` 里的静态函数，只在 `msh_agent_tts` 和播报线程里调用，不进头文件。
+
+- 向 `PKG_AGENT_TTS_URL` 发送 JSON POST，字段为 `text`、`sample_rate`（16000）、`channels`（2）。
+- 请求立体声是板上 AC97 帧格式的要求：一帧固定带左右两个 PCM 槽，单声道数据会被当成两倍速播放。
+- 连接建立后把收发超时放宽到 5 min。服务端没预热时首帧要建管线并做一次即时编译，实测冷启动 203 s，模型常驻后每句 2～3 s。
+- 响应体是 `audio/wav` 二进制，按 Content-Length 分块写入文件，不整段读进内存。
+- 成功返回 `RT_EOK`，失败返回负值并打印 HTTP 状态码。
+
+打开 `PKG_AGENT_TTS_AUTO_PLAY`（同时需要 `PKG_AGENT_DRIVER_AUDIO`）后，`include/utils/tts.h` 里多出两个函数，由 `AgentLoop.c` 调用：
+
+```c
+void agent_tts_speak_init(void);        /* init_agent() 里创建队列和线程 */
+void agent_tts_speak(const char *text); /* 把回复文本入队，不等合成 */
+```
+
+文件服务器端的 `/tts` 接口见 [resource/file_server/README.md](../resource/file_server/README.md)。
+
+### 6.5 多模态文件操作
 
 启用 `PKG_AGENT_MULTIMODAL_ENABLE` 后可用：
 
@@ -567,13 +586,14 @@ typedef struct agent_runtime_config
 | `show_llm_config` | WebNet 通道 | 打印 API Key 是否设置、模型与地址 |
 | `msh_agent_upload_download up <file_path>` | utils | 上传文件 |
 | `msh_agent_upload_download down <file_id> <save_path>` | utils | 按文件 ID 下载 |
+| `msh_agent_tts [-f] [-o <path>] <text>` | utils | 合成语音落盘并播放 |
 | `mqtt_tool connect\|disconnect\|start\|stop\|status\|list\|sub\|unsub\|pub\|recv\|history\|rule\|rules\|sim\|flush` | MQTT 工具 | MQTT 调试命令 |
 
 `msh_agent_upload_download` 支持 `up` / `upload` 与 `down` / `download` 两组写法，也接受 `-h`、`--help`、`help`。
 
+`msh_agent_tts` 需要 `PKG_AGENT_TTS_ENABLE`。`-f` 只合成不播放，`-o` 改落盘路径（默认 `/tts.wav`），其余参数用空格拼成待合成文本。播放依赖 `PKG_AGENT_DRIVER_AUDIO`，没打开时只落盘并给出提示。
+
 ## 11. 已知差异
 
-- `include/utils.h` 声明的是 `rt_err_t down_load(const char *path, const char *file_id)`，`src/utils.c` 实际定义的是 `agent_down_load(...)`。按声明调用会出现链接错误，当前应使用 `agent_down_load()`；也可以直接用 MSH 命令下载。
-- `get_agent_file_op_mq_input()` 与 `get_agent_file_op_mq_output()` 已在实现中导出，但 `utils.h` 没有声明。需要调用时，先补声明或改用 MSH 命令。
 - LVGL 通道的 ops 实现不在包内，由应用工程提供。只启用宏而不实现 `agent_lvgl_ops`，链接会失败。
 - `cleanup_agent_entry` 不停止 MQTT 客户端。需要断开时先执行 `mqtt_tool stop` 或调用 `mqtt_tool_stop()`。

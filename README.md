@@ -42,7 +42,7 @@
 
 ### 使用多模态和语音
 
-多模态默认关闭。打开 `Multimodal feature switch` 后，需要填写文件服务器的上传地址和下载地址；启用 STT 时还要填写 STT 地址。文件服务器代码与部署方法见 [resource/file_server/README.md](./resource/file_server/README.md)。
+多模态默认关闭。打开 `Multimodal feature switch` 后，需要填写文件服务器的上传地址和下载地址；启用 STT 时还要填写 STT 地址；启用 TTS 时要填 TTS 地址。文件服务器代码与部署方法见 [resource/file_server/README.md](./resource/file_server/README.md)。
 
 上传和下载也可以直接用 MSH 命令：
 
@@ -50,6 +50,18 @@
 msh_agent_upload_download up <file_path>
 msh_agent_upload_download down <file_id> <save_path>
 ```
+
+文本转语音用 `msh_agent_tts`，默认把合成结果写到 `/tts.wav` 再播放：
+
+```text
+msh_agent_tts 你好，世界        # 合成并播放
+msh_agent_tts -f hello world    # 只合成，不播放
+msh_agent_tts -o /a.wav 今天天气不错
+```
+
+播放需要板上先注册音频设备。合成走的是同步等待，服务端没预热时首帧要等服务端把模型拉起来，实测冷启动 203 s，模型常驻后每句 2～3 s。服务端要先装配好推理链与音色权重，步骤见 [resource/file_server/README.md](resource/file_server/README.md) 第 11 节。
+
+想让每轮回复自动播报，在 `Audio tts Server Settings` 里打开 `Auto play the answer by voice`（`PKG_AGENT_TTS_AUTO_PLAY`）。它依赖 `PKG_AGENT_DRIVER_AUDIO`，默认关闭。回复文本由后台线程合成并播放，主循环不等待；超过 512 字节的回复按字符边界截断，兜底提示不发声。
 
 音频驱动与多模态开关相互独立。只使用录音、播放时，打开 `Enable Agent Driver Audio` 即可，但 BSP 需要先启用音频设备。
 
@@ -70,6 +82,8 @@ draw.io 源文件：[architecture-overview.drawio](./diagrams/architecture-overv
 
 详细分层、数据流与内存约定见 [框架文档](./docs/framework.md)。
 
+语音合成的部署流程与运行时链路各有一张图，见 [resource/file_server/README.md](resource/file_server/README.md) 的「全新 clone 复刻」与「运行时链路」两节。
+
 ### 组件
 
 | 组件 | 文件 | 职责 |
@@ -81,7 +95,7 @@ draw.io 源文件：[architecture-overview.drawio](./diagrams/architecture-overv
 | Tool | `src/tool_base.c`、`src/tool_func.c` | 工具注册、查找、执行与清理 |
 | Channels | `src/channels/` | CLI、WebNet、Debug 通道实现 |
 | AgentConfig | `config/AgentConfig.c` | 编译期默认值与运行时配置 |
-| Utils | `src/utils.c` | 多模态转换、文件上传下载、STT、文本注入 |
+| Utils | `src/utils/` | 多模态转换、文件上传下载、STT 与 TTS、文本注入 |
 | AgentAudio | `src/driver/audio/AgentAudio.c` | 播放与录音命令封装 |
 | MQTT | `src/tools/tool_mqtt/` | MQTT 连接、订阅、过滤、规则与历史缓存 |
 
@@ -157,6 +171,7 @@ draw.io 源文件：[architecture-overview.drawio](./diagrams/architecture-overv
 | CLI 看不到兜底提示 | 兜底文本只投递输出邮箱时，CLI 不显示 | 兜底文本由 `agent_notify()` 同时走流式打印；仍看不到就检查通道是否实现了 `on_context` |
 | 未启动 MQTT 时查询报 `mqtt state busy` | 状态锁只在客户端启动时创建，未启动就取不到 | 锁为幂等懒创建，未启动也能读订阅表和历史 |
 | STT 转写失败 | 地址错误、服务未启动、模型未下载 | 检查 `PKG_AGENT_STT_URL`，确认文件服务器 `/stt` 可用 |
+| TTS 合成返回 503 | 服务端没装配推理链，音色权重也没拉下来 | 在文件服务器目录跑 `python fetch_tts.py dicts voice assets`，再用 `python fetch_tts.py check` 核对 |
 
 ## 依赖
 
@@ -172,3 +187,5 @@ draw.io 源文件：[architecture-overview.drawio](./diagrams/architecture-overv
 ## 开源协议
 
 本项目基于 MIT 协议开放。
+
+`resource/file_server/third_party/gpt-sovits-infer/` 是上游 GPT-SoVITS 的推理子集，按 MIT 再分发，出处见该目录的 README。自家音色 `da_fei_yv` 的权重发布在 ModelScope `Caoxiansong/da_fei_yv`，训练数据是 CC BY-NC 4.0，权重是衍生作品，同样仅限非商业用途，使用时须署名「尹紫鹭幻想社（Bilibili）」。
