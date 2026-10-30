@@ -171,7 +171,7 @@ draw.io 源文件：[architecture-overview.drawio](./diagrams/architecture-overv
 | CLI 看不到兜底提示 | 兜底文本只投递输出邮箱时，CLI 不显示 | 兜底文本由 `agent_notify()` 同时走流式打印；仍看不到就检查通道是否实现了 `on_context` |
 | 未启动 MQTT 时查询报 `mqtt state busy` | 状态锁只在客户端启动时创建，未启动就取不到 | 锁为幂等懒创建，未启动也能读订阅表和历史 |
 | STT 转写失败 | 地址错误、服务未启动、模型未下载 | 检查 `PKG_AGENT_STT_URL`，确认文件服务器 `/stt` 可用 |
-| TTS 合成返回 503 | 服务端没装配推理链，音色权重也没拉下来 | 在文件服务器目录跑 `python fetch_tts.py dicts voice assets`，再用 `python fetch_tts.py check` 核对 |
+| TTS 合成返回 503 | 服务端没装配推理链，音色权重也没拉下来 | 在文件服务器目录跑 `bash deploy.sh --tts`（Windows 用 `deploy.bat --tts`），再用 `python fetch_tts.py check` 核对 |
 
 ## 依赖
 

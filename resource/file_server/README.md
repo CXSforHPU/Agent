@@ -257,7 +257,7 @@ menuconfig 中的填写位置：
 | `/stt` 返回 500 | 查看服务端日志，确认 whisper 模型已下载、音频文件可读 |
 | 首次语音识别很慢 | 首次请求会加载模型，等待时间取决于模型大小与磁盘速度 |
 | `/stt` 请求超时 | Agent 侧连接后等待 120 s；模型过大或机器太慢时，换 `tiny` 模型 |
-| `/tts` 返回 503 | 没装 GPT-SoVITS 推理链，或权重没落到 `GPT_weights_v2Pro/` | 跑 `python fetch_tts.py dicts voice assets`，再用 `python fetch_tts.py check` 核对 |
+| `/tts` 返回 503 | 没装 GPT-SoVITS 推理链，或权重没落到 `GPT_weights_v2Pro/` | 跑 `bash deploy.sh --tts` / `deploy.bat --tts`，再用 `python fetch_tts.py check` 核对 |
 | 第一次合成等了两三分钟 | 服务端没预热，首次请求要建管线并即时编译 | 设 `TTS_AUTOLOAD=1`，服务启动时就在后台把模型拉起来 |
 
 ## 11. 可选：GPT-SoVITS 语音合成
@@ -274,7 +274,7 @@ bash deploy.sh --tts             # Linux/macOS：装配 + 拉取 + 自检 + 启�
 deploy.bat --tts                 :: Windows：同样的流程
 ```
 
-两个脚本的参数一致：
+两个脚本的参数对得上，只有一处默认不同：
 
 | 参数 | 作用 |
 |---|---|
@@ -285,9 +285,10 @@ deploy.bat --tts                 :: Windows：同样的流程
 | `--port N`、`--host ADDR` | 换监听地址，默认 `0.0.0.0:8000` |
 | `--autoload` | 启动时在后台预热 TTS 模型 |
 | `--cpu`、`--cu126`、`--cu130` | 指定 torch 后端，默认按显卡探测 |
-| `--mirror` | GitHub 下载走 gh-proxy，`deploy.bat` 默认开 |
+| `--mirror` | GitHub 下载走 gh-proxy，`deploy.bat` 默认开，`deploy.sh` 默认关 |
+| `--no-mirror` | 只有 `deploy.bat` 有，关掉代理直连 github.com |
 
-脚本先跑 `uv sync`，这一步会剪掉锁文件里没有的包，其中 `eunjeon` 是韩语那条路要用的，它又依赖 `setuptools<81` 才有的 `pkg_resources`，所以同步之后查一次，缺了就把这两个补回去。
+脚本先跑 `uv sync`，这一步会剪掉锁文件里没有的包，其中 `eunjeon` 是韩语那条路要用的，它又依赖 `setuptools<81` 才有的 `pkg_resources`，所以拉完资产查一次元数据，缺了就把这两个补回去。
 
 `deploy.bat` 要用 CRLF 行尾保存。cmd 找标签时按 CRLF 断行，文件一大，LF 行尾会让 `goto` 报“系统找不到指定的批处理文件”。本仓库的 `core.autocrlf` 是 true，检出时会是 CRLF，手工改完记得确认。
 
@@ -470,6 +471,28 @@ curl -s -X POST -H "Content-Type: application/json" --data @req.json localhost:8
 | 第二次 | 268 844 | 2.62 s | 同上 |
 
 首次那 203 s 里包含建管线、G2PW 与 numba 的即时编译，模型常驻后每句 2～3 s。两次返回的字节数相同，长度稳定。整个 clone 加 `.venv` 占 12 GB，其中 5.2 GB 是 Python 环境，5.8 GB 是推理资产。
+
+### 重新部署与启动
+
+已经装配好的环境再跑一遍脚本是幂等的，不重下资产。2026-10-30 的实测记录：
+
+| 命令 | 结果 |
+|---|---|
+| `bash deploy.sh --tts --check` | `all third-party pieces present` |
+| `deploy.bat --tts --check` | 同上，输出逐条一致 |
+| `deploy.bat --tts --port 8001` | 起服务，`/tts/speakers` 返回 `da_fei_yv` |
+| `deploy.sh --start-only --port 8002` | 5 s 内起来，`/tts/speakers` 同样返回 `da_fei_yv` |
+
+`uv sync` 每次都会把 `eunjeon` 与 `setuptools` 剪回锁文件里的版本，`setuptools` 从 80.10.2 退回 84.0.0。脚本在拉完资产后查一次分发元数据，缺了就补回去，所以每次跑完环境都是对的。
+
+合成一句「今天天气不错，我们出去走走吧。」，请求体 `{"language":"all_zh","sample_rate":16000,"channels":2}`：
+
+| 请求 | 字节 | 耗时 | 产物 |
+|---|---|---|---|
+| 首次 | 258 604 | 81.1 s | 2 声道、16 kHz、4.04 s、峰值 29 660 |
+| 第二次 | 240 684 | 1.91 s | 2 声道、16 kHz、3.76 s、峰值 29 589 |
+
+首次那 81 s 是服务进程里现建管线，加上 G2PW 与 numba 的即时编译。管线建好后每句 2 s 上下。两次字节数不同，因为 `/tts` 这条链路没有传 seed，采样每次会抖，时长跟着变。
 
 ### 运行时链路
 

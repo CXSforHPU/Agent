@@ -3,7 +3,7 @@
   <diagram name="TTS Deploy Flow" id="tts-deploy-flow">
     <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1"
                    connect="1" arrows="1" fold="1" page="1" pageScale="1"
-                   pageWidth="1200" pageHeight="1420" math="0" shadow="0">
+                   pageWidth="1200" pageHeight="1580" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
@@ -51,23 +51,29 @@
           <mxGeometry x="120" y="980" width="300" height="60" as="geometry" />
         </mxCell>
 
-        <mxCell id="n7" value="启动 main.py&#xa;监听 8000"
+        <mxCell id="n7" value="补韩语依赖&#xa;eunjeon + setuptools&lt;81"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
                 vertex="1" parent="1">
           <mxGeometry x="120" y="1130" width="300" height="60" as="geometry" />
         </mxCell>
 
-        <mxCell id="n8" value="POST /tts&#xa;返回 audio/wav"
-                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+        <mxCell id="n8" value="启动 main.py&#xa;监听 8000"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
                 vertex="1" parent="1">
           <mxGeometry x="120" y="1280" width="300" height="60" as="geometry" />
         </mxCell>
 
+        <mxCell id="n9" value="POST /tts&#xa;返回 audio/wav"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="120" y="1430" width="300" height="60" as="geometry" />
+        </mxCell>
+
         <!-- 脚本参数 -->
-        <mxCell id="t1" value="两个脚本参数一致&#xa;--tts 装依赖组并拉资产&#xa;--check 只部署不起服务&#xa;--start-only 只起服务&#xa;--print 只打印 uv 命令"
+        <mxCell id="t1" value="两个脚本参数对得上&#xa;--tts 装依赖组并拉资产&#xa;--check 只部署不起服务&#xa;--start-only 只起服务&#xa;--print 只打印 uv 命令&#xa;--port --host 换监听地址&#xa;--autoload 启动即预热模型&#xa;--mirror GitHub 走 gh-proxy"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
-          <mxGeometry x="640" y="230" width="420" height="150" as="geometry" />
+          <mxGeometry x="640" y="230" width="420" height="200" as="geometry" />
         </mxCell>
 
         <!-- 下载来源 -->
@@ -89,16 +95,23 @@
           <mxGeometry x="640" y="830" width="420" height="60" as="geometry" />
         </mxCell>
 
+        <!-- 边界与说明 -->
         <mxCell id="b1" value="入库：推理子集 164 个文件&#xa;参考音频、音色注册表、导出记录"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
           <mxGeometry x="640" y="980" width="420" height="60" as="geometry" />
         </mxCell>
 
-        <mxCell id="b2" value="不入库：词表、底模、权重、FFmpeg&#xa;由 fetch_tts.py 取，SHA256 校验"
+        <mxCell id="b3" value="uv sync 会剪掉锁文件里没有的包&#xa;同步之后查一次元数据，缺了就补"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
           <mxGeometry x="640" y="1130" width="420" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="b2" value="不入库：词表、底模、权重、FFmpeg&#xa;由 fetch_tts.py 取，SHA256 校验"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="640" y="1280" width="420" height="60" as="geometry" />
         </mxCell>
 
         <!-- 主流程边 -->
@@ -134,17 +147,21 @@
                 edge="1" parent="1" source="n7" target="n8">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
+        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
+                edge="1" parent="1" source="n8" target="n9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
 
         <!-- 来源边 -->
-        <mxCell id="e9" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;"
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;"
                 edge="1" parent="1" source="s1" target="n3">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;"
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;"
                 edge="1" parent="1" source="s2" target="n4">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;"
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;"
                 edge="1" parent="1" source="s3" target="n5">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
