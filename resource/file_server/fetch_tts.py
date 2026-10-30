@@ -52,6 +52,8 @@ VOICE_WEIGHTS = {
 }
 
 # Checked into upstream's git but too big for ours. Path -> sha256 of that commit.
+# 哈希按 raw.githubusercontent 给的 LF 内容算；文本文件如果被 Windows 的
+# autocrlf 转成 CRLF，哈希对不上，脚本会删了重下。
 DICT_BLOBS = {
     "GPT_SoVITS/Accel/vendor/cuda/bin/cudart64_12.dll":
         "c2c9a9c22a9bcba90e261825968836787b331038047a26770cffb7a583c28344",
@@ -60,15 +62,15 @@ DICT_BLOBS = {
     "GPT_SoVITS/text/g2pw/polyphonic.pickle":
         "e00b04584ccc1453b0b23a272d5392e6e5a380a1c8beb3ab00765e0fea3fa1fa",
     "GPT_SoVITS/text/g2pw/polyphonic-fix.rep":
-        "0d810a8734db881b44b310c1d31ff9646eb2ba71f9ddd155468c61ab335b7b57",
+        "bbfac0e43e5b1db56566e5eb8b147f7e9b57175e07ffe6303195ee6563682f6b",
     "GPT_SoVITS/text/cmudict-fast.rep":
-        "d6701402ea9249e4ae1e23ab8a4c216e847d49a30bd9bb206a33b3c7830f0a4a",
+        "53bfef0f27d7dd74d1ba74563d1e076d3e0672ce3596cb2d6c0d52ac9ad01f6d",
     "GPT_SoVITS/text/cmudict.rep":
-        "a89a031728feb600a5f2f2c566f66d7e01c7efb7640ff307b9e3c28b82c8d4a9",
+        "0e601d017d6e6f958443d41cd8922b4cd7598b3ba2056253a33f3e5a35f38494",
     "GPT_SoVITS/text/engdict_cache.pickle":
         "9bff9393f4b192d873a11335efc8f124771087b6dc847d34fd240c2846889d2b",
     "GPT_SoVITS/text/ja_userdic/userdict.csv":
-        "cf3ae9063ee6b171f5553900fcaa813238a8d20bb0917a6a3a0f8d0c35c27962",
+        "d857e443ee48d9641096816a98996669602895411e4330d7d91d1dbe1103389f",
 }
 
 ZIP_SOURCES = {
