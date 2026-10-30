@@ -185,6 +185,9 @@ static void agent_emit_answer(ChatResponse_t resp, void (*on_context)(const char
     {
         /* 正文已通过 on_context 流式打印过，这里只投 mailbox 供其它通道消费 */
         agent_put_text(resp->context);
+#ifdef PKG_AGENT_TTS_AUTO_PLAY
+        agent_tts_speak(resp->context);
+#endif
     }
 }
 
@@ -236,6 +239,10 @@ static void init_agent(void)
 
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
     g_file_op_thread = agent_file_op_init();
+#endif
+
+#ifdef PKG_AGENT_TTS_AUTO_PLAY
+    agent_tts_speak_init();
 #endif
 
     if (g_channel_ops != RT_NULL && g_channel_ops->init != RT_NULL)

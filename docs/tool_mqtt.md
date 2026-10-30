@@ -496,7 +496,7 @@ payload: {"temp":25}
 | 位置 | 改动 |
 |---|---|
 | `include/AgentRuntime.h`（新增） | `agent_get_message_hub()` / `agent_is_running()` / `agent_is_busy()`：供工具层注入消息并做错峰 |
-| `include/utils.h` + `src/utils.c` | **公共注入入口 `agent_inject_text()`**：把一段文本作为用户消息交给 agent。原为 MQTT 模块私有的 `mqtt_inject_text()`，现提升为框架公共 API，任何工具/驱动都能复用（MQTT 路由线程仍然调用它，`tool_mqtt_route.c` 只保留本模块自己的注入计数 `s_inject_total` 与错峰时间戳 `s_last_inject_tick`） |
+| `include/utils.h` + `src/utils/message.c` | **公共注入入口 `agent_inject_text()`**：把一段文本作为用户消息交给 agent。原为 MQTT 模块私有的 `mqtt_inject_text()`，现提升为框架公共 API，任何工具/驱动都能复用（MQTT 路由线程仍然调用它，`tool_mqtt_route.c` 只保留本模块自己的注入计数 `s_inject_total` 与错峰时间戳 `s_last_inject_tick`） |
 | `src/AgentLoop.c` | 实现上述访问器；`cleanup_agent` 先摘除 hub 全局引用再销毁（避免注入方访问已释放对象）；输出 mailbox 满时释放消息（避免泄漏）；请求失败自动重试 3 次；工具循环防呆（重复调用跳过、上限 6、强制文本收尾） |
 | `include/tools/tools.h` | `#ifdef PKG_AGENT_TOOL_MQTT_ENABLE` 下包含 `tool_mqtt.h` |
 | `src/tool_func.c` | 注册 `mqtt_connect` / `mqtt_disconnect` / `mqtt_publish` / `mqtt_subscribe` / `mqtt_rule` / `mqtt_history` / `mqtt_receive` 七个工具 |
@@ -516,7 +516,7 @@ payload: {"temp":25}
 | `const char *mqtt_tool_conn_state(void)` | 连接状态字符串：`stopped` / `connecting` / `connected`，应用层可据此做界面指示 |
 | `rt_bool_t mqtt_tool_ensure_connected(char *out, rt_size_t out_size)` | 连接前置检查（发/订前调用）：未启动则自动启动、未连上则等待超时；返回 `RT_FALSE` 时 `out` 内是可直接回显的原因文本 |
 
-> 注入方向（把外部文本交给 agent 分析）不在 MQTT 工具里，而是框架公共 API：`agent_inject_text(const char *text)`（`include/utils.h`，实现 `src/utils.c`）。MQTT 接收线程投递订阅消息即调用它，其它工具/驱动可用同一入口。
+> 注入方向（把外部文本交给 agent 分析）不在 MQTT 工具里，而是框架公共 API：`agent_inject_text(const char *text)`（`include/utils.h`，实现 `src/utils/message.c`）。MQTT 接收线程投递订阅消息即调用它，其它工具/驱动可用同一入口。
 
 ```c
 /* 设备上线后动态关注它自己的话题，离线时移除 */

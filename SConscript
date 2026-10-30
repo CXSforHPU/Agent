@@ -28,6 +28,8 @@ INC_TOOLS = os.path.join(INC_ROOT, "tools")
 SRC_TOOL_MQTT = os.path.join(SRC_TOOLS, "tool_mqtt")
 INC_TOOL_MQTT = os.path.join(INC_TOOLS, "tool_mqtt")
 
+SRC_UTILS = os.path.join(SRC_ROOT, "utils")
+
 SRC_DRIVER_AUDIO = os.path.join(SRC_ROOT, "driver", "audio")
 INC_DRIVER_AUDIO = os.path.join(INC_ROOT, "driver", "audio")
 
@@ -45,6 +47,13 @@ for filename in os.listdir(SRC_ROOT):
         src.append(file_fullpath)
 # 添加核心头文件目录
 CPPPATH.append(INC_ROOT)
+
+# ---------------------- Utils 工具模块 ----------------------
+# 按模块拆成多个 c 文件，各自的 Kconfig 开关写在文件里，这里统一全收
+for filename in os.listdir(SRC_UTILS):
+    file_fullpath = os.path.join(SRC_UTILS, filename)
+    if filename.endswith(".c") and os.path.isfile(file_fullpath):
+        src.append(file_fullpath)
 
 # ---------------------- Channel 通信通道模块 ----------------------
 # CLI控制台通道
