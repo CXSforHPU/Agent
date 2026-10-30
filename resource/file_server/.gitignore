@@ -34,3 +34,8 @@ file_db.sqlite
 # 上游 TTS_Config 每次建管线都会把解析后的权重绝对路径写回这个 yaml
 # （TTS_infer_pack/TTS.py:451 _load_configs，缺文件就自己生成），入库只会让工作区常脏
 third_party/gpt-sovits-infer/GPT_SoVITS/configs/tts_infer.yaml
+
+# G2PW 多音字词典的缓存标记（text/g2pw/g2pw.py:143）。它记的是 polyphonic.rep 与
+# polyphonic-fix.rep 的 MD5：前者随仓库行尾走，后者由 fetch_tts.py 按 SHA256 钉住
+# 拉取。两边一变这个文件就被改写，入库只会让工作区常脏；缺了它运行时会自己重建
+third_party/gpt-sovits-infer/GPT_SoVITS/text/g2pw/polyphonic.md5

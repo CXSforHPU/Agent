@@ -540,6 +540,6 @@ if __name__ == "__main__":
     # 限制最大请求50MB，根据你的场景修改
     uvicorn.run(
         app,
-        host="0.0.0.0",
-        port=8000,
+        host=os.getenv("HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "8000")),
     )

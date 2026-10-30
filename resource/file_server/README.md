@@ -81,6 +81,8 @@ uv run --no-sync main.py
 
 服务默认监听 `0.0.0.0:8000`。本机可以打开 `http://127.0.0.1:8000/docs` 查看接口文档。
 
+也可以用 `bash deploy.sh` 或 `deploy.bat` 起，它会先装配环境再启动，参数见第 11 节。
+
 ![本地接口文档](../../pictures/本地网页访问.png)
 
 服务使用两个本地文件：
@@ -268,6 +270,30 @@ python fetch_tts.py dicts voice assets       # 都要联网，assets 要几 GB �
 python fetch_tts.py check                    # 逐项自检，缺什么一眼看到
 ```
 
+不想一步步敲，用两个脚本串起来：
+
+```bash
+bash deploy.sh --tts             # Linux/macOS：装配 + 拉取 + 自检 + 启动
+```
+
+```bat
+deploy.bat --tts                 :: Windows：同样的流程
+```
+
+两个脚本的参数一致：
+
+| 参数 | 作用 |
+|---|---|
+| `--tts` | 装 TTS 依赖组，并拉词表、权重与底模 |
+| `--check` | 只部署不起服务，装完自检完就退出 |
+| `--start-only` | 跳过装配与拉取，直接起服务 |
+| `--port N`、`--host ADDR` | 换监听地址，默认 `0.0.0.0:8000` |
+| `--autoload` | 启动时在后台预热 TTS 模型 |
+| `--cpu`、`--cu126`、`--cu130` | 指定 torch 后端，默认按显卡探测 |
+| `--mirror` | GitHub 下载走 gh-proxy，`deploy.bat` 默认开 |
+
+`deploy.bat` 把环境装配交给 `setup_env.ps1`（PowerShell），批处理本身只做编排。两个脚本都会先跑 `uv sync`，这一步会剪掉锁文件里没有的包，其中 `eunjeon` 是韩语那条路要用的，它又依赖 `setuptools<81` 才有的 `pkg_resources`，所以脚本在同步之后查一次，缺了就把这两个补回去。
+
 ![TTS 部署流程](../../diagrams/tts-deploy-flow.png)
 
 draw.io 源文件：[tts-deploy-flow.drawio](../../diagrams/tts-deploy-flow.drawio)
@@ -282,7 +308,7 @@ draw.io 源文件：[tts-deploy-flow.drawio](../../diagrams/tts-deploy-flow.draw
 
 取完之后 `third_party/gpt-sovits-infer/` 是 5.8 GB：`GPT_SoVITS/pretrained_models/` 4.6 GB、`GPT_SoVITS/text/G2PWModel/` 608 MB、`runtime/` 231 MB、8 个词表 35.3 MB、自家 v2Pro 权重 277 MiB（148 MiB 与 129 MiB）、参考音频 0.3 MB。入库的代码和配置只有 1.4 MB。
 
-推理子集怎么选出来的，记在 `third_party/gpt-sovits-infer/README.md`：判据是一次真实中文合成在 `sys.modules` 里留下的 97 个上游 .py，再按目录规则放宽到其它语种的文本模块和各个 `__init__.py`；训练、导出、WebUI、ASR、人声分离全部丢掉。落库 165 个文件，其中 158 个是上游推理文件，另加上游 MIT `LICENSE`、本说明、一份音色注册表和自家音色的 6 个文件。升级或重抽用同目录的 `extract_infer.py`，取舍清单是里面的 `DROP_PREFIX`。
+推理子集怎么选出来的，记在 `third_party/gpt-sovits-infer/README.md`：判据是一次真实中文合成在 `sys.modules` 里留下的 97 个上游 .py，再按目录规则放宽到其它语种的文本模块和各个 `__init__.py`；训练、导出、WebUI、ASR、人声分离全部丢掉。落库 164 个文件，其中 157 个是上游推理文件，另加上游 MIT `LICENSE`、本说明、一份音色注册表和自家音色的 6 个文件。升级或重抽用同目录的 `extract_infer.py`，取舍清单是里面的 `DROP_PREFIX`。
 
 装配自检，不经过 HTTP。在 `file_server` 目录里用带 tts 组的 venv 起 Python，把下面这段从标准输入喂进去（`python -` 与交互式解释器都把当前目录放进 `sys.path`，写成 .py 文件用绝对路径跑则 `import main` 会失败）：
 
@@ -450,18 +476,18 @@ draw.io 源文件：[tts-runtime-flow.drawio](../../diagrams/tts-runtime-flow.dr
 
 ## 12. 第三方与许可
 
-`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及上游每次建管线都会重写的 `GPT_SoVITS/configs/tts_infer.yaml`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`setup_env.ps1`、`setup_env.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 165 个文件。两个权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
+`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及运行时改写的两个文件：上游每次建管线都会把权重绝对路径写回 `GPT_SoVITS/configs/tts_infer.yaml`，G2PW 词典重建后会改写 `GPT_SoVITS/text/g2pw/polyphonic.md5`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`setup_env.ps1`、`setup_env.sh`、`deploy.bat`、`deploy.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 164 个文件。两个权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
 
 | 组件 | 来源 | 许可 | 入库 |
 |---|---|---|---|
-| GPT-SoVITS 推理代码 | `RVC-Boss/GPT-SoVITS` @ `b4570b8`，只抽合成链 | MIT，随上游 `LICENSE` 一起进 | 是，158 个文件 |
+| GPT-SoVITS 推理代码 | `RVC-Boss/GPT-SoVITS` @ `b4570b8`，只抽合成链 | MIT，随上游 `LICENSE` 一起进 | 是，157 个文件 |
 | 自家音色 `da_fei_yv` 的权重与参考音频 | 本工程自训，训练数据 `YinZilu/da-fei-yu-girl-voice-zh`；权重发布在 ModelScope `Caoxiansong/da_fei_yv` | 训练数据是 **CC BY-NC 4.0**：仅限非商业，须署名「尹紫鹭幻想社（Bilibili）」，不得用于冒充真人。权重是衍生作品，同受此约束 | 权重否，`fetch_tts.py voice` 从 ModelScope 拉；参考音频 0.3 MB 入库 |
 | 上游 git 里的词表与 CUDA 运行库 | 同一 commit 的 `raw.githubusercontent.com` | 随上游仓库（MIT） | 否，`fetch_tts.py dicts` 取，8 个 35.3 MB，逐个校验 SHA256 |
 | chinese-hubert-base、chinese-roberta-wwm-ext-large、G2PWModel、nltk_data | 上游 `XXXXRT/GPT-SoVITS-Pretrained` 的 zip | 以各自来源页声明为准，本仓库不重新授权 | 否 |
 | `lid.176.bin` | fastText 官方 supervised models | CC BY-SA 3.0（fastText 文档页写明，不是常见的 NC 误传） | 否 |
 | FFmpeg 共享库 | BtbN `ffmpeg-master-latest-win64-gpl-shared` | GPL v3（该构建含 x264 等） | 否 |
 
-内容改动核对过：抽取只做取舍，158 个文件与上游 commit 比，没有一处真实内容差异（按 LF 归一后逐字节相同）。剩下的差别全是行尾。上游 clone 用 `core.autocrlf=true` checkout，工作树是 CRLF；本仓库同样开 autocrlf，`git add` 时折回 LF。实测入库后的 blob 哈希有 129 个与上游一致，另外 29 个（`Accel/` 下的引擎文件、`text/korean.py`、`text/cantonese.py`、`process_ckpt.py`、`sv.py`、`tools/audio_sr.py` 等）上游自己就是把 CRLF 提交进 git 的，入库后只差行尾，代码字符一致。
+内容改动核对过：抽取只做取舍，157 个文件与上游 commit 比，没有一处真实内容差异（按 LF 归一后逐字节相同）。剩下的差别全是行尾。上游 clone 用 `core.autocrlf=true` checkout，工作树是 CRLF；本仓库同样开 autocrlf，`git add` 时折回 LF。实测入库后的 blob 哈希有 128 个与上游一致，另外 29 个（`Accel/` 下的引擎文件、`text/korean.py`、`text/cantonese.py`、`process_ckpt.py`、`sv.py`、`tools/audio_sr.py` 等）上游自己就是把 CRLF 提交进 git 的，入库后只差行尾，代码字符一致。
 
 对外发布要守三条：
 

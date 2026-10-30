@@ -58,6 +58,12 @@
         </mxCell>
 
         <!-- 下载来源 -->
+        <mxCell id="d1" value="bash deploy.sh --tts&#xa;deploy.bat --tts&#xa;一条命令跑完下面几步"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="640" y="230" width="420" height="60" as="geometry" />
+        </mxCell>
+
         <mxCell id="s1" value="raw.githubusercontent.com&#xa;钉住的 UPSTREAM_COMMIT"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
@@ -76,7 +82,7 @@
           <mxGeometry x="640" y="680" width="420" height="60" as="geometry" />
         </mxCell>
 
-        <mxCell id="b1" value="入库：推理子集 165 个文件&#xa;参考音频、音色注册表、导出记录"
+        <mxCell id="b1" value="入库：推理子集 164 个文件&#xa;参考音频、音色注册表、导出记录"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
           <mxGeometry x="640" y="860" width="420" height="60" as="geometry" />
@@ -119,6 +125,10 @@
         </mxCell>
 
         <!-- 来源边 -->
+        <mxCell id="e11" value="按顺序执行" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#d79b00;fontSize=12;"
+                edge="1" parent="1" source="d1" target="n2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
         <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;"
                 edge="1" parent="1" source="s1" target="n3">
           <mxGeometry relative="1" as="geometry" />

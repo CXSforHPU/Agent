@@ -8,11 +8,11 @@
 - 提交：`b4570b876f5c086819ba84e3215472733c6a7b70`（2026-10-19，fix(streaming): 支持 API v2 语义流式文本切分 #2850）
 - 许可：MIT，`LICENSE` 原样保留，版权归 RVC-Boss
 - 文件内容未改动，只做取舍。改动过哪个文件就记在这里，目前没有。
-- 158 个文件与上游 commit 比，LF 归一后逐字节相同，差异只剩行尾：上游 clone 用 `core.autocrlf=true` checkout，落地是 CRLF；`git add` 时本仓库的 autocrlf 再折回 LF。折回去的结果是 129 个 blob 哈希与上游一致，剩下 29 个（`Accel/` 下的引擎文件、`text/korean.py`、`text/cantonese.py`、`process_ckpt.py`、`sv.py`、`tools/audio_sr.py` 等）上游自己就把 CRLF 提交进了 git，入库后只差行尾。
+- 157 个文件与上游 commit 比，LF 归一后逐字节相同，差异只剩行尾：上游 clone 用 `core.autocrlf=true` checkout，落地是 CRLF；`git add` 时本仓库的 autocrlf 再折回 LF。折回去的结果是 128 个 blob 哈希与上游一致，剩下 29 个（`Accel/` 下的引擎文件、`text/korean.py`、`text/cantonese.py`、`process_ckpt.py`、`sv.py`、`tools/audio_sr.py` 等）上游自己就把 CRLF 提交进了 git，入库后只差行尾。
 
 ## 怎么选出来的
 
-判据是运行时真实加载的文件，不是目录猜测。跑一次中文合成（v2 权重、大肥鱼音色），记录 `sys.modules` 里属于上游的 .py，共 97 个；再按目录规则放宽，补上其它语种的文本模块和各包的 `__init__.py`。这样落进来的是 158 个上游文件（119 个 .py，1.38 MB），加上上游 `LICENSE`、本说明、一份音色注册表和自家音色的 6 个文件，仓库里一共 165 个文件。
+判据是运行时真实加载的文件，不是目录猜测。跑一次中文合成（v2 权重、大肥鱼音色），记录 `sys.modules` 里属于上游的 .py，共 97 个；再按目录规则放宽，补上其它语种的文本模块和各包的 `__init__.py`。这样落进来的是 157 个上游文件（119 个 .py，1.38 MB），加上上游 `LICENSE`、本说明、一份音色注册表和自家音色的 6 个文件，仓库里一共 164 个文件。
 
 重抽或升级用上层的维护脚本：
 
@@ -54,6 +54,8 @@ python extract_infer.py --apply  # 复制进来
 `refs/` 与 `tts_speakers/` 入库，是本工程自训的 `da_fei_yv` 音色：参考音频 0.3 MB、一份导出记录、一份提示词文本和一个三字段注册表。两个权重分别是 148 MiB 与 129 MiB，GitHub 收不下，放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `fetch_tts.py voice` 拉进 `GPT_weights_v2Pro/` 与 `SoVITS_weights_v2Pro/` 并校验 SHA256。训练数据是 CC BY-NC 4.0，权重是衍生作品，同样受非商业与署名约束，详见 `../../README.md` 的「第三方与许可」。`GPT_weights_v2/` 与 `SoVITS_weights_v2/` 留空、放第三方 v2 权重用，被 `.gitignore` 挡住。
 
 `GPT_SoVITS/configs/tts_infer.yaml` 不入库。上游 `TTS_Config` 每次建管线都会把解析后的权重绝对路径写回这个文件，文件不在就先生成一份默认的（`TTS_infer_pack/TTS.py:451` 的 `_load_configs`）。跟踪进来只会让工作区一直是脏的。
+
+`GPT_SoVITS/text/g2pw/polyphonic.md5` 同样不入库。它记的是 `polyphonic.rep` 与 `polyphonic-fix.rep` 的 MD5，用来判断多音字词典要不要重建（`text/g2pw/g2pw.py:129` 算 MD5，`:143` 写回文件）。前者跟着仓库走，后者由 `fetch_tts.py dicts` 按 SHA256 钉住拉取，两边一变这个文件就被改写；它的值还跟平台行尾有关，入库只能存一份某一台机器算出来的结果。文件不在时运行时会重建词典并自己写一份。
 
 ## 许可与署名
 
