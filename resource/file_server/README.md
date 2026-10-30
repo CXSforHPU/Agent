@@ -258,7 +258,7 @@ menuconfig 中的填写位置：
 
 ## 11. 可选：GPT-SoVITS 语音合成
 
-`main.py` 里的 `/tts` 是可选功能。推理代码已经抽进仓库，放在 `third_party/gpt-sovits-infer/`，只留合成一条链。预训练模型、大词表、FFmpeg 不入库，装配前该接口返回 503，其余接口照常工作。音色是自家微调的 `dafeiyu2_v2Pro`，权重和参考音频已经入库。需要时两步补齐：
+`main.py` 里的 `/tts` 是可选功能。推理代码已经抽进仓库，放在 `third_party/gpt-sovits-infer/`，只留合成一条链。预训练模型、大词表、FFmpeg 不入库，装配前该接口返回 503，其余接口照常工作。音色是自家微调的 `da_fei_yv`，权重和参考音频已经入库。需要时两步补齐：
 
 ```bash
 bash setup_env.sh --tts                      # 或 .\setup_env.ps1 -Tts
@@ -293,9 +293,9 @@ print(name, sr, len(wav))
 PY
 ```
 
-实测输出 `dafeiyu2_v2Pro 16000 253484`，落盘的 `out.wav` 是 2 声道、16 kHz、3.96 s。`_tts_synth_wav` 内部把工作目录切到 `third_party/gpt-sovits-infer/`，之后再写相对路径就落到别处去了。上游的 `inference_cli.py`、`inference_webui.py`、`api_v2.py` 没有抽进子集，别照着它们写调用。
+实测输出 `da_fei_yv 16000 253484`，落盘的 `out.wav` 是 2 声道、16 kHz、3.96 s。`_tts_synth_wav` 内部把工作目录切到 `third_party/gpt-sovits-infer/`，之后再写相对路径就落到别处去了。上游的 `inference_cli.py`、`inference_webui.py`、`api_v2.py` 没有抽进子集，别照着它们写调用。
 
-七个语种各合成一句，都出音频。自家 `dafeiyu2_v2Pro` 音色在同一台机器上的实测（16 kHz 双声道，峰值是 int16 幅度）：
+七个语种各合成一句，都出音频。自家 `da_fei_yv` 音色在同一台机器上的实测（16 kHz 双声道，峰值是 int16 幅度）：
 
 | `language` | 字节 | 时长 | 峰值 | 削顶样本 |
 |---|---|---|---|---|
@@ -321,12 +321,12 @@ uv pip install --python ./.venv/Scripts/python.exe eunjeon "setuptools<81"
 
 装配完成后，`main.py` 里的 `/tts` 直接可用。它在同一进程内调 `GPT_SoVITS/TTS_infer_pack/TTS.py` 的 `TTS_Config` 与 `TTS`，不另起 api_v2 服务，也不碰 gradio。`main.py:377` 的 `_tts_activate()` 复用上游自己的 `tools/portable_runtime.activate()`。它会把工作目录切到 `third_party/gpt-sovits-infer/`，所以 `main.py:28-30` 先把 `UPLOAD_DIR`、`DB_PATH` 和上传记录里的相对路径统一按 `__file__` 展开成绝对路径。
 
-音色靠扫描注册。权重按训练版本分目录，`main.py:304` 的 `_TTS_WEIGHT_DIRS` 列出版本到目录的对应关系：`v2` 用 `GPT_weights_v2/` 与 `SoVITS_weights_v2/`，`v2Pro` 用 `GPT_weights_v2Pro/` 与 `SoVITS_weights_v2Pro/`。同一版本目录内的 `.ckpt` 与 `.pth` 按权重名前缀配对，`dafeiyu2_v2Pro-e40.ckpt` 加 `dafeiyu2_v2Pro_e6_s162.pth` 得到音色 `dafeiyu2_v2Pro`，目录名同时给出这个音色的推理版本。再要求 `tts_speakers/dafeiyu2_v2Pro.json` 提供参考音频。仓库里带的注册表内容如下：
+音色靠扫描注册。权重按训练版本分目录，`main.py:304` 的 `_TTS_WEIGHT_DIRS` 列出版本到目录的对应关系：`v2` 用 `GPT_weights_v2/` 与 `SoVITS_weights_v2/`，`v2Pro` 用 `GPT_weights_v2Pro/` 与 `SoVITS_weights_v2Pro/`。同一版本目录内的 `.ckpt` 与 `.pth` 按权重名前缀配对，`da_fei_yv-e40.ckpt` 加 `da_fei_yv_e6_s162.pth` 得到音色 `da_fei_yv`，目录名同时给出这个音色的推理版本。再要求 `tts_speakers/da_fei_yv.json` 提供参考音频。仓库里带的注册表内容如下：
 
 ```json
 {
-  "ref_audio": "refs/dafeiyu2_v2Pro/dwg_0002.wav",
-  "ref_text": "refs/dafeiyu2_v2Pro/prompt.txt",
+  "ref_audio": "refs/da_fei_yv/dwg_0002.wav",
+  "ref_text": "refs/da_fei_yv/prompt.txt",
   "ref_language": "zh"
 }
 ```
@@ -335,27 +335,27 @@ uv pip install --python ./.venv/Scripts/python.exe eunjeon "setuptools<81"
 
 ### 导入本地导出的权重
 
-自己微调导出的权重不经过 `fetch_tts.py`，按下图的布局摆放：两套权重、参考音频与它的转写文本、一份音色注册表。仓库里现在带的就是 `dafeiyu2_v2Pro`，训练导出目录里原本有 `GPT_weights_v2Pro/dafeiyu2_v2Pro-e40.ckpt`、`SoVITS_weights_v2Pro/dafeiyu2_v2Pro_e6_s162.pth`、`refs/dwg_0002.wav` 和一份 `manifest.json`：
+自己微调导出的权重不经过 `fetch_tts.py`，按下图的布局摆放：两套权重、参考音频与它的转写文本、一份音色注册表。仓库里现在带的就是 `da_fei_yv`，训练导出目录里的原始文件名是 `dafeiyu2_v2Pro-e40.ckpt`、`dafeiyu2_v2Pro_e6_s162.pth`、`refs/dwg_0002.wav` 和一份 `manifest.json`，入库时统一换成 `da_fei_yv` 前缀，`manifest.json` 里留了 `renamed_from` 字段：
 
 ```text
 third_party/gpt-sovits-infer/
-├── GPT_weights_v2Pro/dafeiyu2_v2Pro-e40.ckpt        入库，走 git-lfs
-├── SoVITS_weights_v2Pro/dafeiyu2_v2Pro_e6_s162.pth   入库，走 git-lfs
-├── refs/dafeiyu2_v2Pro/dwg_0002.wav                  入库，参考音频
-├── refs/dafeiyu2_v2Pro/manifest.json                 入库，导出时的测量值留档
-├── refs/dafeiyu2_v2Pro/prompt.txt                    入库，从 manifest 的 prompt_text 落一份
-└── tts_speakers/dafeiyu2_v2Pro.json                  入库，只有三个字段
+├── GPT_weights_v2Pro/da_fei_yv-e40.ckpt        入库，走 git-lfs
+├── SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth   入库，走 git-lfs
+├── refs/da_fei_yv/dwg_0002.wav                  入库，参考音频
+├── refs/da_fei_yv/manifest.json                 入库，导出时的测量值留档
+├── refs/da_fei_yv/prompt.txt                    入库，从 manifest 的 prompt_text 落一份
+└── tts_speakers/da_fei_yv.json                  入库，只有三个字段
 ```
 
 两个权重过了 100 MB，走 Git LFS，仓库里存的是指针，`git lfs pull` 之后才是真实文件。换音色时照这个布局再放一套即可，目录名决定推理版本。
 
-文件名要能配成对：`.ckpt` 去掉 `-e\d+` 之后的前缀，和 `.pth` 去掉 `_e\d+_s\d+` 之后的前缀要一致，两边都得到 `dafeiyu2_v2Pro`。权重名里带不带版本都行，版本由所在目录决定。
+文件名要能配成对：`.ckpt` 去掉 `-e\d+` 之后的前缀，和 `.pth` 去掉 `_e\d+_s\d+` 之后的前缀要一致，两边都得到 `da_fei_yv`。权重名里带不带版本都行，版本由所在目录决定。
 
 `main.py` 不需要为 v2Pro 改推理调用。建管线时把目录给出的版本传给 `TTS_Config`（`main.py:399`），换音色走 `init_t2s_weights` 与 `init_vits_weights`。上游读 s2 权重头两字节判版本（`process_ckpt.py:77` 的 `head2version`，`b"05"` 就是 v2Pro），Pro 系列顺手加载 ERes2NetV2 说话人模型（`TTS.py:584`），`TTS.py:646` 置 `is_v2pro`，推理时据此把参考音频重采样到 16 kHz（`TTS.py:909`）并取说话人向量（`TTS.py:1411`）。
 
 一条管线能在 v2 与 v2Pro 之间来回切。实测同一进程按 v2 → v2Pro → v2Pro → v2 连做四次合成，原生采样率都是 32 000 Hz：首次含建管线 105.8 s 出 6.48 s 音频，切到 v2Pro 11.3 s 出 6.44 s，换一句 2.0 s 出 4.16 s，切回 v2 3.5 s 出 3.00 s。加载 VITS 权重时打印的 `missing_keys=['enc_q.*']` 不是导入出错，推理权重本来不带 `enc_q`，上游用 `strict=False` 加载。
 
-走 `/tts` 的端到端实测：请求 `{"speaker":"dafeiyu2_v2Pro","language":"all_zh","sample_rate":16000,"channels":2}`，返回 200、294 444 字节，响应头 `x-speaker: dafeiyu2_v2Pro`、`x-sample-rate: 16000`；产物 16 kHz 双声道、4.60 s、峰值 31031、无削顶，`/stt` 回读「你好 我是大飛魚今天天氣不錯」。用 manifest 里那句 23 字自测文本合成得 6.44 s，落在导出记录写的 6.12～7.72 s 抖动带内；导出侧固定 seed 43，`/tts` 这条链路没传 seed，时长每次会抖。
+走 `/tts` 的端到端实测：请求 `{"speaker":"da_fei_yv","language":"all_zh","sample_rate":16000,"channels":2}`，返回 200、294 444 字节，响应头 `x-speaker: da_fei_yv`、`x-sample-rate: 16000`；产物 16 kHz 双声道、4.60 s、峰值 31031、无削顶，`/stt` 回读「你好 我是大飛魚今天天氣不錯」。用 manifest 里那句 23 字自测文本合成得 6.44 s，落在导出记录写的 6.12～7.72 s 抖动带内；导出侧固定 seed 43，`/tts` 这条链路没传 seed，时长每次会抖。
 
 有两个前提要满足。s2 权重如果前两个字节不是 `PK`，必须经 `load_sovits_new`（`process_ckpt.py:141`）补上 `b"PK"` 再 `torch.load`，`init_vits_weights` 已经这么调了，别绕过它自己加载。v2Pro 依赖 `GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt`（107 528 697 字节，`sv.py:6` 按相对路径找它），缺了 `init_sv_model()` 会在加载时抛文件不存在；这份由 `fetch_tts.py assets` 取，`fetch_tts.py check` 会报。
 
@@ -387,7 +387,7 @@ third_party/gpt-sovits-infer/
 | 稳定后合成 4.5 s 音频 | 3.5 s |
 | 未开 `TTS_AUTOLOAD` 的首个请求 | 99.5 s，加载和首帧都压在这次请求上 |
 
-换成自家的 `dafeiyu2_v2Pro` 音色后：进程内第一次合成 47.3 s（含建管线、G2PW 与 numba 即时编译），之后每句 2～3 s；HTTP 首次请求 61.3 s，管线在服务进程里现建，之后每句同样 2～3 s。v2 与 v2Pro 之间换音色不重建管线，只重载两套权重，实测 11.3 s（含换权重与一次合成）。
+换成自家的 `da_fei_yv` 音色后：进程内第一次合成 47.3 s（含建管线、G2PW 与 numba 即时编译），之后每句 2～3 s；HTTP 首次请求 61.3 s，管线在服务进程里现建，之后每句同样 2～3 s。v2 与 v2Pro 之间换音色不重建管线，只重载两套权重，实测 11.3 s（含换权重与一次合成）。
 
 推理全程由 `_TTS_LOCK` 保护，同一时刻只跑一帧，多请求排队等待。请求处理放在 `asyncio.to_thread`，合成期间 `/upload`、`/download`、`/stt` 照常响应。CPU 推理没在这台机器上计时，`TTS_DEVICE=cpu` 的代价请按你机器自测。
 
@@ -419,7 +419,7 @@ curl -s -X POST -H "Content-Type: application/json" --data @req.json localhost:8
 | 组件 | 来源 | 许可 | 入库 |
 |---|---|---|---|
 | GPT-SoVITS 推理代码 | `RVC-Boss/GPT-SoVITS` @ `b4570b8`，只抽合成链 | MIT，随上游 `LICENSE` 一起进 | 是，158 个文件 |
-| 自家音色 `dafeiyu2_v2Pro` 的权重与参考音频 | 本工程自训，训练数据 `YinZilu/da-fei-yu-girl-voice-zh` | 训练数据是 **CC BY-NC 4.0**：仅限非商业，须署名「尹紫鹭幻想社（Bilibili）」，不得用于冒充真人。权重是衍生作品，同受此约束 | 是，两个权重走 git-lfs，参考音频 0.3 MB 直接入库 |
+| 自家音色 `da_fei_yv` 的权重与参考音频 | 本工程自训，训练数据 `YinZilu/da-fei-yu-girl-voice-zh` | 训练数据是 **CC BY-NC 4.0**：仅限非商业，须署名「尹紫鹭幻想社（Bilibili）」，不得用于冒充真人。权重是衍生作品，同受此约束 | 是，两个权重走 git-lfs，参考音频 0.3 MB 直接入库 |
 | 上游 git 里的词表与 CUDA 运行库 | 同一 commit 的 `raw.githubusercontent.com` | 随上游仓库（MIT） | 否，`fetch_tts.py dicts` 取，8 个 35.3 MB，逐个校验 SHA256 |
 | chinese-hubert-base、chinese-roberta-wwm-ext-large、G2PWModel、nltk_data | 上游 `XXXXRT/GPT-SoVITS-Pretrained` 的 zip | 以各自来源页声明为准，本仓库不重新授权 | 否 |
 | `lid.176.bin` | fastText 官方 supervised models | CC BY-SA 3.0（fastText 文档页写明，不是常见的 NC 误传） | 否 |

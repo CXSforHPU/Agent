@@ -220,9 +220,9 @@ def step_check():
         "sv ERes2NetV2 (v2Pro 用)": SV_CKPT,
         "nltk cmudict": INFER / "runtime/nltk_data/corpora/cmudict/cmudict",
         "FFmpeg (torchcodec)": INFER / "runtime/avcodec-63.dll" if os.name == "nt" else INFER / "runtime",
-        "GPT weights": INFER / "GPT_weights_v2Pro/dafeiyu2_v2Pro-e40.ckpt",
-        "SoVITS weights": INFER / "SoVITS_weights_v2Pro/dafeiyu2_v2Pro_e6_s162.pth",
-        "reference audio": INFER / "refs/dafeiyu2_v2Pro/dwg_0002.wav",
+        "GPT weights": INFER / "GPT_weights_v2Pro/da_fei_yv-e40.ckpt",
+        "SoVITS weights": INFER / "SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth",
+        "reference audio": INFER / "refs/da_fei_yv/dwg_0002.wav",
     }
     for rel in sorted(DICT_BLOBS):
         probes["dict " + rel.split("/")[-1]] = INFER / rel
