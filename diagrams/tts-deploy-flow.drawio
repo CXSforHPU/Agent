@@ -63,17 +63,17 @@
           <mxGeometry x="120" y="1280" width="300" height="60" as="geometry" />
         </mxCell>
 
-        <mxCell id="n9" value="POST /tts&#xa;返回 audio/wav"
+        <mxCell id="n9" value="POST /tts&#xa;整条 WAV 或流式帧"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
                 vertex="1" parent="1">
           <mxGeometry x="120" y="1430" width="300" height="60" as="geometry" />
         </mxCell>
 
         <!-- 脚本参数 -->
-        <mxCell id="t1" value="两个脚本参数对得上&#xa;--tts 装依赖组并拉资产&#xa;--check 只部署不起服务&#xa;--start-only 只起服务&#xa;--print 只打印 uv 命令&#xa;--port --host 换监听地址&#xa;--autoload 启动即预热模型&#xa;--mirror GitHub 走 gh-proxy"
+        <mxCell id="t1" value="两个脚本参数对得上&#xa;--tts 装依赖组并拉资产&#xa;--check 只部署不起服务&#xa;--start-only 只起服务&#xa;--print 只打印 uv 命令&#xa;--port --host 换监听地址&#xa;--autoload 启动即预热模型&#xa;--speaker NAME 设默认音色&#xa;--mirror GitHub 走 gh-proxy"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
-          <mxGeometry x="640" y="230" width="420" height="200" as="geometry" />
+          <mxGeometry x="640" y="230" width="420" height="230" as="geometry" />
         </mxCell>
 
         <!-- 下载来源 -->

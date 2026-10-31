@@ -51,7 +51,7 @@ msh_agent_upload_download up <file_path>
 msh_agent_upload_download down <file_id> <save_path>
 ```
 
-文本转语音用 `msh_agent_tts`，默认把合成结果写到 `/tts.wav` 再播放：
+文本转语音用 `msh_agent_tts`，合成结果写到 `PKG_AGENT_TTS_SAVE_PATH`（默认 `/tts.wav`）再播放。根目录挂的是只读 romfs 的板子要把这个路径改到 `/sdcard` 之类的可写文件系统：
 
 ```text
 msh_agent_tts 你好，世界        # 合成并播放
@@ -61,7 +61,7 @@ msh_agent_tts -o /a.wav 今天天气不错
 
 播放需要板上先注册音频设备。合成走的是同步等待，服务端没预热时首帧要等服务端把模型拉起来，实测冷启动 203 s，模型常驻后每句 2～3 s。服务端要先装配好推理链与音色权重，步骤见 [resource/file_server/README.md](resource/file_server/README.md) 第 11 节。
 
-想让每轮回复自动播报，在 `Audio tts Server Settings` 里打开 `Auto play the answer by voice`（`PKG_AGENT_TTS_AUTO_PLAY`）。它依赖 `PKG_AGENT_DRIVER_AUDIO`，默认关闭。回复文本由后台线程合成并播放，主循环不等待；超过 512 字节的回复按字符边界截断，兜底提示不发声。
+想让每轮回复自动播报，在 `Audio tts Server Settings` 里打开 `Auto play the answer by voice`（`PKG_AGENT_TTS_AUTO_PLAY`）。它依赖 `PKG_AGENT_DRIVER_AUDIO`，默认关闭。打开后一条回复只发一次请求，服务端按 1.5 s 一帧往外发，后台线程收一帧播一帧，主循环不等待。兜底提示不发声。
 
 音频驱动与多模态开关相互独立。只使用录音、播放时，打开 `Enable Agent Driver Audio` 即可，但 BSP 需要先启用音频设备。
 

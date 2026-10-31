@@ -79,7 +79,7 @@ uv run --no-sync main.py
 
 `uv run` 会先按 `uv.lock` 同步环境，而默认依赖组是 `cpu`。装过 GPU 组的机器上，这一步会把 `torch` 换回 CPU 构建，所以这里要加 `--no-sync`；等价写法是直接用装好的环境跑，`.venv/bin/python main.py`（Windows 为 `.venv\Scripts\python.exe main.py`）。
 
-服务默认监听 `0.0.0.0:8000`。本机可以打开 `http://127.0.0.1:8000/docs` 查看接口文档。
+服务默认监听 `0.0.0.0:8000`。本机可以打开 `http://127.0.0.1:8000/docs` 查看接口文档。语音合成要在网页里直接听，打开 `http://127.0.0.1:8000/tts/play`，`/docs` 里放不出声音，原因见第 11 节。
 
 也可以用 `bash deploy.sh` 或 `deploy.bat` 起，它会先装配环境再启动，参数见第 11 节。
 
@@ -101,7 +101,9 @@ uv run --no-sync main.py
 | `/files/{file_id}` | DELETE | 删除文件 |
 | `/stt` | POST | 语音转文本，form 字段名为 `file`，返回 `{"code":0,"data":{"text":"..."}}` |
 | `/tts/speakers` | GET | 列出已装配的音色与可用语种码 |
-| `/tts` | POST | 文本转语音，直接返回 `audio/wav` 字节。未装配 GPT-SoVITS 时返回 503，其余接口不受影响 |
+| `/tts` | POST | 文本转语音，直接返回 `audio/wav` 字节。请求带 `"stream":true` 时改返回 `[4 字节小端长度][完整 WAV]` 的帧序列，见 11 节的流式分块。未装配 GPT-SoVITS 时返回 503，其余接口不受影响 |
+| `/tts` | GET | 同样的合成，参数走 query，`GET /tts?text=你好` 本身就是一个音频 URL |
+| `/tts/play` | GET | 浏览器试听页，带 `audio` 播放器。`/docs` 里播不出声音，试听要走这条 |
 
 上传接口返回示例：
 
@@ -358,9 +360,9 @@ uv pip install --python ./.venv/Scripts/python.exe eunjeon "setuptools<81"
 
 ### 做成服务
 
-装配完成后，`main.py` 里的 `/tts` 直接可用。它在同一进程内调 `GPT_SoVITS/TTS_infer_pack/TTS.py` 的 `TTS_Config` 与 `TTS`，不另起 api_v2 服务，也不碰 gradio。`main.py:377` 的 `_tts_activate()` 复用上游自己的 `tools/portable_runtime.activate()`。它会把工作目录切到 `third_party/gpt-sovits-infer/`，所以 `main.py:28-30` 先把 `UPLOAD_DIR`、`DB_PATH` 和上传记录里的相对路径统一按 `__file__` 展开成绝对路径。
+装配完成后，`main.py` 里的 `/tts` 直接可用。它在同一进程内调 `GPT_SoVITS/TTS_infer_pack/TTS.py` 的 `TTS_Config` 与 `TTS`，不另起 api_v2 服务，也不碰 gradio。`_tts_activate()` 复用上游自己的 `tools/portable_runtime.activate()`。它会把工作目录切到 `third_party/gpt-sovits-infer/`，所以 `main.py` 开头先把 `UPLOAD_DIR`、`DB_PATH` 和上传记录里的相对路径统一按 `__file__` 展开成绝对路径。
 
-音色靠扫描注册。权重按训练版本分目录，`main.py:304` 的 `_TTS_WEIGHT_DIRS` 列出版本到目录的对应关系：`v2` 用 `GPT_weights_v2/` 与 `SoVITS_weights_v2/`，`v2Pro` 用 `GPT_weights_v2Pro/` 与 `SoVITS_weights_v2Pro/`。同一版本目录内的 `.ckpt` 与 `.pth` 按权重名前缀配对，`da_fei_yv-e40.ckpt` 加 `da_fei_yv_e6_s162.pth` 得到音色 `da_fei_yv`，目录名同时给出这个音色的推理版本。再要求 `tts_speakers/da_fei_yv.json` 提供参考音频。仓库里带的注册表内容如下：
+音色靠扫描注册。权重按训练版本分目录，`_TTS_WEIGHT_DIRS` 列出版本到目录的对应关系：`v2` 用 `GPT_weights_v2/` 与 `SoVITS_weights_v2/`，`v2Pro` 用 `GPT_weights_v2Pro/` 与 `SoVITS_weights_v2Pro/`，`v2ProPlus` 用 `GPT_weights_v2ProPlus/` 与 `SoVITS_weights_v2ProPlus/`。同一版本目录内的 `.ckpt` 与 `.pth` 按权重名前缀配对，`da_fei_yv-e40.ckpt` 加 `da_fei_yv_e6_s162.pth` 得到音色 `da_fei_yv`，目录名同时给出这个音色的推理版本。再要求 `tts_speakers/da_fei_yv.json` 提供参考音频。仓库里带的注册表内容如下：
 
 ```json
 {
@@ -378,46 +380,55 @@ uv pip install --python ./.venv/Scripts/python.exe eunjeon "setuptools<81"
 
 ```text
 third_party/gpt-sovits-infer/
-├── GPT_weights_v2Pro/da_fei_yv-e40.ckpt         fetch_tts.py voice 从 ModelScope 拉
-├── SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth   同上
-├── refs/da_fei_yv/dwg_0002.wav                  入库，参考音频
-├── refs/da_fei_yv/manifest.json                 入库，导出时的测量值留档
-├── refs/da_fei_yv/prompt.txt                    入库，从 manifest 的 prompt_text 落一份
-└── tts_speakers/da_fei_yv.json                  入库，只有三个字段
+├── GPT_weights_v2Pro/da_fei_yv-e40.ckpt              fetch_tts.py voice 从 ModelScope 拉
+├── SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth       同上
+├── GPT_weights_v2ProPlus/da_fei_yv_plus-e40.ckpt    本机自训，不入库也没发布
+├── SoVITS_weights_v2ProPlus/da_fei_yv_plus_e8_s216.pth  同上
+├── refs/da_fei_yv/dwg_0002.wav                       入库，参考音频
+├── refs/da_fei_yv/manifest.json                      入库，导出时的测量值留档
+├── refs/da_fei_yv/prompt.txt                         入库，从 manifest 的 prompt_text 落一份
+├── refs/da_fei_yv_plus/                              同样四件，音色名换成 da_fei_yv_plus
+└── tts_speakers/da_fei_yv.json                       入库，只有三个字段
 ```
+
+`tts_speakers/da_fei_yv_plus.json` 也在库里，只有参考音频路径、转写文本路径和语种三个字段。
 
 两个权重合计 277 MiB，超过 GitHub 的单文件上限，仓库里不带：`fetch_tts.py voice` 从 ModelScope 取，SHA256 对得上才留下。换音色时照这个布局再放一套即可，目录名决定推理版本。
 
+本机另外装了一套 v2ProPlus 权重做耳测对比，音色名 `da_fei_yv_plus`（`refs/da_fei_yv_plus/manifest.json` 记了哈希与训练配方）。这两个权重还没发布，所以 `fetch_tts.py voice` 只拉 `da_fei_yv`，新装的机器 `/tts/speakers` 也只列出一个。选 v2ProPlus 是想试逐 token 流式 `gpt_streaming`（`TTS_infer_pack/streaming.py:12` 只放 v2ProPlus/v5turbo/v5dev），2080 Ti 上实测是负收益：同一份权重 `streaming_mode` 首帧 0.62～0.93 s、RTF 0.19～0.24，换 `gpt_streaming` 是 0.83～1.59 s、RTF 0.19～0.38，且它按 CUDA graph 静态形状解码，预热完的第一条真实回复要补交一次图捕获，首帧 16.25 s、启动预热从 21.3 s 涨到 165.4 s。因此 `_tts_stream_frames` 两个版本都只走 `streaming_mode`，v2ProPlus 剩下的差别只有听感。同一进程里换音色要重载两套权重，实测那一次请求首帧 9.87 s（v2ProPlus→v2Pro），之后的请求才回到 0.6 s 上下。
+
 文件名要能配成对：`.ckpt` 去掉 `-e\d+` 之后的前缀，和 `.pth` 去掉 `_e\d+_s\d+` 之后的前缀要一致，两边都得到 `da_fei_yv`。权重名里带不带版本都行，版本由所在目录决定。
 
-`main.py` 不需要为 v2Pro 改推理调用。建管线时把目录给出的版本传给 `TTS_Config`（`main.py:399`），换音色走 `init_t2s_weights` 与 `init_vits_weights`。上游读 s2 权重头两字节判版本（`process_ckpt.py:77` 的 `head2version`，`b"05"` 就是 v2Pro），Pro 系列顺手加载 ERes2NetV2 说话人模型（`TTS.py:584`），`TTS.py:646` 置 `is_v2pro`，推理时据此把参考音频重采样到 16 kHz（`TTS.py:909`）并取说话人向量（`TTS.py:1411`）。
+`main.py` 不需要为 v2Pro 或 v2ProPlus 改推理调用。建管线时把目录给出的版本传给 `TTS_Config`（`_tts_pipeline()`），换音色走 `init_t2s_weights` 与 `init_vits_weights`。上游读 s2 权重头两字节判版本（`process_ckpt.py:77` 的 `head2version`，`b"05"` 是 v2Pro、`b"06"` 是 v2ProPlus），Pro 系列顺手加载 ERes2NetV2 说话人模型（`TTS.py:584`），`TTS.py:646` 置 `is_v2pro`，推理时据此把参考音频重采样到 16 kHz（`TTS.py:909`）并取说话人向量（`TTS.py:1411`）。
 
 一条管线能在 v2 与 v2Pro 之间来回切。实测同一进程按 v2 → v2Pro → v2Pro → v2 连做四次合成，原生采样率都是 32 000 Hz：首次含建管线 105.8 s 出 6.48 s 音频，切到 v2Pro 11.3 s 出 6.44 s，换一句 2.0 s 出 4.16 s，切回 v2 3.5 s 出 3.00 s。加载 VITS 权重时打印的 `missing_keys=['enc_q.*']` 不是导入出错，推理权重本来不带 `enc_q`，上游用 `strict=False` 加载。
 
-走 `/tts` 的端到端实测：请求 `{"speaker":"da_fei_yv","language":"all_zh","sample_rate":16000,"channels":2}`，返回 200、294 444 字节，响应头 `x-speaker: da_fei_yv`、`x-sample-rate: 16000`；产物 16 kHz 双声道、4.60 s、峰值 31031、无削顶，`/stt` 回读「你好 我是大飛魚今天天氣不錯」。用 manifest 里那句 23 字自测文本合成得 6.44 s，落在导出记录写的 6.12～7.72 s 抖动带内；导出侧固定 seed 43，`/tts` 这条链路没传 seed，时长每次会抖。
+走 `/tts` 整条返回（`stream=false`）的端到端实测：请求 `{"speaker":"da_fei_yv","language":"all_zh","sample_rate":16000,"channels":2}`，返回 200、294 444 字节，响应头 `x-speaker: da_fei_yv`、`x-sample-rate: 16000`；产物 16 kHz 双声道、4.60 s、峰值 31031、无削顶，`/stt` 回读「你好 我是大飛魚今天天氣不錯」。用 manifest 里那句 23 字自测文本合成得 6.44 s，落在导出记录写的 6.12～7.72 s 抖动带内；导出侧固定 seed 43，`/tts` 这条链路没传 seed，时长每次会抖。
 
 有两个前提要满足。s2 权重如果前两个字节不是 `PK`，必须经 `load_sovits_new`（`process_ckpt.py:141`）补上 `b"PK"` 再 `torch.load`，`init_vits_weights` 已经这么调了，别绕过它自己加载。v2Pro 依赖 `GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt`（107 528 697 字节，`sv.py:6` 按相对路径找它），缺了 `init_sv_model()` 会在加载时抛文件不存在；这份由 `fetch_tts.py assets` 取，`fetch_tts.py check` 会报。
 
 导出包里的 `manifest.json` 和 `tts_infer.custom.yaml` 建议一起放进 `refs/<音色名>/` 留档，训练参数、seed 和当时的时长都记在里面，验收时对着看。
 
-`language` 传 `TTS_infer_pack` 的引擎语种码：`all_zh`、`zh`、`en`、`all_ja`、`ja`、`all_yue`、`yue`、`all_ko`、`ko`、`auto`、`auto_yue`。中文名也收，`main.py:314` 的 `_TTS_LANG_ALIAS` 先换算，表抄上游 WebUI 的 `dict_language_v2`（`inference_webui.py` 未抽进子集，对照时用上游 commit）。只能用引擎码这条限制来自 `TTS.py:1251` 的 `assert text_lang in self.configs.languages`，而 `TTS_Config.languages` 就是英文码表（`TTS.py:359`）。传成 WebUI 的显示名时，断言没有消息文本，接口只会回一条 `tts failed: AssertionError:`，看不出原因。
+`language` 传 `TTS_infer_pack` 的引擎语种码：`all_zh`、`zh`、`en`、`all_ja`、`ja`、`all_yue`、`yue`、`all_ko`、`ko`、`auto`、`auto_yue`。中文名也收，`_TTS_LANG_ALIAS` 先换算，表抄上游 WebUI 的 `dict_language_v2`（`inference_webui.py` 未抽进子集，对照时用上游 commit）。只能用引擎码这条限制来自 `TTS.py:1251` 的 `assert text_lang in self.configs.languages`，而 `TTS_Config.languages` 就是英文码表（`TTS.py:359`）。传成 WebUI 的显示名时，断言没有消息文本，接口只会回一条 `tts failed: AssertionError:`，看不出原因。
 
 请求体字段：
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `text` | 必填 | 待合成文本，空串返回 400 |
+| `text` | 必填 | 待合成文本，空串返回 400；表情符号和不可念的符号先由 `_tts_sanitize()` 处理，净化后为空返回 400 |
 | `speaker` | `TTS_SPEAKER`，未设则取音色名排序首个 | 名字不在表里返回 404 |
 | `language` | `zh` | 中英混合。取值见上一段 |
 | `speed` | `1.0` | 语速倍率 |
 | `sample_rate` | 不重采样 | 板侧播放填 `16000` |
 | `channels` | `1` | 填 `2` 时把单声道复制成左右两份；只接受 1 和 2，其他值返回 400 |
+| `stream` | `false` | 填 `true` 时按帧流式返回，见下面的「流式分块」 |
+| `block_seconds` | `1.5` | 一帧攒多少秒音频，只接受 0.5～5.0，越界返回 400 |
 
-成功时响应体就是 WAV 字节，`Content-Type: audio/wav`，另带 `X-Sample-Rate` 与 `X-Speaker` 两个响应头。`TTS.run()` 交回来的是 int16 PCM（`TTS.py:1814`、`TTS.py:1822` 先乘 32768 再 `astype(np.int16)`），`main.py:438` 把它除以 32768 归到 [-1, 1]，之后才重采样、交给 soundfile 写 PCM_16。少了这一步，重采样分支拿到的是上万量级的浮点数，soundfile 全部削顶，产出的音频时长正常，内容是方波噪声。
+成功时响应体就是 WAV 字节，`Content-Type: audio/wav`，另带 `X-Sample-Rate` 与 `X-Speaker` 两个响应头。`TTS.run()` 交回来的是 int16 PCM（`TTS.py:1814`、`TTS.py:1822` 先乘 32768 再 `astype(np.int16)`），`main.py` 里整条路径在 `_tts_synth_wav()` 除一次 32768 归到 [-1, 1]，流式路径在 `_TtsBlocker` 除，之后才重采样、交给 soundfile 写 PCM_16。少了这一步，重采样分支拿到的是上万量级的浮点数，soundfile 全部削顶，产出的音频时长正常，内容是方波噪声。
 
 同一句文本的对照实测：32 kHz 原生音频 `/stt` 回读为「這是第一次請求 模型又現場加載」，未归一化的 16 kHz 回读成一片乱码；归一化之后 16 kHz 回读为「这是第一次请求 模型又现场加载」，峰值 0.817，削波样本占比 0。
 
-实测耗时（RTX 2080 Ti、CUDA 12.6，音色 da_fei_yu）：
+下面两张表是 `stream=false` 整条返回的实测，音色 `da_fei_yv`（RTX 2080 Ti、CUDA 12.6）：
 
 | 场景 | 耗时或占用 |
 |---|---|
@@ -433,7 +444,7 @@ third_party/gpt-sovits-infer/
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `TTS_AUTOLOAD` | `0` | 填 `1` 时启动即在后台线程预热模型，否则首个请求自己承担加载 |
-| `TTS_SPEAKER` | 音色名排序首个 | 默认音色 |
+| `TTS_SPEAKER` | 音色名排序首个 | 默认音色。`deploy.bat --speaker NAME` 与 `deploy.sh --speaker NAME` 把它写进启动环境 |
 | `TTS_DEVICE` | 有 CUDA 用 `cuda`，否则 `cpu` | 填 `cpu` 可在无显卡机器上跑 |
 | `TTS_IS_HALF` | `cuda` 时 `1`，否则 `0` | 半精度开关 |
 
@@ -443,13 +454,40 @@ curl 示例。含中文的请求体不要拼在命令行里，Windows 的 shell 
 printf '{"text":"今天天气不错。","language":"all_zh","sample_rate":16000}' > req.json
 curl -s localhost:8000/tts/speakers
 curl -s -X POST -H "Content-Type: application/json" --data @req.json localhost:8000/tts -o out.wav
+curl -sG localhost:8000/tts --data-urlencode "text=今天天气不错" --data "sample_rate=16000" -o out.wav
+printf '{"text":"今天天气不错。","sample_rate":16000,"channels":1,"stream":true}' > req_stream.json
+curl -s -N -X POST -H "Content-Type: application/json" --data @req_stream.json localhost:8000/tts -o frames.bin
 ```
 
-板侧已经接上：`src/utils/tts.c` 里的 `msh_agent_tts` 合成后落盘播放，请求固定带 `sample_rate:16000` 和 `channels:2`。
+`stream` 只在 POST 体里有，GET `/tts` 一律整条返回，这样它本身才是一个可播放的音频 URL。`frames.bin` 不是 WAV，要按 `[4 字节小端长度]` 一帧一帧切开，每段自己带 WAV 头，切开就能播。
 
-`channels` 取 2 的原因在板的音频通道。AC97 一帧固定携带左右两个 PCM 槽，QEMU vexpress 的 pl041 模型也按这个约定写死（`hw/audio/pl041.c` 每次出帧取两个采样）。实测同一句「你好，我是大肥鱼，今天天气不错」（当时用的大肥鱼 v2 音色），单声道文件 4.40 s 的内容 2.20 s 播完，`/stt` 回读是乱码；换立体声后 5.24 s 内容捕获 5.29 s，`/stt` 回读为「你好 我是大肥鱼今天天气不错」。
+`/tts` 有 POST 与 GET 两条，合成逻辑同在 `main.py` 的 `_tts_handle()`：板侧走 POST（webclient 发 JSON 方便），人要听就走 GET。`/docs` 里点 `Try it out` 播不出声音，有两层原因：Swagger UI 对二进制响应只给下载链接，没有播放器；`Response` 返回值不带 `responses=` 声明时，OpenAPI 又把 200 写成 `application/json`，Swagger 拿 JSON 去解析 WAV 字节，连下载链接都不出现。`_TTS_WAV_RESPONSES` 把响应声明成 `audio/wav` + `binary`，`GET /tts/play` 那张单页再挂上 `audio` 标签，浏览器里就能直接试听和下载。
 
-回复文本里的表情符号要单独处理。上游 `TextPreprocessor.pre_seg_text` 有一句 `print(text)`，中文 Windows 的 stdout 默认 GBK，遇到 😸 这类字符直接抛 `UnicodeEncodeError`，`/tts` 回 500，看着像推理坏了。`main.py:23` 把 stdout/stderr 重设成 UTF-8，`main.py:487` 再剥掉非 BMP 平面（`U+10000` 以上）的表情符号。实测三种输入：中英混排带 😸 返回 200、531 244 字节；纯表情返回 400「text 去掉表情符号后为空」；`✅` 这类 BMP 符号（GBK 也编不了）返回 200。板侧遇到 500 只打印 `reply synth failed, skip playback` 并继续处理下一条，不会卡住队列。
+板侧已经接上：`src/utils/tts.c` 的 `msh_agent_tts` 走整条返回，回复自动播报走 `stream=true`，两条都带 `sample_rate:16000` 和 `channels:1`。
+
+`channels` 取 1 还是 2 取决于板上 I2S 驱动怎么处理声道，换板子要重新验一次。本板（Infineon PSE84）的 `libraries/HAL_Drivers/drv_i2s.c` 里有个 `convert_mono_to_stereo()`，把送进来的每个采样复制成左右两个 PCM 槽，一个 2048 字节的块按 64 ms 播完，等于 32,000 B/s，正好是 16 kHz 单声道。喂双声道会被当成单声道再翻一倍，时长翻倍、音调低八度，所以本板填 1。早期在 QEMU vexpress 上得到的结论相反：那边的 pl041 模型（`hw/audio/pl041.c`）每次出帧固定取两个采样，同一句「你好，我是大肥鱼，今天天气不错」的单声道文件 4.40 s 内容 2.20 s 播完，`/stt` 回读是乱码；换成立体声后 5.24 s 内容捕获 5.29 s，回读为「你好 我是大肥鱼今天天气不错」。
+
+回复文本里的表情符号要单独处理。上游 `TextPreprocessor.pre_seg_text` 有一句 `print(text)`，中文 Windows 的 stdout 默认 GBK，遇到 😸 这类字符直接抛 `UnicodeEncodeError`，`/tts` 回 500，看着像推理坏了。`main.py` 开头把 stdout/stderr 重设成 UTF-8，`_tts_handle()` 再剥掉非 BMP 平面（`U+10000` 以上）的表情符号。实测三种输入：中英混排带 😸 返回 200、531 244 字节；纯表情返回 400「text 去掉表情符号和不可念的符号后为空」；`✅` 这类 BMP 符号（GBK 也编不了）返回 200。板侧遇到 500 只打印 `http resp code 500` 和 `reply stream request failed`，这一条回复不发声，播报线程接着处理下一条。
+
+非 ASCII 的符号也要在入口换掉。回复里同时出现 `°C` 和 `—` 这类符号时，引擎的切句器把它们连同其他非 ASCII 字符按中日韩文处理，两侧又是拉丁字母，于是切出一个不含汉字的“中文”片段。`clean_text` 把它规范成空串，`TextPreprocessor.get_bert_feature` 拿着空的 `word2ph` 走到 `torch.cat([])` 抛 `ValueError`，整条 `/tts` 回 500。上游只在整个句子层面过滤纯符号（`TextPreprocessor.py:101`），句内片段没人管。`_tts_sanitize()` 先把 `°C`、`°F`、`°`、`≈`、`±`、`%`、`—`、`–` 换成英文单词，再把白名单以外的字符削成空格。白名单是 ASCII 加中日韩文字和中文标点：ASCII 走 en 路径，符号最多被丢掉，切不出空片段。实测一条 647 字节的传感器回复（含 `°C` 5 处、`—` 1 处、`≈` 1 处），净化前 500、0.12 s 返回；净化后 200，42 帧、62.79 s 音频。单测那句出问题的 `' fluctuation under 0.4 °C — nothing unusual 喵。'` 也是同一组结果：500 变 200。
+
+### 流式分块
+
+整条返回时，第一句要等全部合成完。同一接口 curl 实测：16 字的首字节 2.35 s、返回 189,484 字节（5.92 s 音频）；170 字的首字节 12.08 s、总耗时 16.21 s、返回 1,370,924 字节（42.84 s 音频）。合成时间约等于固定 0.8 s 加每秒语音 0.28 s，字数越多等得越久。
+
+`stream=true` 把这条等待拆短。`_tts_stream_frames()` 用引擎的 `streaming_mode=True` 跑，`_TtsBlocker` 攒够 `block_seconds` 秒就发一帧，每帧自带完整 WAV 头，客户端收到就能播。引擎参数固定为 `min_chunk_length=16`、`overlap_length=2`：25 Hz 语义帧下 16 个 token 约 0.64 s 音频，再小 SOLA 拼接的痕迹会显眼。重采样按 overlap-save 处理，带上 512 样本尾巴再丢掉，否则块边界会有一声爆音。
+
+响应头多一个 `X-TTS-Framing: u32le-wav`。帧格式是 `[4 字节小端长度][WAV]`，长度字段只算 WAV 本身，1.5 s 单声道 16 kHz 16 位的一帧是 48,000 字节样本加 44 字节头，写 48,044。流关闭表示结束，没有单独的结束帧。
+
+引擎按句推理，某一句抛异常时前面的帧已经发出去了。`_tts_stream_frames()` 把整段推理循环包在 try 里，异常只打一条 `[tts] stream stopped after N blocks: ...`，然后照旧收尾，让 `StreamingResponse` 补上终止 chunk。不兜的话 uvicorn 直接掐断连接，板侧读下一帧头拿到 `-7`（`-WEBCLIENT_DISCONNECT`，`packages/webclient-v2.2.0/src/webclient.c:1330`）。socket 是在读完上一帧最后一个字节、去取下一个 chunk 长度时发现对端已经关闭的，那个返回值在 `webclient.c:1367` 被丢掉，所以前一帧仍然完整落盘，下一次读帧头才报错。2026-10-31 板上实测：14 帧、21 s 音频正常播完，日志是 `read frame header failed (-7)` 加 `stream broke after 14 blocks`，把“回答被截断”报成了“链路断了”。兜住之后的代价是板侧分不清正常说完和被截断，两种都读到帧头不足 4 字节为止，截断只留在服务端日志里。
+
+`block_seconds` 扫过 0.5、1.0、1.5、2.5。0.5 s 只把起播提前 0.25 s，而帧间隔最长 0.97 s 已经超过一块的长度，播放会饿；1.5 s 时最长间隔 1.02 s，短于块长。板侧 `AGENT_TTS_BLOCK_SECONDS` 定 1.5。
+
+两处一次性开销要提前吃掉。进程第一次推理 52 s～60 s，是前端模型和 CUDA 初始化，`TTS_AUTOLOAD=1` 的预热走完整条流式链路来承担它。预热的文本长度也是变量：用「预热。」两字热完，启动后第一条 23 字回复首帧 5.53 s；换成一句 31 字，同一句 1.37 s，往后 0.58 s～0.66 s。`cudnn.benchmark` 在服务里显式关掉，引擎在 `GPT_SoVITS/Accel/PyTorch/__init__.py:23` 把它打开，同一个新卷积形状都要现场搜一遍算法。开着时同一条「启动预热加首条真实回复」链路首帧 13.8 s，关掉 1.7 s，代价是稳态 RTF 从 0.249 升到 0.263。
+
+关掉之后仍剩一个窗口：预热句和真实回复字数不同时，第一条回复要再付一次形状搜索。2026-10-31 重启后实测首帧 12.44 s，同一句的第二、三次是 0.63 s 和 0.67 s。测延迟前先按目标回复长度发一两句废文本。
+
+本机 GPU、不含公网隧道的稳态节奏：首帧 0.63 s 和 0.67 s，RTF 0.19～0.24，帧间隔最长 1.02 s。经隧道 `files.l2.bb1a.cn` 发一句 33 字，5 帧共 221,680 字节、6.92 s 音频，客户端 2.53 s 收完，隧道没有成为瓶颈。
 
 ### 全新 clone 复刻
 
@@ -501,6 +539,8 @@ curl -s -X POST -H "Content-Type: application/json" --data @req.json localhost:8
 ![TTS 运行时链路](../../diagrams/tts-runtime-flow.png)
 
 draw.io 源文件：[tts-runtime-flow.drawio](../../diagrams/tts-runtime-flow.drawio)
+
+图里那条流式链路是板子打开 `PKG_AGENT_TTS_AUTO_PLAY` 之后的走法。板侧请求不带 `speaker`，服务端按 `TTS_SPEAKER` 取默认音色，本机当前是 `da_fei_yv_plus`，`GET /tts/speakers` 的 `default` 字段就是板子听到的那个。2026-10-31 经隧道 `files.l2.bb1a.cn` 用板侧原样的请求体复现过一次：33 字一句，2.53 s 收完 5 帧，共 6.92 s 音频，帧内 WAV 是 16 kHz 单声道 16 位。板侧收流与两槽乒乓的细节见 [framework.md 的文本转语音一节](../../docs/framework.md)。
 
 ## 12. 第三方与许可
 

@@ -463,20 +463,31 @@ SSE 事件依次为 `delta`、`final`、`done`。输出等待超时 30 s，失�
 
 ### 6.4 文本转语音
 
-仅在 `PKG_AGENT_TTS_ENABLE` 时编译。`agent_tts_synth(const char *text, const char *save_path, rt_off_t *out_len)` 是 `src/utils/tts.c` 里的静态函数，只在 `msh_agent_tts` 和播报线程里调用，不进头文件。
+仅在 `PKG_AGENT_TTS_ENABLE` 时编译，实现文件 `src/utils/tts.c`。板端到喇叭的过程见 [TTS 运行时链路](../diagrams/tts-runtime-flow.png)。
 
-- 向 `PKG_AGENT_TTS_URL` 发送 JSON POST，字段为 `text`、`sample_rate`（16000）、`channels`（2）。
-- 请求立体声是板上 AC97 帧格式的要求：一帧固定带左右两个 PCM 槽，单声道数据会被当成两倍速播放。
-- 连接建立后把收发超时放宽到 5 min。服务端没预热时首帧要建管线并做一次即时编译，实测冷启动 203 s，模型常驻后每句 2～3 s。
-- 响应体是 `audio/wav` 二进制，按 Content-Length 分块写入文件，不整段读进内存。
-- 成功返回 `RT_EOK`，失败返回负值并打印 HTTP 状态码。
-
-打开 `PKG_AGENT_TTS_AUTO_PLAY`（同时需要 `PKG_AGENT_DRIVER_AUDIO`）后，`include/utils/tts.h` 里多出两个函数，由 `AgentLoop.c` 调用：
+对外函数声明在 `include/utils/tts.h`，只在 `PKG_AGENT_TTS_AUTO_PLAY` 打开时存在，该开关依赖 `PKG_AGENT_DRIVER_AUDIO`，由 `AgentLoop.c` 调用：
 
 ```c
 void agent_tts_speak_init(void);        /* init_agent() 里创建队列和线程 */
 void agent_tts_speak(const char *text); /* 把回复文本入队，不等合成 */
 ```
+
+`agent_tts_speak()` 把文本拷到堆上，只让指针入队。队列满或者内存不够时打印一条警告，丢掉这条回复。`agent_tts_synth(const char *text, const char *save_path, rt_off_t *out_len)` 是 `src/utils/tts.c` 里的静态函数，只服务 `msh_agent_tts`，不进头文件。
+
+请求与响应：
+
+| 项 | 取值 |
+|---|---|
+| 方法 | `POST PKG_AGENT_TTS_URL`，`Content-Type: application/json` |
+| 整条合成 | `{"text":"…","sample_rate":16000,"channels":1}`，响应体是一条完整 WAV |
+| 流式合成 | 上面再加 `"stream":true,"block_seconds":1.5`，响应体是 `[4 字节小端长度][完整 WAV]` 的帧序列 |
+| 声道数 | 1。`libraries/HAL_Drivers/drv_i2s.c` 的 `convert_mono_to_stereo()` 负责复制成左右两个 PCM 槽，喂双声道会变成两倍时长、低八度 |
+| 超时 | 连接建立后放宽到 5 min，取 `AGENT_TTS_TIMEOUT_MS` |
+| 结束标志 | 流式以连接关闭结束，没有单独的结束帧，也没有状态帧。服务端合成中途失败也走这条收尾，板侧只能按已收到的帧数判断说到哪儿 |
+
+返回值：`agent_tts_synth()` 成功返回 `RT_EOK`，落地字节数写进 `out_len`，该参数可以为 `NULL`。文本或路径为空、`PKG_AGENT_TTS_URL` 为空返回 `-RT_EINVAL`。连接、收流、写盘任一段出错返回负值，串口打印 HTTP 状态码或者断点位置。`Content-Length` 已知而实际收到的字节更少算失败，不留半条 WAV。
+
+模块常量集中在 `include/utils/tts.h`，用 `AGENT_` 前缀：`AGENT_TTS_IO_BUF_SZ` 8192、`AGENT_TTS_SLOT_PATH_SZ` 64、`AGENT_TTS_BLOCK_SECONDS` 1.5、`AGENT_TTS_MAX_BLOCKS` 64、`AGENT_TTS_SPEAK_QUEUE` 8、`AGENT_TTS_SPEAK_STACK` 8192、`AGENT_TTS_PLAY_WAIT_MS` 60000。能在 menuconfig 里改的参数保留 `PKG_AGENT_` 前缀，由 `rtconfig.h` 提供。
 
 文件服务器端的 `/tts` 接口见 [resource/file_server/README.md](../resource/file_server/README.md)。
 
@@ -523,7 +534,8 @@ typedef struct
 
 | 函数 | 说明 |
 |---|---|
-| `int agent_driver_audio_play(const char *path)` | 播放 WAV，`wavplay` 内部自带线程，调用不阻塞 |
+| `int agent_driver_audio_play(const char *path)` | 播放 WAV，`wavplayer` 起播就返回，调用不阻塞 |
+| `int agent_driver_audio_play_wait(rt_int32_t timeout_ms)` | 每 100 ms 轮询一次播放状态，播完返回 `RT_EOK`，超时返回 `-RT_ETIMEOUT`。TTS 覆盖文件前用它等上一句放完 |
 | `int agent_driver_audio_stop(void)` | 停止播放 |
 | `int agent_driver_audio_pause(void)` | 暂停播放 |
 | `int agent_driver_audio_resume(void)` | 继续播放 |
@@ -591,7 +603,7 @@ typedef struct agent_runtime_config
 
 `msh_agent_upload_download` 支持 `up` / `upload` 与 `down` / `download` 两组写法，也接受 `-h`、`--help`、`help`。
 
-`msh_agent_tts` 需要 `PKG_AGENT_TTS_ENABLE`。`-f` 只合成不播放，`-o` 改落盘路径（默认 `/tts.wav`），其余参数用空格拼成待合成文本。播放依赖 `PKG_AGENT_DRIVER_AUDIO`，没打开时只落盘并给出提示。
+`msh_agent_tts` 需要 `PKG_AGENT_TTS_ENABLE`。`-f` 只合成不播放，`-o` 改落盘路径（默认取 `PKG_AGENT_TTS_SAVE_PATH`），其余参数用空格拼成待合成文本。播放依赖 `PKG_AGENT_DRIVER_AUDIO`，没打开时只落盘并给出提示。
 
 ## 11. 已知差异
 

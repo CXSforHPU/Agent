@@ -211,18 +211,23 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include
 
 ### 3.10 文本转语音
 
-文件：`src/utils/tts.c`
+文件：`src/utils/tts.c`。板端到喇叭的完整过程见 [TTS 运行时链路](../diagrams/tts-runtime-flow.png)。
 
-- 仅在 `PKG_AGENT_TTS_ENABLE` 时编译。
-- `agent_tts_synth()` 向 `PKG_AGENT_TTS_URL` POST 一个 JSON：`text`、`sample_rate`（16000）、`channels`（2）。
-- 响应体是 `audio/wav` 二进制，按 Content-Length 分块 `webclient_read()` 落盘，不整段进内存。
-- 连上之后把收发超时放宽到 5 min。服务端没预热时，首帧要先建管线再做一次即时编译，实测冷启动 203 s；模型常驻后同样一句只要 2～3 s。
-- 请求 `channels=2` 是因为 AC97 一帧固定携带左右两个 PCM 槽。喂单声道数据时，`wavplay` 会把相邻两个采样当成一帧，播放速度和音调都翻倍。
-- 落盘成功后调 `agent_driver_audio_play()` 播放，需要同时打开 `PKG_AGENT_DRIVER_AUDIO`。
-- MSH 命令 `msh_agent_tts`：默认合成并播放，`-f` 只合成不播放，`-o <path>` 改落盘路径，其余参数拼成待合成文本。
-- 打开 `PKG_AGENT_TTS_AUTO_PLAY` 后，`agent_emit_answer()` 每轮把回复文本交给播报线程：队列深度 2，线程 `tts_spk` 优先级 12、栈 8 K。合成要 3~5 s，放在主循环里会把下一轮消息一起堵住。
-- 回复超过 512 字节时按 UTF-8 字符边界截断。从字节中间截断会留下半个汉字，服务端解析 JSON 直接失败，整段播报就没了。
-- 播报走 `agent_put_text()` 之后的独立分支，兜底提示（请求失败、无回答、工具循环超限）不发声。
+- 仅在 `PKG_AGENT_TTS_ENABLE` 时编译。两个入口：`msh_agent_tts` 合成一条文本，回复自动播报走 `agent_tts_speak()`。
+- 请求是 JSON POST，字段为 `text`、`sample_rate`（16000）、`channels`（1）。打开 `PKG_AGENT_TTS_AUTO_PLAY` 后多带两个字段：`stream=true` 和 `block_seconds`（1.5）。
+- `channels=1` 由本板的 I2S 拓扑决定。`libraries/HAL_Drivers/drv_i2s.c` 的 `convert_mono_to_stereo()` 把每个采样复制成左右两个 PCM 槽，一个 2048 字节的块按 64 ms 播完，正好 32,000 B/s，等于 16 kHz 单声道。喂双声道会被再翻一倍：时长拖成两倍、音调低八度，文件体积和下载流量也翻倍。
+- 流式响应是一串帧，格式 `[4 字节小端长度][自带 WAV 头的音频]`，响应头 `X-TTS-Framing: u32le-wav`。一帧 1.5 s 音频是 48,000 字节样本加 44 字节 WAV 头，板上一共读 48,048 字节。
+- 帧头用 `tts_read_exact()` 循环拼满，因为 `webclient_read()` 遇到 HTTP chunk 边界会提前返回。帧长小于 44 或大于 4 MiB 判为字节错位，只收到半帧就丢掉这一帧收尾，播半帧听着就是戛然而止。
+- 落盘用两个槽乒乓。`tts_slot_path()` 从 `PKG_AGENT_TTS_SAVE_PATH` 派生 `/sdcard/tts0.wav` 和 `/sdcard/tts1.wav`，往空闲槽写满一帧才切过去播放。正在播的文件不会被 `O_TRUNC` 抢，下一帧的接收和当前帧的播放重叠。
+- 一条回复最多收 64 帧，约 96 s。超限时丢掉尾巴，串口打 `dropped the tail`。
+- 服务端合成到某一句失败时会正常收尾，板侧只看到帧头不足 4 字节，和“整条回复念完了”无法区分，串口不给任何提示；被截断的位置记在服务端日志 `stream stopped after N blocks`。没有这层兜底时异常会掐断连接，读帧头返回 `-7`（`-WEBCLIENT_DISCONNECT`），日志写成 `read frame header failed (-7)` 加 `stream broke after 14 blocks`，把截断误报成链路断。
+- 播报线程 `tts_spk` 优先级 12、栈 8 K，队列 8 格。`agent_tts_speak()` 把回复拷到堆上，只让指针入队，合成和播放都在线程里做，主循环不等。
+- 连上之后把收发超时放宽到 5 min。没预热的进程第一次推理要 52 s～60 s，服务端开 `TTS_AUTOLOAD=1` 可以在启动时把这笔开销花掉。
+- 落盘路径必须可写。根目录挂 romfs 的板子要在 menuconfig 里把 `PKG_AGENT_TTS_SAVE_PATH` 改到 `/sdcard` 或 `/flash`，否则 `open()` 直接失败。
+- 打开 `PKG_AGENT_TTS_AUTO_PLAY`（依赖 `PKG_AGENT_DRIVER_AUDIO`）后，`agent_emit_answer()` 只把模型正文交给播报线程。请求失败、无回答这类兜底提示走 `agent_notify()`，不发声。
+- `msh_agent_tts` 的文本上限是 512 字节，超了直接报 `text too long`。`-f` 只合成不播放，`-o <path>` 改落盘路径，其余参数用空格拼成待合成文本。
+
+服务端预热之后的实测延迟（本机 GPU，不含公网隧道）：首帧 0.63 s 和 0.67 s，帧间隔最长 1.02 s，短于 1.5 s 一块，播放饿不着，RTF 0.19～0.24。预热完成后的第一条回复要另付一次卷积形状搜索，实测首帧 12.44 s。换音色只重载权重，实测首帧 9.87 s。
 
 ### 3.11 AgentAudio
 
@@ -230,7 +235,7 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include
 
 音频驱动封装 `wavplay` 与 `wavrecord` 命令，与多模态开关无关。
 
-- 播放：`agent_driver_audio_play()`、`stop`、`pause`、`resume`、`set_volume`。
+- 播放：`agent_driver_audio_play()`、`play_wait`、`stop`、`pause`、`resume`、`set_volume`。`agent_driver_audio_play_wait()` 每 100 ms 轮询一次播放状态，超时返回 `-RT_ETIMEOUT`，TTS 覆盖 WAV 前用它等上一句放完。
 - 录音：`agent_driver_audio_record()` 在 `rec_work` 线程里执行，栈 1024 字节，优先级 13，不阻塞调用者。
 - 录音参数固定为 16000 Hz、双声道、16 位。
 - `agent_driver_audio_record_stop()` 停止录音。
@@ -390,6 +395,7 @@ sequenceDiagram
 | `PKG_AGENT_STT_URL` | STT 接口地址 |
 | `PKG_AGENT_TTS_ENABLE` / `PKG_AGENT_TTS_DISABLE` | 语音合成开关，默认启用 |
 | `PKG_AGENT_TTS_URL` | TTS 接口地址 |
+| `PKG_AGENT_TTS_SAVE_PATH` | 合成 WAV 的落盘路径，默认 `/tts.wav`，需可写文件系统 |
 | `PKG_AGENT_TTS_AUTO_PLAY` | 回复自动播报，依赖 `PKG_AGENT_DRIVER_AUDIO`，默认关闭 |
 | `PKG_AGENT_DRIVER_AUDIO` | 音频驱动开关，独立于多模态 |
 

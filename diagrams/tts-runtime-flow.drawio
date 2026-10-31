@@ -3,116 +3,169 @@
   <diagram name="TTS Runtime Flow" id="tts-runtime-flow">
     <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1"
                    connect="1" arrows="1" fold="1" page="1" pageScale="1"
-                   pageWidth="1200" pageHeight="1300" math="0" shadow="0">
+                   pageWidth="1400" pageHeight="1600" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
 
-        <mxCell id="r1" value="回复文本&#xa;LLM 回答或 msh 命令"
-                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+        <mxCell id="n1" value="LLM 回复文本&#xa;agent_tts_speak() 入队，tts_spk 线程取出"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=30;"
                 vertex="1" parent="1">
-          <mxGeometry x="120" y="80" width="380" height="60" as="geometry" />
+          <mxGeometry x="120" y="80" width="520" height="80" as="geometry" />
         </mxCell>
-
-        <mxCell id="r2" value="src/utils/tts.c&#xa;agent_tts_synth()"
+        <mxCell id="n2" value="tts_post() 一条回复只发一次 POST /tts&#xa;stream=true、block_seconds=1.5、channels=1"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="120" y="230" width="380" height="60" as="geometry" />
+          <mxGeometry x="120" y="240" width="520" height="80" as="geometry" />
         </mxCell>
-
-        <mxCell id="r3" value="file_server 的 /tts&#xa;FastAPI 接口"
+        <mxCell id="n3" value="main.py 选音色，取常驻管线&#xa;speaker 缺省时取 TTS_SPEAKER，否则取排序首个"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="120" y="380" width="380" height="60" as="geometry" />
+          <mxGeometry x="120" y="400" width="520" height="80" as="geometry" />
         </mxCell>
-
-        <mxCell id="r4" value="TTS_Config + TTS&#xa;gpt-sovits-infer 推理"
+        <mxCell id="n4" value="_tts_stream_frames() 用 streaming_mode 合成&#xa;_TtsBlocker 攒够 1.5 s 音频封一帧"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="120" y="530" width="380" height="60" as="geometry" />
+          <mxGeometry x="120" y="560" width="520" height="80" as="geometry" />
         </mxCell>
-
-        <mxCell id="r5" value="WAV 字节&#xa;16 kHz、双声道、int16"
+        <mxCell id="n5" value="响应帧序列&#xa;[4 字节小端长度][自带 WAV 头的可播音频]"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="120" y="680" width="380" height="60" as="geometry" />
+          <mxGeometry x="120" y="720" width="520" height="80" as="geometry" />
         </mxCell>
-
-        <mxCell id="r6" value="落盘 /tts.wav"
+        <mxCell id="n6" value="tts_read_frame_to_fd() 写进空闲槽&#xa;/sdcard/tts0.wav 与 /sdcard/tts1.wav 交替"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="120" y="830" width="380" height="60" as="geometry" />
+          <mxGeometry x="120" y="880" width="520" height="80" as="geometry" />
         </mxCell>
-
-        <mxCell id="r7" value="wavplayer 播放&#xa;AC97 一帧带左右两个 PCM 槽"
+        <mxCell id="n7" value="等上一帧播完，agent_driver_audio_play() 播这一帧&#xa;槽位取反后接着收"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="120" y="980" width="380" height="60" as="geometry" />
+          <mxGeometry x="120" y="1040" width="520" height="80" as="geometry" />
         </mxCell>
-
-        <mxCell id="r8" value="喇叭出声"
-                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+        <mxCell id="n8" value="服务端还有下一帧？"
+                style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="120" y="1130" width="380" height="60" as="geometry" />
+          <mxGeometry x="220" y="1200" width="320" height="100" as="geometry" />
         </mxCell>
-
-        <mxCell id="w1" value="da_fei_yv 权重&#xa;参考音频与音色注册表"
-                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;dashed=1;"
+        <mxCell id="n9" value="喇叭出声&#xa;drv_i2s 把单声道复制成左右两个 PCM 槽"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=30;"
                 vertex="1" parent="1">
-          <mxGeometry x="680" y="530" width="380" height="60" as="geometry" />
+          <mxGeometry x="120" y="1400" width="520" height="80" as="geometry" />
         </mxCell>
 
-        <mxCell id="t1" value="冷启动：首次请求 203 s&#xa;建管线 + G2PW 与 numba 即时编译"
+        <mxCell id="a1" value="另一条入口：msh_agent_tts&#xa;stream=false，服务端一次返回整条 WAV&#xa;长句要等全部合成完才起播"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
-          <mxGeometry x="680" y="680" width="380" height="60" as="geometry" />
+          <mxGeometry x="740" y="230" width="520" height="100" as="geometry" />
         </mxCell>
-
-        <mxCell id="t2" value="热请求：2.6 s 出 4.20 s 音频&#xa;16 kHz、双声道、无削顶"
+        <mxCell id="a2" value="音色表：tts_speakers/*.json 配上两套权重目录&#xa;本机有 da_fei_yv（v2Pro）和 da_fei_yv_plus（v2ProPlus）&#xa;默认音色由 deploy.bat --speaker 写进 TTS_SPEAKER"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
-          <mxGeometry x="680" y="830" width="380" height="60" as="geometry" />
+          <mxGeometry x="740" y="390" width="520" height="100" as="geometry" />
         </mxCell>
-
-        <mxCell id="t3" value="板侧超时放宽到 5 min&#xa;首帧要等服务端把模型拉起来"
+        <mxCell id="a3" value="引擎按 25 Hz 语义帧出音频，16 个 token 约 0.64 s&#xa;min_chunk_length=16、overlap_length=2&#xa;重采样带 512 样本尾巴再丢掉，块边界才不爆音"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
-          <mxGeometry x="680" y="980" width="380" height="60" as="geometry" />
+          <mxGeometry x="740" y="550" width="520" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="a4" value="一帧 1.5 s = 48 000 字节样本 + 44 字节 WAV 头&#xa;前缀再占 4 字节，板上一共收到 48 048 字节&#xa;单声道 16 kHz 16 位 = 32 000 B/s"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="740" y="710" width="520" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="a5" value="帧长小于 44 或大于 4 MiB 判为字节错位&#xa;只收到半帧就丢掉这一帧收尾&#xa;播半帧听着就是戛然而止"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="740" y="870" width="520" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="a6" value="预热后实测：首帧 0.63 s 和 0.67 s，RTF 0.19～0.24&#xa;帧间隔最长 1.02 s，短于 1.5 s 一块，饿不着&#xa;预热完成后的第一条回复另付 12.44 s 形状搜索"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="740" y="1030" width="520" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="a7" value="一条回复最多 64 帧，约 96 s&#xa;超限只截尾，串口打 dropped the tail"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="740" y="1200" width="520" height="100" as="geometry" />
         </mxCell>
 
-        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
-                edge="1" parent="1" source="r1" target="r2">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="e2" value="POST {text, sample_rate:16000, channels:2}"
+        <mxCell id="e1" value="队列只传文本指针"
                 style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
-                edge="1" parent="1" source="r2" target="r3">
+                edge="1" parent="1" source="n1" target="n2">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e3" value="同一进程内调用，不另起服务"
+        <mxCell id="e2" value="HTTP 200 后开始收流"
                 style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
-                edge="1" parent="1" source="r3" target="r4">
+                edge="1" parent="1" source="n2" target="n3">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e4" value="Content-Type: audio/wav"
+        <mxCell id="e3" value="同一进程内调用，换音色只重载权重"
                 style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
-                edge="1" parent="1" source="r4" target="r5">
+                edge="1" parent="1" source="n3" target="n4">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
-                edge="1" parent="1" source="r5" target="r6">
+        <mxCell id="e4" value="每满一块 flush 一次"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
+                edge="1" parent="1" source="n4" target="n5">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
-                edge="1" parent="1" source="r6" target="r7">
+        <mxCell id="e5" value="webclient_read() 自己拼满帧"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
+                edge="1" parent="1" source="n5" target="n6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="close(fd) 后才切槽"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
+                edge="1" parent="1" source="n6" target="n7">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;"
-                edge="1" parent="1" source="r7" target="r8">
+                edge="1" parent="1" source="n7" target="n8">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#9673a6;"
-                edge="1" parent="1" source="w1" target="r4">
+        <mxCell id="e8" value="有，同一条连接收下一帧"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
+                edge="1" parent="1" source="n8" target="n6">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="60" y="1250" />
+              <mxPoint x="60" y="920" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e9" value="没有，末帧已播完"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fontSize=12;fontColor=#333333;"
+                edge="1" parent="1" source="n8" target="n9">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="a1" target="n2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="a2" target="n3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="a3" target="n4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="a4" target="n5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="a5" target="n6">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="a6" target="n7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="a7" target="n8">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>
