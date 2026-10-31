@@ -18,7 +18,7 @@
 - QEMU：脚本默认写死 `D:\rtt\env-windows\tools\qemu\qemu64\qemu-system-arm.exe`。本机 env 装在 `C:\Users\Public\Downloads\rtt\env-windows`，运行前要改脚本里的 `$qemu` / `-Qemu` 参数
 - Python 3（用于 PC 端 MQTT 客户端）
 - 已编译的 `rtthread.bin`、`sd.bin`（BSP 根目录）
-- 网络可达的 broker（默认取 `rtconfig.h` 里配置的 `tcp://47.93.225.100:1883`，PC 与 QEMU 都需要能访问）
+- 网络可达的 broker（本仓库 `rtconfig.h` 里配的是 `tcp://broker.emqx.io:1883`，PC 与 QEMU 都要能访问）。PC 端脚本默认同一个地址；broker 要认证时用 `MQTT_USER` 和 `MQTT_PASSWORD` 两个环境变量传入，不设就匿名连接
 
 ## 用法
 

@@ -1,25 +1,25 @@
 {
- "name": "dafeiyu2_v2ProPlus_e8_s216",
+ "name": "da_fei_yv_plus",
  "exported": "2026-10-31",
  "version": "v2ProPlus",
  "files": [
   {
    "role": "text2semantic (s1)",
-   "file": "GPT_weights_v2ProPlus/dafeiyu2_v2ProPlus-e40.ckpt",
+   "file": "GPT_weights_v2ProPlus/da_fei_yv_plus-e40.ckpt",
    "source": "GPT_weights_v2ProPlus/dafeiyu2_v2ProPlus-e40.ckpt",
    "size": 155313376,
    "sha256": "e31f8334d48fd1a81d224af3be70bcf92ffd5ea714bd97d764082324a078be12"
   },
   {
    "role": "SoVITS vocoder (s2)",
-   "file": "SoVITS_weights_v2ProPlus/dafeiyu2_v2ProPlus_e8_s216.pth",
+   "file": "SoVITS_weights_v2ProPlus/da_fei_yv_plus_e8_s216.pth",
    "source": "SoVITS_weights_v2ProPlus/dafeiyu2_v2ProPlus_e8_s216.pth",
    "size": 172765363,
    "sha256": "ca60c52ed0c23cb4a22f68bfbf0e7bf5e4a988eccbbb1655cfb5de91865d4b89"
   },
   {
    "role": "参考音频",
-   "file": "refs/dwg_0002.wav",
+   "file": "refs/da_fei_yv_plus/dwg_0002.wav",
    "source": "data/dafeiyu2_32k/wavs/dwg_0002.wav",
    "size": 285964,
    "sha256": "173e57d693a99aa89d8ed594e755b44730c2dce20be00632941fd004bfe8dc03"

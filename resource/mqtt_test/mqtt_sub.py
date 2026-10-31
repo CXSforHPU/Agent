@@ -1,7 +1,12 @@
 """Minimal MQTT 3.1.1 subscriber (stdlib only) to verify board->broker publishes.
 
 Usage: python mqtt_sub_test.py <topic-filter> <seconds> [host] [port]
+
+Broker defaults to broker.emqx.io:1883. Username and password come from the
+MQTT_USER and MQTT_PASSWORD environment variables; leave them unset for an
+anonymous broker.
 """
+import os
 import socket
 import struct
 import sys
@@ -9,10 +14,10 @@ import time
 
 topic = sys.argv[1].encode()
 seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 60
-host = sys.argv[3] if len(sys.argv) > 3 else "47.93.225.100"
+host = sys.argv[3] if len(sys.argv) > 3 else "broker.emqx.io"
 port = int(sys.argv[4]) if len(sys.argv) > 4 else 1883
-user = b"USER1"
-pw = b"USER1"
+user = os.environ.get("MQTT_USER", "").encode()
+pw = os.environ.get("MQTT_PASSWORD", "").encode()
 client_id = b"pc-e2e-sub"
 
 

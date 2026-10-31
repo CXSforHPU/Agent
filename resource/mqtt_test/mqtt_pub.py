@@ -5,6 +5,10 @@ Usage: python mqtt_pub.py <topic> [payload] [host] [port]
 If <payload> is omitted or "-", the payload is read from the MQTT_PAYLOAD
 environment variable. Use that form on Windows/PowerShell: passing JSON with
 inner double quotes as a command-line argument would lose the quotes.
+
+Broker defaults to broker.emqx.io:1883. Username and password come from the
+MQTT_USER and MQTT_PASSWORD environment variables; leave them unset for an
+anonymous broker.
 """
 import os
 import socket
@@ -17,10 +21,10 @@ if len(sys.argv) > 2 and sys.argv[2] != "-":
     msg = sys.argv[2].encode()
 else:
     msg = os.environ.get("MQTT_PAYLOAD", "{}").encode()
-host = sys.argv[3] if len(sys.argv) > 3 else "47.93.225.100"
+host = sys.argv[3] if len(sys.argv) > 3 else "broker.emqx.io"
 port = int(sys.argv[4]) if len(sys.argv) > 4 else 1883
-user = b"USER1"
-pw = b"USER1"
+user = os.environ.get("MQTT_USER", "").encode()
+pw = os.environ.get("MQTT_PASSWORD", "").encode()
 client_id = b"pc-e2e-pub"
 
 

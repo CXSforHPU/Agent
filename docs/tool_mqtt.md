@@ -684,7 +684,7 @@ W/Agent.AgentLoop: repeated tool calls detected, forcing a final answer
 
 ## 10. 验证记录
 
-以下功能在 QEMU（vexpress-a9）+ 真实 broker（`tcp://47.93.225.100:1883`）上验证通过：
+以下功能在 QEMU（vexpress-a9）+ 公网 broker 上验证通过，broker 地址取 `rtconfig.h` 里的 `PKG_AGENT_TOOL_MQTT_BROKER_URL`：
 
 | 验证项 | 结果 |
 |---|---|

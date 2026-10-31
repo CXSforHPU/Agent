@@ -51,7 +51,7 @@ Windows 用 `deploy.bat --tts`。手动分步时是先 `python fetch_tts.py dict
 
 - `/upload` 只返回 `file_id` 等信息，不返回完整下载 URL。
 - 浏览器直接访问的地址是 `{服务根地址}/download/{file_id}`，本地为 `http://127.0.0.1:8000/download/{file_id}`。
-- 内网穿透后服务根地址换成公网域名（如 `https://files.l2.bb1a.cn`），下载地址为 `{根地址}/download/{file_id}`。
+- 内网穿透后服务根地址换成公网域名，下载地址为 `{根地址}/download/{file_id}`。
 - 嵌入式侧把宏 `PKG_AGENT_DOWNLOAD_URL` 配到 `/download` 为止，例如 `http://127.0.0.1:8000/download`。
   `file_op.c::agent_multi_get_file` 和 `agent_upload_file` 会直接追加 `/{file_id}`，拼成
   `{PKG_AGENT_DOWNLOAD_URL}/{file_id}`，不要再重复 `/download`。

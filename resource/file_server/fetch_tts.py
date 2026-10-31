@@ -251,7 +251,7 @@ def step_check():
         "chinese-roberta-wwm-ext-large": INFER / "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large/pytorch_model.bin",
         "G2PWModel": INFER / "GPT_SoVITS/text/G2PWModel/g2pW.onnx",
         "fasttext LID": INFER / "GPT_SoVITS/pretrained_models/fast_langdetect/lid.176.bin",
-        "sv ERes2NetV2 (v2Pro 用)": SV_CKPT,
+        "sv ERes2NetV2 (两档 Pro 用)": SV_CKPT,
         "nltk cmudict": INFER / "runtime/nltk_data/corpora/cmudict/cmudict",
         "FFmpeg (torchcodec)": INFER / "runtime/avcodec-63.dll" if os.name == "nt" else INFER / "runtime",
         "GPT weights": INFER / "GPT_weights_v2Pro/da_fei_yv-e40.ckpt",

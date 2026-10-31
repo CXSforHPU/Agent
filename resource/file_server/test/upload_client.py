@@ -1,14 +1,15 @@
-import requests
+import json
+import os
 
 import requests
-import json
+
 
 def upload_file(file_path):
-    url = "http://files.l2.bb1a.cn/upload"
+    base = os.environ.get("FILE_SERVER_URL", "http://127.0.0.1:8000")
+    url = base.rstrip("/") + "/upload"
     try:
         with open(file_path, "rb") as f:
-            files = {"file": f}
-            resp = requests.post(url, files=files, timeout=60)  # 可适当增大超时
+            resp = requests.post(url, files={"file": f}, timeout=60)
             resp.raise_for_status()
             return resp.json()
     except requests.exceptions.RequestException as e:
@@ -18,6 +19,6 @@ def upload_file(file_path):
         print("响应不是有效的 JSON，原始文本:", resp.text)
         return None
 
+
 if __name__ == "__main__":
-    ret = upload_file("./index.html")
-    print(ret)
+    print(upload_file("./index.html"))

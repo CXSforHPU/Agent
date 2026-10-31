@@ -309,14 +309,14 @@ draw.io 源文件：[tts-deploy-flow.drawio](../../diagrams/tts-deploy-flow.draw
 `fetch_tts.py` 做的事，全部幂等（已存在即跳过）：
 
 - `dicts`：取 8 个上游放在 git 里、单个就超过 500 KB 的数据文件（`text/cmudict.rep`、`text/engdict_cache.pickle`、`text/ja_userdic/userdict.csv`、`Accel/vendor/cuda/bin/cudart64_12.dll` 等），共 35.3 MB。按钉住的 commit 从 `raw.githubusercontent.com` 下载，逐个核对 SHA256；本地已经存在且校验通过就跳过，校验失败则删掉重下。
-- `voice`：从 ModelScope 的 `Caoxiansong/da_fei_yv` 拉 `GPT_weights_v2Pro/da_fei_yv-e40.ckpt` 与 `SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth`，落到同名目录，逐个核对 SHA256，值与 `refs/da_fei_yv/manifest.json` 一致。直链匿名可下，不需要 token；curl 带 `-C -`，断点续传。
+- `voice`：从 ModelScope 的 `Caoxiansong/da_fei_yv` 拉四份权重，`da_fei_yv` 的 s1/s2 与 `da_fei_yv_plus` 的 s1/s2，落到各自的版本目录，逐个核对 SHA256，期望值与 `refs/<音色>/manifest.json` 一致。直链匿名可下，不需要 token；curl 带 `-C -`，断点续传。
 - `assets`：从 ModelScope 的 `XXXXRT/GPT-SoVITS-Pretrained` 解出 `pretrained_models.zip`（hubert、bert 等）到 `third_party/gpt-sovits-infer/GPT_SoVITS/`、`G2PWModel.zip` 到 `GPT_SoVITS/text/`、`nltk_data.zip` 到 `runtime/`，解压目录沿用上游 `install.sh:262`、`:275`、`:362` 的目标；再从 fastText 官方下 `lid.176.bin` 并校验 MD5；Windows 上额外解一份 FFmpeg 共享库到 `runtime/`，因为 venv 里 torchaudio 2.11 的 `load()` 已转发 TorchCodec，没有外部 FFmpeg 就报 `Could not find module libtorchcodec_coreN.dll`。
 
 换源与代理：`--source hf` / `--source hf-mirror` 切 zip 来源，`--mirror` 让 GitHub 走 gh-proxy。国内直连 BtbN 的 FFmpeg Release 会报 curl 退出码 35（SSL 连接被断），所以 Windows 上这一步基本要配 `--mirror`；gh-proxy 实测只有 80 KB/s ~ 400 KB/s，88 MB 的 zip 得等几分钟。`lid.176.bin` 已随 `pretrained_models.zip` 落地，脚本仍按 MD5 复核一遍。
 
-取完之后 `third_party/gpt-sovits-infer/` 是 5.8 GB：`GPT_SoVITS/pretrained_models/` 4.6 GB、`GPT_SoVITS/text/G2PWModel/` 608 MB、`runtime/` 231 MB、8 个词表 35.3 MB、自家 v2Pro 权重 277 MiB（148 MiB 与 129 MiB）、参考音频 0.3 MB。入库的代码和配置只有 1.4 MB。
+取完之后 `third_party/gpt-sovits-infer/` 是 6.1 GB：`GPT_SoVITS/pretrained_models/` 4.6 GB、`GPT_SoVITS/text/G2PWModel/` 608 MB、`runtime/` 228 MB、8 个词表 35.3 MB、四份权重 590 MiB（148 MiB、129 MiB、148 MiB、165 MiB）、参考音频 0.3 MB。入库的代码和配置 169 个文件、1.9 MB。
 
-推理子集怎么选出来的，记在 `third_party/gpt-sovits-infer/README.md`：判据是一次真实中文合成在 `sys.modules` 里留下的 97 个上游 .py，再按目录规则放宽到其它语种的文本模块和各个 `__init__.py`；训练、导出、WebUI、ASR、人声分离全部丢掉。落库 164 个文件，其中 157 个是上游推理文件，另加上游 MIT `LICENSE`、本说明、一份音色注册表和自家音色的 6 个文件。升级或重抽用同目录的 `extract_infer.py`，取舍清单是里面的 `DROP_PREFIX`。
+推理子集怎么选出来的，记在 `third_party/gpt-sovits-infer/README.md`：判据是一次真实中文合成在 `sys.modules` 里留下的 97 个上游 .py，再按目录规则放宽到其它语种的文本模块和各个 `__init__.py`；训练、导出、WebUI、ASR、人声分离全部丢掉。落库 169 个文件，其中 157 个是上游推理文件，另加上游 MIT `LICENSE`、本说明、两份音色注册表和每个音色四个自有文件（参考音频、`manifest.json`、`prompt.txt`、`tts_infer.custom.yaml`）。升级或重抽用同目录的 `extract_infer.py`，取舍清单是里面的 `DROP_PREFIX`。
 
 装配自检，不经过 HTTP。在 `file_server` 目录里用带 tts 组的 venv 起 Python，把下面这段从标准输入喂进去（`python -` 与交互式解释器都把当前目录放进 `sys.path`，写成 .py 文件用绝对路径跑则 `import main` 会失败）：
 
@@ -376,7 +376,7 @@ uv pip install --python ./.venv/Scripts/python.exe eunjeon "setuptools<81"
 
 ### 导入本地导出的权重
 
-自己微调导出的权重按下面的布局摆放：两套权重、参考音频与它的转写文本、一份音色注册表。仓库里带的 `da_fei_yv` 就是这么放的，训练导出目录里的原始文件名是 `dafeiyu2_v2Pro-e40.ckpt`、`dafeiyu2_v2Pro_e6_s162.pth`、`refs/dwg_0002.wav` 和一份 `manifest.json`，入库时统一换成 `da_fei_yv` 前缀，`manifest.json` 里留了 `renamed_from` 字段：
+自己微调导出的权重按下面的布局摆放：每个音色两套权重、`refs/<音色>/` 四件留档、`tts_speakers/<音色>.json` 一份注册表。仓库里带的 `da_fei_yv` 就是这么放的，导出目录里的原始文件名是 `dafeiyu2_v2Pro-e40.ckpt`、`dafeiyu2_v2Pro_e6_s162.pth` 和 `refs/dwg_0002.wav`，入库时统一换成 `da_fei_yv` 前缀。原名记在 `manifest.json` 每条的 `source` 和顶层 `renamed_from`，`file` 一律写仓库里的路径：
 
 ```text
 third_party/gpt-sovits-infer/
@@ -387,6 +387,7 @@ third_party/gpt-sovits-infer/
 ├── refs/da_fei_yv/dwg_0002.wav                       入库，参考音频
 ├── refs/da_fei_yv/manifest.json                      入库，导出时的测量值留档
 ├── refs/da_fei_yv/prompt.txt                         入库，从 manifest 的 prompt_text 落一份
+├── refs/da_fei_yv/tts_infer.custom.yaml              入库，导出时那份推理配置
 ├── refs/da_fei_yv_plus/                              同样四件，音色名换成 da_fei_yv_plus
 └── tts_speakers/da_fei_yv.json                       入库，只有三个字段
 ```
@@ -405,7 +406,7 @@ v2ProPlus 那一套音色名 `da_fei_yv_plus`，`refs/da_fei_yv_plus/manifest.js
 
 走 `/tts` 整条返回（`stream=false`）的端到端实测：请求 `{"speaker":"da_fei_yv","language":"all_zh","sample_rate":16000,"channels":2}`，返回 200、294 444 字节，响应头 `x-speaker: da_fei_yv`、`x-sample-rate: 16000`；产物 16 kHz 双声道、4.60 s、峰值 31031、无削顶，`/stt` 回读「你好 我是大飛魚今天天氣不錯」。用 manifest 里那句 23 字自测文本合成得 6.44 s，落在导出记录写的 6.12～7.72 s 抖动带内；导出侧固定 seed 43，`/tts` 这条链路没传 seed，时长每次会抖。
 
-有两个前提要满足。s2 权重如果前两个字节不是 `PK`，必须经 `load_sovits_new`（`process_ckpt.py:141`）补上 `b"PK"` 再 `torch.load`，`init_vits_weights` 已经这么调了，别绕过它自己加载。v2Pro 依赖 `GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt`（107 528 697 字节，`sv.py:6` 按相对路径找它），缺了 `init_sv_model()` 会在加载时抛文件不存在；这份由 `fetch_tts.py assets` 取，`fetch_tts.py check` 会报。
+有两个前提要满足。s2 权重如果前两个字节不是 `PK`，必须经 `load_sovits_new`（`process_ckpt.py:141`）补上 `b"PK"` 再 `torch.load`，`init_vits_weights` 已经这么调了，别绕过它自己加载。v2Pro 与 v2ProPlus 都依赖 `GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt`（107 528 697 字节，`sv.py:6` 按相对路径找它），缺了 `init_sv_model()` 会在加载时抛文件不存在；这份由 `fetch_tts.py assets` 取，`fetch_tts.py check` 会报。
 
 导出包里的 `manifest.json` 和 `tts_infer.custom.yaml` 建议一起放进 `refs/<音色名>/` 留档，训练参数、seed 和当时的时长都记在里面，验收时对着看。
 
@@ -487,7 +488,7 @@ curl -s -N -X POST -H "Content-Type: application/json" --data @req_stream.json l
 
 关掉之后仍剩一个窗口：预热句和真实回复字数不同时，第一条回复要再付一次形状搜索。2026-10-31 重启后实测首帧 12.44 s，同一句的第二、三次是 0.63 s 和 0.67 s。测延迟前先按目标回复长度发一两句废文本。
 
-本机 GPU、不含公网隧道的稳态节奏：首帧 0.63 s 和 0.67 s，RTF 0.19～0.24，帧间隔最长 1.02 s。经隧道 `files.l2.bb1a.cn` 发一句 33 字，5 帧共 221,680 字节、6.92 s 音频，客户端 2.53 s 收完，隧道没有成为瓶颈。
+本机 GPU、不含公网隧道的稳态节奏：首帧 0.63 s 和 0.67 s，RTF 0.19～0.24，帧间隔最长 1.02 s。经公网隧道发一句 33 字，5 帧共 221 680 字节、6.92 s 音频，客户端 2.53 s 收完，隧道没有成为瓶颈。
 
 ### 全新 clone 复刻
 
@@ -509,6 +510,8 @@ curl -s -N -X POST -H "Content-Type: application/json" --data @req_stream.json l
 | 第二次 | 268 844 | 2.62 s | 同上 |
 
 首次那 203 s 里包含建管线、G2PW 与 numba 的即时编译，模型常驻后每句 2～3 s。两次返回的字节数相同，长度稳定。整个 clone 加 `.venv` 占 12 GB，其中 5.2 GB 是 Python 环境，5.8 GB 是推理资产。
+
+2026-10-31 在开源发布副本里单跑了一遍 `fetch_tts.py voice`。那份仓库把包当普通目录入库，没有 `.venv`，也没有任何权重，等价于一次全新 clone。四个文件全部落地，SHA256 与脚本里的 `VOICE_WEIGHTS`、两份 manifest 都对得上，大小分别 155 313 376、134 946 419、155 313 376、172 765 363 字节，合计 590 MiB。之后 `fetch_tts.py check` 有六项音色探针转 `ok`（两档 s1/s2 加两份参考音频），剩下 15 项 `absent` 全归 `dicts` 与 `assets`，是预期结果。用 `_tts_speakers()` 的配对规则复核该目录，解析出 `da_fei_yv`（v2Pro）与 `da_fei_yv_plus`（v2ProPlus）两个音色，不带 `--speaker` 时默认前者。四份文件的头两字节：s1 都是 `PK\x03\x04` 的 torch zip，301 个条目、295 个张量；s2 分别是 `b"05"` 与 `b"06"`，即上游 `head2version` 里的 v2Pro 与 v2ProPlus。这一轮只验证取权重与音色解析，`assets` 要几 GB，没在发布副本重复跑。
 
 ### 重新部署与启动
 
@@ -540,11 +543,11 @@ curl -s -N -X POST -H "Content-Type: application/json" --data @req_stream.json l
 
 draw.io 源文件：[tts-runtime-flow.drawio](../../diagrams/tts-runtime-flow.drawio)
 
-图里那条流式链路是板子打开 `PKG_AGENT_TTS_AUTO_PLAY` 之后的走法。板侧请求不带 `speaker`，服务端按 `TTS_SPEAKER` 取默认音色，本机当前是 `da_fei_yv_plus`，`GET /tts/speakers` 的 `default` 字段就是板子听到的那个。2026-10-31 经隧道 `files.l2.bb1a.cn` 用板侧原样的请求体复现过一次：33 字一句，2.53 s 收完 5 帧，共 6.92 s 音频，帧内 WAV 是 16 kHz 单声道 16 位。板侧收流与两槽乒乓的细节见 [framework.md 的文本转语音一节](../../docs/framework.md)。
+图里那条流式链路是板子打开 `PKG_AGENT_TTS_AUTO_PLAY` 之后的走法。板侧请求不带 `speaker`，服务端按 `TTS_SPEAKER` 取默认音色，本机当前是 `da_fei_yv_plus`，`GET /tts/speakers` 的 `default` 字段就是板子听到的那个。2026-10-31 经公网隧道用板侧原样的请求体复现过一次：33 字一句，2.53 s 收完 5 帧，共 6.92 s 音频，帧内 WAV 是 16 kHz 单声道 16 位。板侧收流与两槽乒乓的细节见 [framework.md 的文本转语音一节](../../docs/framework.md)。
 
 ## 12. 第三方与许可
 
-`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及运行时改写的两个文件：上游每次建管线都会把权重绝对路径写回 `GPT_SoVITS/configs/tts_infer.yaml`，G2PW 词典重建后会改写 `GPT_SoVITS/text/g2pw/polyphonic.md5`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`deploy.bat`、`deploy.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 164 个文件。四份权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
+`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及运行时改写的两个文件：上游每次建管线都会把权重绝对路径写回 `GPT_SoVITS/configs/tts_infer.yaml`，G2PW 词典重建后会改写 `GPT_SoVITS/text/g2pw/polyphonic.md5`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`deploy.bat`、`deploy.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 169 个文件。四份权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
 
 | 组件 | 来源 | 许可 | 入库 |
 |---|---|---|---|
