@@ -741,6 +741,27 @@ static rt_bool_t payload_meta_key(const char *key)
     return RT_FALSE;
 }
 
+/* 成员本身是数值最好，否则下一层：simu 这类把测量值写成
+   {"values":{"temperature":25.3}}，只看顶层会一条都取不出来。
+   depth 限死，避免对端发来深嵌套 JSON 把 MQTT 线程的栈吃穿。 */
+static rt_bool_t json_number_deep(cJSON *node, double *out, int depth)
+{
+    cJSON *child;
+
+    if (mqtt_json_node_number(node, out)) return RT_TRUE;
+    if (depth <= 0) return RT_FALSE;
+
+    if (cJSON_IsObject(node) || cJSON_IsArray(node))
+    {
+        for (child = node->child; child != RT_NULL; child = child->next)
+        {
+            if (child->string != RT_NULL && payload_meta_key(child->string)) continue;
+            if (json_number_deep(child, out, depth - 1)) return RT_TRUE;
+        }
+    }
+    return RT_FALSE;
+}
+
 /* 取 val/value，否则取对象里第一个非元数据数值字段 */
 static rt_bool_t payload_value_from_json(const char *p, double *out)
 {
@@ -762,14 +783,14 @@ static rt_bool_t payload_value_from_json(const char *p, double *out)
         for (i = 0; i < sizeof(preferred) / sizeof(preferred[0]) && !ok; i++)
         {
             item = cJSON_GetObjectItemCaseSensitive(root, preferred[i]);
-            if (item != RT_NULL && mqtt_json_node_number(item, out)) ok = RT_TRUE;
+            if (item != RT_NULL && json_number_deep(item, out, 2)) ok = RT_TRUE;
         }
 
         cJSON_ArrayForEach(item, root)
         {
             if (ok) break;
             if (item->string == RT_NULL || payload_meta_key(item->string)) continue;
-            if (mqtt_json_node_number(item, out)) ok = RT_TRUE;
+            if (json_number_deep(item, out, 2)) ok = RT_TRUE;
         }
     }
 
