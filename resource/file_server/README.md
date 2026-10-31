@@ -264,7 +264,7 @@ menuconfig 中的填写位置：
 
 ## 11. 可选：GPT-SoVITS 语音合成
 
-`main.py` 里的 `/tts` 是可选功能。推理代码已经抽进仓库，放在 `third_party/gpt-sovits-infer/`，只留合成一条链。预训练模型、大词表、FFmpeg 不入库，装配前该接口返回 503，其余接口照常工作。音色是自家微调的 `da_fei_yv`：参考音频、`manifest.json` 与音色注册表在仓库里，两个权重文件 148 MiB 与 129 MiB 放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `voice` 步骤拉回并核对 SHA256。
+`main.py` 里的 `/tts` 是可选功能。推理代码已经抽进仓库，放在 `third_party/gpt-sovits-infer/`，只留合成一条链。预训练模型、大词表、FFmpeg 不入库，装配前该接口返回 503，其余接口照常工作。音色是自家微调的 `da_fei_yv`（v2Pro）与 `da_fei_yv_plus`（v2ProPlus）：参考音频、`manifest.json` 与音色注册表在仓库里，四份权重单个 129 MiB～165 MiB，放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `voice` 步骤拉回并核对 SHA256。
 
 装配这条链有三个动作，装环境、拉第三方资产、逐项自检。脚本一次跑完：
 
@@ -382,7 +382,7 @@ uv pip install --python ./.venv/Scripts/python.exe eunjeon "setuptools<81"
 third_party/gpt-sovits-infer/
 ├── GPT_weights_v2Pro/da_fei_yv-e40.ckpt              fetch_tts.py voice 从 ModelScope 拉
 ├── SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth       同上
-├── GPT_weights_v2ProPlus/da_fei_yv_plus-e40.ckpt    本机自训，不入库也没发布
+├── GPT_weights_v2ProPlus/da_fei_yv_plus-e40.ckpt    同上，在同一个 ModelScope 仓库里
 ├── SoVITS_weights_v2ProPlus/da_fei_yv_plus_e8_s216.pth  同上
 ├── refs/da_fei_yv/dwg_0002.wav                       入库，参考音频
 ├── refs/da_fei_yv/manifest.json                      入库，导出时的测量值留档
@@ -393,9 +393,9 @@ third_party/gpt-sovits-infer/
 
 `tts_speakers/da_fei_yv_plus.json` 也在库里，只有参考音频路径、转写文本路径和语种三个字段。
 
-两个权重合计 277 MiB，超过 GitHub 的单文件上限，仓库里不带：`fetch_tts.py voice` 从 ModelScope 取，SHA256 对得上才留下。换音色时照这个布局再放一套即可，目录名决定推理版本。
+四份权重合计 590 MiB，超过 GitHub 的单文件上限，仓库里不带：`fetch_tts.py voice` 从 ModelScope 一次拉四个，SHA256 对得上才留下。换音色时照这个布局再放一套即可，目录名决定推理版本。
 
-本机另外装了一套 v2ProPlus 权重做耳测对比，音色名 `da_fei_yv_plus`（`refs/da_fei_yv_plus/manifest.json` 记了哈希与训练配方）。这两个权重还没发布，所以 `fetch_tts.py voice` 只拉 `da_fei_yv`，新装的机器 `/tts/speakers` 也只列出一个。选 v2ProPlus 是想试逐 token 流式 `gpt_streaming`（`TTS_infer_pack/streaming.py:12` 只放 v2ProPlus/v5turbo/v5dev），2080 Ti 上实测是负收益：同一份权重 `streaming_mode` 首帧 0.62～0.93 s、RTF 0.19～0.24，换 `gpt_streaming` 是 0.83～1.59 s、RTF 0.19～0.38，且它按 CUDA graph 静态形状解码，预热完的第一条真实回复要补交一次图捕获，首帧 16.25 s、启动预热从 21.3 s 涨到 165.4 s。因此 `_tts_stream_frames` 两个版本都只走 `streaming_mode`，v2ProPlus 剩下的差别只有听感。同一进程里换音色要重载两套权重，实测那一次请求首帧 9.87 s（v2ProPlus→v2Pro），之后的请求才回到 0.6 s 上下。
+v2ProPlus 那一套音色名 `da_fei_yv_plus`，`refs/da_fei_yv_plus/manifest.json` 记了哈希与训练配方，2026-10-31 发布到同一个 ModelScope 仓库，`fetch_tts.py voice` 把两档四个文件一起拉下来，新装的机器 `GET /tts/speakers` 列两个音色。不带 `--speaker` 时默认取名字排序首个，也就是 `da_fei_yv`；本机部署用 `deploy.bat --start-only --autoload --speaker da_fei_yv_plus` 把默认设成 plus。选 v2ProPlus 最初是想试逐 token 流式 `gpt_streaming`（`TTS_infer_pack/streaming.py:12` 只放 v2ProPlus/v5turbo/v5dev），2080 Ti 上实测是负收益：同一份权重 `streaming_mode` 首帧 0.62～0.93 s、RTF 0.19～0.24，换 `gpt_streaming` 是 0.83～1.59 s、RTF 0.19～0.38，且它按 CUDA graph 静态形状解码，预热完的第一条真实回复要补交一次图捕获，首帧 16.25 s、启动预热从 21.3 s 涨到 165.4 s。因此 `_tts_stream_frames` 两个版本都只走 `streaming_mode`，v2ProPlus 剩下的差别只有听感。同一进程里换音色要重载两套权重，实测那一次请求首帧 9.87 s（v2ProPlus→v2Pro），之后的请求才回到 0.6 s 上下；2026-10-31 又测了一轮，切过去首帧 10.00 s、切回来 5.31 s，同一音色连发三条回到 1.14～1.39 s。
 
 文件名要能配成对：`.ckpt` 去掉 `-e\d+` 之后的前缀，和 `.pth` 去掉 `_e\d+_s\d+` 之后的前缀要一致，两边都得到 `da_fei_yv`。权重名里带不带版本都行，版本由所在目录决定。
 
@@ -497,7 +497,7 @@ curl -s -N -X POST -H "Content-Type: application/json" --data @req_stream.json l
 |---|---|
 | `bash deploy.sh --tts` | torch 2.14.1+cu126，CUDA 可用，`.venv` 5.2 GB |
 | `fetch_tts.py dicts` | 8 个词表逐个核对 SHA256 通过 |
-| `fetch_tts.py voice` | 两个权重从 ModelScope 拉回，SHA256 对上 |
+| `fetch_tts.py voice` | 四个权重从 ModelScope 拉回，SHA256 对上 |
 | `fetch_tts.py assets` | 解出 `pretrained_models.zip` 4.24 GB，`third_party` 合计 5.8 GB |
 | `fetch_tts.py check` | `all third-party pieces present` |
 
@@ -544,12 +544,12 @@ draw.io 源文件：[tts-runtime-flow.drawio](../../diagrams/tts-runtime-flow.dr
 
 ## 12. 第三方与许可
 
-`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及运行时改写的两个文件：上游每次建管线都会把权重绝对路径写回 `GPT_SoVITS/configs/tts_infer.yaml`，G2PW 词典重建后会改写 `GPT_SoVITS/text/g2pw/polyphonic.md5`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`deploy.bat`、`deploy.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 164 个文件。两个权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
+`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及运行时改写的两个文件：上游每次建管线都会把权重绝对路径写回 `GPT_SoVITS/configs/tts_infer.yaml`，G2PW 词典重建后会改写 `GPT_SoVITS/text/g2pw/polyphonic.md5`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`deploy.bat`、`deploy.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 164 个文件。四份权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
 
 | 组件 | 来源 | 许可 | 入库 |
 |---|---|---|---|
 | GPT-SoVITS 推理代码 | `RVC-Boss/GPT-SoVITS` @ `b4570b8`，只抽合成链 | MIT，随上游 `LICENSE` 一起进 | 是，157 个文件 |
-| 自家音色 `da_fei_yv` 的权重与参考音频 | 本工程自训，训练数据 `YinZilu/da-fei-yu-girl-voice-zh`；权重发布在 ModelScope `Caoxiansong/da_fei_yv` | 训练数据是 **CC BY-NC 4.0**：仅限非商业，须署名「尹紫鹭幻想社（Bilibili）」，不得用于冒充真人。权重是衍生作品，同受此约束 | 权重否，`fetch_tts.py voice` 从 ModelScope 拉；参考音频 0.3 MB 入库 |
+| 自家音色 `da_fei_yv` 与 `da_fei_yv_plus` 的权重与参考音频 | 本工程自训，训练数据 `YinZilu/da-fei-yu-girl-voice-zh`；权重发布在 ModelScope `Caoxiansong/da_fei_yv` | 训练数据是 **CC BY-NC 4.0**：仅限非商业，须署名「尹紫鹭幻想社（Bilibili）」，不得用于冒充真人。权重是衍生作品，同受此约束 | 权重否，`fetch_tts.py voice` 从 ModelScope 拉；参考音频 0.3 MB 入库 |
 | 上游 git 里的词表与 CUDA 运行库 | 同一 commit 的 `raw.githubusercontent.com` | 随上游仓库（MIT） | 否，`fetch_tts.py dicts` 取，8 个 35.3 MB，逐个校验 SHA256 |
 | chinese-hubert-base、chinese-roberta-wwm-ext-large、G2PWModel、nltk_data | 上游 `XXXXRT/GPT-SoVITS-Pretrained` 的 zip | 以各自来源页声明为准，本仓库不重新授权 | 否 |
 | `lid.176.bin` | fastText 官方 supervised models | CC BY-SA 3.0（fastText 文档页写明，不是常见的 NC 误传） | 否 |
@@ -561,7 +561,7 @@ draw.io 源文件：[tts-runtime-flow.drawio](../../diagrams/tts-runtime-flow.dr
 
 1. 不要用 `git add -f` 把被忽略的路径塞进仓库。预训练模型和 GPL 二进制一旦进历史就很难干净撤回。
 2. 权重是自己训的，但训练数据是 CC BY-NC 4.0，权重是衍生作品，同样受非商业与署名约束。仓库首页、发行物和对外演示都要写明音色数据来自「尹紫鹭幻想社（Bilibili）」，按 CC BY-NC 4.0 使用。
-3. 两个权重分别是 148 MiB 与 129 MiB，超过 GitHub 普通 git 对象的 100 MB 上限，LFS 又要占配额，所以放到 ModelScope（`Caoxiansong/da_fei_yv`），由 `fetch_tts.py voice` 匿名直链拉取并校验 SHA256。CC BY-NC 4.0 的衍生权重本来也不适合再分发到 GitHub。
+3. 四个权重单个在 129 MiB 与 165 MiB 之间，超过 GitHub 普通 git 对象的 100 MB 上限，LFS 又要占配额，所以放到 ModelScope（`Caoxiansong/da_fei_yv`），由 `fetch_tts.py voice` 匿名直链拉取并校验 SHA256。CC BY-NC 4.0 的衍生权重本来也不适合再分发到 GitHub。
 
 ModelScope 上的许可字段要单独改一次。仓库建好时平台的 `License` 默认是 `Apache License 2.0`，权重实际的许可却是 CC BY-NC 4.0，两者冲突。README 里的 front matter 改不了这个字段，要在网页的模型信息里把 License 选成 CC BY-NC 4.0。字段不改，别人只看平台标签就会以为可以商用。
 

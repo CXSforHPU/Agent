@@ -9,8 +9,8 @@
 Stdlib only, so it runs before any virtualenv exists. The inference code itself is
 in third_party/gpt-sovits-infer (MIT, pinned upstream commit); what stays out are
 the blobs: the 35 MB of dictionaries that upstream keeps in git, the pretrained
-models, and the FFmpeg/nltk runtime. The voice that ships with the repo is our own
-fine-tune; its two weight files live on ModelScope (the git host rejects them),
+models, and the FFmpeg/nltk runtime. The voices that ship with the repo are our own
+fine-tunes; their four weight files live on ModelScope (the git host rejects them),
 the reference audio and manifest stay in the repo.
 See the 第三方与许可 section in README.md.
 """
@@ -40,8 +40,9 @@ UPSTREAM_RAW = "https://raw.githubusercontent.com/RVC-Boss/GPT-SoVITS/" + UPSTRE
 # so it gets its own marker.
 SV_CKPT = INFER / "GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt"
 
-# 自家微调的音色权重：单个 155 MB / 135 MB，GitHub 传不上去，放在 ModelScope。
-# 仓库里的 refs/da_fei_yv/manifest.json 记录哈希，这里只列要拉的两个文件。
+# 自家微调的音色权重，GitHub 传不上去，放在 ModelScope。da_fei_yv 是 v2Pro，
+# da_fei_yv_plus 是 v2ProPlus，单个 135 MB～173 MB。
+# 仓库里的 refs/<音色>/manifest.json 记录哈希，这里只列要拉的四个文件。
 # 直链匿名可下，不需要 token。
 VOICE_REPO = "https://www.modelscope.cn/models/Caoxiansong/da_fei_yv/resolve/master"
 VOICE_WEIGHTS = {
@@ -49,6 +50,10 @@ VOICE_WEIGHTS = {
         "d28c801091e668ebe0b3751b931d22c0c9b2824bf22919bafa54609b6bd39217",
     "SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth":
         "9872a80e4e1f82821ef679c67602eac46bbd9b7afecb9403ee7d0bf2f127449b",
+    "GPT_weights_v2ProPlus/da_fei_yv_plus-e40.ckpt":
+        "e31f8334d48fd1a81d224af3be70bcf92ffd5ea714bd97d764082324a078be12",
+    "SoVITS_weights_v2ProPlus/da_fei_yv_plus_e8_s216.pth":
+        "ca60c52ed0c23cb4a22f68bfbf0e7bf5e4a988eccbbb1655cfb5de91865d4b89",
 }
 
 # Checked into upstream's git but too big for ours. Path -> sha256 of that commit.
@@ -251,7 +256,10 @@ def step_check():
         "FFmpeg (torchcodec)": INFER / "runtime/avcodec-63.dll" if os.name == "nt" else INFER / "runtime",
         "GPT weights": INFER / "GPT_weights_v2Pro/da_fei_yv-e40.ckpt",
         "SoVITS weights": INFER / "SoVITS_weights_v2Pro/da_fei_yv_e6_s162.pth",
+        "GPT weights v2ProPlus": INFER / "GPT_weights_v2ProPlus/da_fei_yv_plus-e40.ckpt",
+        "SoVITS weights v2ProPlus": INFER / "SoVITS_weights_v2ProPlus/da_fei_yv_plus_e8_s216.pth",
         "reference audio": INFER / "refs/da_fei_yv/dwg_0002.wav",
+        "reference audio v2ProPlus": INFER / "refs/da_fei_yv_plus/dwg_0002.wav",
     }
     for rel in sorted(DICT_BLOBS):
         probes["dict " + rel.split("/")[-1]] = INFER / rel
