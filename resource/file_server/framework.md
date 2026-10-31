@@ -43,7 +43,7 @@ Windows 用 `deploy.bat --tts`。手动分步时是先 `python fetch_tts.py dict
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `TTS_AUTOLOAD` | `0` | 填 `1` 时启动即在后台线程预热模型 |
-| `TTS_SPEAKER` | 音色名排序首个 | 默认音色 |
+| `TTS_SPEAKER` | 未设时取 `da_fei_yv_plus` | 默认音色，规则在 `_tts_default()` |
 | `TTS_DEVICE` | 有 CUDA 用 `cuda`，否则 `cpu` | 填 `cpu` 可在无显卡机器上跑 |
 | `TTS_IS_HALF` | `cuda` 时 `1`，否则 `0` | 半精度开关 |
 

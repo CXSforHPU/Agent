@@ -18,7 +18,7 @@
                 vertex="1" parent="1">
           <mxGeometry x="120" y="240" width="520" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="n3" value="main.py 选音色，取常驻管线&#xa;speaker 缺省时取 TTS_SPEAKER，否则取排序首个"
+        <mxCell id="n3" value="main.py 选音色，取常驻管线&#xa;speaker 缺省时取 TTS_SPEAKER，否则取 da_fei_yv_plus"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
                 vertex="1" parent="1">
           <mxGeometry x="120" y="400" width="520" height="80" as="geometry" />
@@ -59,7 +59,7 @@
                 vertex="1" parent="1">
           <mxGeometry x="740" y="230" width="520" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="a2" value="音色表：tts_speakers/*.json 配上两套权重目录&#xa;本机有 da_fei_yv（v2Pro）和 da_fei_yv_plus（v2ProPlus）&#xa;默认音色由 deploy.bat --speaker 写进 TTS_SPEAKER"
+        <mxCell id="a2" value="音色表：tts_speakers/*.json 配上两套权重目录&#xa;本机有 da_fei_yv（v2Pro）和 da_fei_yv_plus（v2ProPlus）&#xa;默认音色：TTS_SPEAKER 优先，其次 da_fei_yv_plus"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
           <mxGeometry x="740" y="390" width="520" height="100" as="geometry" />

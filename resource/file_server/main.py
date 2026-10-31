@@ -381,8 +381,18 @@ def _tts_speakers() -> Dict[str, Dict[str, str]]:
     return speakers
 
 
+# 排序首个是 da_fei_yv（v2Pro），部署机按听感把 v2ProPlus 那档定为默认。
+# TTS_SPEAKER 优先于这里，换默认不用改代码。
+_TTS_PREFERRED_SPEAKER = "da_fei_yv_plus"
+
+
 def _tts_default(speakers: Dict[str, Dict[str, str]]) -> str:
-    return os.getenv("TTS_SPEAKER") or sorted(speakers)[0]
+    env = os.getenv("TTS_SPEAKER")
+    if env:
+        return env
+    if _TTS_PREFERRED_SPEAKER in speakers:
+        return _TTS_PREFERRED_SPEAKER
+    return sorted(speakers)[0]
 
 
 def _tts_activate():

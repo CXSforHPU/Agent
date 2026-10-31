@@ -147,6 +147,18 @@ if "%BACKEND%"=="cpu" (
     set "UVARGS=sync --no-default-groups --group gpu-%BACKEND%"
 )
 rem tts is orthogonal to the backend groups and simply rides along.
+rem uv sync prunes every package the selected groups do not mention, so a bare
+rem deploy would strip an assembled TTS environment. librosa only enters the venv
+rem through the tts group, so ask the venv whether that group is installed.
+rem Python opens nul itself: a cmd-level redirect can fail to open its target and
+rem leave errorlevel at 0, which would read as "installed".
+if "%TTS%"=="0" if exist "%PY%" (
+    "%PY%" -c "import sys, os; sys.stdout = sys.stderr = open(os.devnull, 'w'); import importlib.metadata as m; m.version('librosa')"
+    if not errorlevel 1 (
+        set "TTS=1"
+        echo ==^> tts group already installed, keeping it. Remove it with a hand-run uv sync.
+    )
+)
 if "%TTS%"=="1" set "UVARGS=!UVARGS! --group tts"
 
 echo uv !UVARGS!

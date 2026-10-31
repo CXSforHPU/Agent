@@ -4,7 +4,7 @@
 
 ## 1. 环境准备
 
-安装 uv：
+装环境只要 uv，依赖和资产全部交给第 2 节的部署脚本，不需要手工执行 `uv sync`。安装 uv：
 
 ```bash
 pip install uv
@@ -18,13 +18,32 @@ pip install uv -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 ## 2. 安装依赖
 
-用工程下的部署脚本装，它先判断显卡算力，再选对应的 torch 构建：
+装环境和起服务统一用工程下的两个脚本，不要手工执行 `uv sync`：
 
 ```bash
 cd packages/Agent-latest/resource/file_server
 bash deploy.sh --tts      # Linux / macOS，Windows 下 Git Bash 也可
-deploy.bat --tts          # Windows
+deploy.bat --tts          # Windows cmd
 ```
+
+一条命令跑完四步：按算力装 torch、拉不入库的第三方资产、逐项核对 SHA256、起服务。四步都幂等，已经落地的文件跳过，重跑一遍很便宜。
+
+### 参数
+
+两个脚本的参数对得上，只有 GitHub 下载的默认走法不同。
+
+| 参数 | 作用 |
+|---|---|
+| `--tts` | 装 `tts` 依赖组，并拉词表、权重与底模。不带这个参数时，脚本先查 `.venv` 里有没有 `librosa`，装过的环境按 `--tts` 处理 |
+| `--check` | 只装配和自检，不起服务 |
+| `--start-only` | 跳过装配与拉取，直接起服务 |
+| `--print` | 只打印要执行的 `uv` 命令，什么都不改 |
+| `--port N`、`--host ADDR` | 换监听地址，默认 `0.0.0.0:8000` |
+| `--autoload` | 启动时在后台预热 TTS 模型，省掉首条请求的冷启动 |
+| `--speaker NAME` | 默认音色，写进 `TTS_SPEAKER`。不设时服务端取 `da_fei_yv_plus` |
+| `--cpu`、`--cu126`、`--cu130` | 指定 torch 后端，默认按显卡探测 |
+| `--mirror` | GitHub 下载走 gh-proxy，`deploy.bat` 默认开，`deploy.sh` 默认关 |
+| `--no-mirror` | 只有 `deploy.bat` 有，关掉代理直连 github.com |
 
 脚本取 `nvidia-smi --query-gpu=compute_cap`，按结果同步 `pyproject.toml` 里的依赖组：
 
@@ -36,9 +55,25 @@ deploy.bat --tts          # Windows
 
 cu126 的预编译核函数止于 sm_90，50 系显卡装了会在推理时报 no kernel image is available，所以要分开。
 
-只想看要执行的 uv 命令、不装东西：`bash deploy.sh --print`、`deploy.bat --print`。手工指定后端：`bash deploy.sh --cpu`、`bash deploy.sh --cu130`。
+### 注意事项
 
-等价的 uv 命令：
+- 首次装配要几 GB 磁盘。`--tts` 拉完资产后 `third_party/gpt-sovits-infer/` 占 6.1 GB，`.venv` 占 5.2 GB。
+- `deploy.bat` 必须用 CRLF 行尾保存。cmd 找标签时按 CRLF 断行，文件一大，LF 行尾会让 `goto` 报“系统找不到指定的批处理文件”。本仓库的 `core.autocrlf` 是 true，检出时会是 CRLF，手工改完记得确认。
+- 国内直连 GitHub 的原始文件会被断开，`deploy.bat` 默认走 gh-proxy。实测 80 KB/s ~ 400 KB/s，88 MB 的 zip 要等几分钟。
+
+### 为什么不要手工执行 uv sync
+
+`uv sync` 只保留命令行点名的依赖组，其余全部卸掉。三条常见的手工命令各踩一个坑：
+
+| 手工命令 | 后果 |
+|---|---|
+| `uv sync` | 默认组是 `cpu`，GPU 机器上的 `torch` 换回 CPU 构建；`tts` 组那 37 项连带 125 个依赖一起卸掉，`/tts` 返回 503 |
+| `uv sync --no-default-groups --group gpu-cu126` | 后端保住了，`tts` 组仍然整个卸掉 |
+| 任意一次 `uv sync` | `eunjeon` 与 `setuptools` 退回锁文件状态，`setuptools` 从 80.10.2 回到 84.0.0，合成韩语时报 `TypeError: exceptions must derive from BaseException` |
+
+脚本这三处都挡住了。同步前用 `.venv` 里的 Python 查一次 `librosa` 的分发元数据，查到就自动带上 `--group tts`；`librosa` 只从 `tts` 组进环境，所以它是那组装没装过的判据。拉完资产后再查一次 `eunjeon` 与 `setuptools` 的元数据，缺了补回去。后端组由显卡探测决定，不会把 GPU 机器装成 CPU 构建。
+
+确实要手工执行时，把组给全：`uv sync --no-default-groups --group gpu-cu126 --group tts`。脚本背后跑的就是下面这几条，读依赖组配置时用得上：
 
 ```bash
 uv sync                                        # 无 GPU
@@ -48,11 +83,13 @@ uv sync --no-default-groups --group gpu-cu126 --group tts
 uv sync --no-default-groups --group gpu-cu130  # CUDA 13.0（Blackwell）
 ```
 
-`cpu` / `gpu-cu126` / `gpu-cu130` 三组只决定 torch 的后端，`tts` 组与它们正交：文件服务器本体只需要 `fastapi`、`openai`、`requests`、`openai-whisper`、`soundfile`、`numpy`、`resampy`，GPT-SoVITS 那套（`gradio`、`transformers`、`funasr`、`modelscope`、`onnxruntime-gpu` 等）全部在 `tts` 组里，不带 `--group tts` 就不会装。脚本用 `--tts` 追加该组，详见第 11 节。
+### 依赖组
 
-三个组在 `[tool.uv]` 的 `conflicts` 里声明为互斥，`uv sync --group gpu-cu126` 会直接报错，必须先 `--no-default-groups` 关掉默认的 `cpu` 组。
+`cpu` / `gpu-cu126` / `gpu-cu130` 三组只决定 torch 的后端，`tts` 组与它们正交：文件服务器本体只需要 `fastapi`、`openai`、`requests`、`openai-whisper`、`soundfile`、`numpy`、`resampy`，GPT-SoVITS 那套（`gradio`、`transformers`、`funasr`、`modelscope`、`onnxruntime-gpu` 等）全部在 `tts` 组里，不带 `--group tts` 就不会装。装配这条链的完整步骤见第 11 节。
 
-默认组设成 `cpu`，目的是让不带参数的 `uv sync` 在没有 GPU 的机器上也能装出可用环境，不会误拉 2 GB 的 CUDA 包。
+三个后端组在 `[tool.uv]` 的 `conflicts` 里声明为互斥，`uv sync --group gpu-cu126` 会直接报错，必须先 `--no-default-groups` 关掉默认的 `cpu` 组。
+
+默认组设成 `cpu`，目的是让不带参数的 `uv sync` 在没有 GPU 的机器上也能装出可用环境，不会误拉 2 GB 的 CUDA 包。副作用就是上表第一行：GPU 机器上裸跑一次 `uv sync`，torch 和整条推理链一起没。
 
 依赖中包含 `openai-whisper`，它会拉取 torch，体积约 2 GB。只需要文件上传下载、不需要语音转写时，可以自行删除 `pyproject.toml` 里的 `openai-whisper`、`soundfile`、`numpy`、`resampy`，并去掉 `/stt` 接口。
 
@@ -73,15 +110,25 @@ torch 生态的三个包按硬件走不同索引：
 
 ## 3. 启动服务
 
+起服务也走脚本，`--start-only` 跳过装配与拉取，几秒就能起来：
+
 ```bash
-uv run --no-sync main.py
+bash deploy.sh --start-only          # Linux / macOS
+deploy.bat --start-only              # Windows cmd
 ```
 
-`uv run` 会先按 `uv.lock` 同步环境，而默认依赖组是 `cpu`。装过 GPU 组的机器上，这一步会把 `torch` 换回 CPU 构建，所以这里要加 `--no-sync`；等价写法是直接用装好的环境跑，`.venv/bin/python main.py`（Windows 为 `.venv\Scripts\python.exe main.py`）。
+换端口加 `--port 8001`，想让服务一起来就把模型预热好加 `--autoload`，换默认音色加 `--speaker da_fei_yv`。环境还没装配过时用 `bash deploy.sh --tts`，装完自动接着启动。
+
+直接起解释器也可以，但要绕开 uv 的自动同步：
+
+```bash
+uv run --no-sync main.py
+./.venv/bin/python main.py           # Windows 为 .venv\Scripts\python.exe main.py
+```
+
+`uv run` 会先按 `uv.lock` 同步环境，而默认依赖组是 `cpu`。装过 GPU 组的机器上，这一步会把 `torch` 换回 CPU 构建，所以这里要加 `--no-sync`。
 
 服务默认监听 `0.0.0.0:8000`。本机可以打开 `http://127.0.0.1:8000/docs` 查看接口文档。语音合成要在网页里直接听，打开 `http://127.0.0.1:8000/tts/play`，`/docs` 里放不出声音，原因见第 11 节。
-
-也可以用 `bash deploy.sh` 或 `deploy.bat` 起，它会先装配环境再启动，参数见第 11 节。
 
 ![本地接口文档](../../pictures/本地网页访问.png)
 
@@ -251,7 +298,7 @@ menuconfig 中的填写位置：
 |---|---|
 | `uv sync` 超时 | 配置国内镜像源后重试 |
 | `no kernel image is available for execution on the device` | torch 的 CUDA 构建与显卡算力不匹配：Blackwell 误装了 `gpu-cu126`，或老卡装了 `gpu-cu130`。重跑 `bash deploy.sh` / `deploy.bat` 让脚本重新判定 |
-| GPU 环境莫名变回 CPU | 跑过不带 `--group` 的 `uv sync`，或不带 `--no-sync` 的 `uv run`。默认组是 `cpu`，重新按组同步即可 |
+| GPU 环境莫名变回 CPU | 跑过不带 `--group` 的 `uv sync`，或不带 `--no-sync` 的 `uv run`。默认组是 `cpu`，重跑 `bash deploy.sh` / `deploy.bat`，脚本按探测结果装回对应后端 |
 | 板子上传返回 20040 | 确认上传地址是 HTTP；确认穿透地址公网可访问；确认 `file_id` 完整；确认下载响应的 `Content-Type` 是图片类型 |
 | 设备连不上服务器 | 检查穿透通道的本地端口是否为 `127.0.0.1:8000`，检查防火墙 |
 | 上传成功，但模型下载不了图片 | 下载 URL 必须公网可达；HTTPS 证书需被公网信任 |
@@ -259,14 +306,17 @@ menuconfig 中的填写位置：
 | `/stt` 返回 500 | 查看服务端日志，确认 whisper 模型已下载、音频文件可读 |
 | 首次语音识别很慢 | 首次请求会加载模型，等待时间取决于模型大小与磁盘速度 |
 | `/stt` 请求超时 | Agent 侧连接后等待 120 s；模型过大或机器太慢时，换 `tiny` 模型 |
-| `/tts` 返回 503 | 没装 GPT-SoVITS 推理链，或权重没落到 `GPT_weights_v2Pro/` | 跑 `bash deploy.sh --tts` / `deploy.bat --tts`，再用 `python fetch_tts.py check` 核对 |
-| 第一次合成等了两三分钟 | 服务端没预热，首次请求要建管线并即时编译 | 设 `TTS_AUTOLOAD=1`，服务启动时就在后台把模型拉起来 |
+| `/tts` 返回 503 | 没装 GPT-SoVITS 推理链，或权重没落到 `GPT_weights_v2Pro/`。跑 `bash deploy.sh --tts` / `deploy.bat --tts`，再用 `python fetch_tts.py check` 核对 |
+| 第一次合成等了两三分钟 | 服务端没预热，首次请求要建管线并即时编译。设 `TTS_AUTOLOAD=1`，服务启动时就在后台把模型拉起来 |
+| `/tts` 之前能用，跑过一次不带 `--tts` 的 deploy 后返回 503 | 依赖被 `uv sync` 剪掉了。重跑 `deploy.bat --tts`，脚本会把 125 个包从缓存装回来；新版脚本会先探测 `.venv`，已装过的环境不带 `--tts` 也不会剪 |
+| 手工跑过 `uv sync` 之后环境不对 | 这条命令按组剪包，`tts` 组、GPU 后端、`eunjeon` 三处都会退回去。别再用它部署，重跑 `bash deploy.sh --tts` / `deploy.bat --tts` 修回来，后果清单见第 2 节 |
+| 合成韩语报 `TypeError: exceptions must derive from BaseException` | `eunjeon` 没装，或 `setuptools` 被 `uv sync` 退回 84.0.0，真正的报错是它删掉的 `pkg_resources`。补包命令见第 11 节 |
 
 ## 11. 可选：GPT-SoVITS 语音合成
 
 `main.py` 里的 `/tts` 是可选功能。推理代码已经抽进仓库，放在 `third_party/gpt-sovits-infer/`，只留合成一条链。预训练模型、大词表、FFmpeg 不入库，装配前该接口返回 503，其余接口照常工作。音色是自家微调的 `da_fei_yv`（v2Pro）与 `da_fei_yv_plus`（v2ProPlus）：参考音频、`manifest.json` 与音色注册表在仓库里，四份权重单个 129 MiB～165 MiB，放在 ModelScope 的 `Caoxiansong/da_fei_yv`，由 `voice` 步骤拉回并核对 SHA256。
 
-装配这条链有三个动作，装环境、拉第三方资产、逐项自检。脚本一次跑完：
+装配这条链有三个动作：装环境、拉第三方资产和逐项自检。脚本一次跑完：
 
 ```bash
 bash deploy.sh --tts             # Linux/macOS：装配 + 拉取 + 自检 + 启动
@@ -276,23 +326,11 @@ bash deploy.sh --tts             # Linux/macOS：装配 + 拉取 + 自检 + 启�
 deploy.bat --tts                 :: Windows：同样的流程
 ```
 
-两个脚本的参数对得上，只有一处默认不同：
+参数表在第 2 节，两个脚本共用。这里只补 `--tts` 那条链要防的两处剪包，脚本都已经处理过。
 
-| 参数 | 作用 |
-|---|---|
-| `--tts` | 装 TTS 依赖组，并拉词表、权重与底模 |
-| `--check` | 只部署不起服务，装完自检完就退出 |
-| `--start-only` | 跳过装配与拉取，直接起服务 |
-| `--print` | 只打印要执行的 uv 命令，什么都不改 |
-| `--port N`、`--host ADDR` | 换监听地址，默认 `0.0.0.0:8000` |
-| `--autoload` | 启动时在后台预热 TTS 模型 |
-| `--cpu`、`--cu126`、`--cu130` | 指定 torch 后端，默认按显卡探测 |
-| `--mirror` | GitHub 下载走 gh-proxy，`deploy.bat` 默认开，`deploy.sh` 默认关 |
-| `--no-mirror` | 只有 `deploy.bat` 有，关掉代理直连 github.com |
+第一处是 `tts` 组，剪包规则见第 2 节。裸跑 `deploy.sh` / `deploy.bat` 只选后端组，脚本在同步前查一次 `librosa`，查到就按 `--tts` 处理，打印一行 `tts group already installed, keeping it`。确实要把推理链卸掉时，手工跑 `uv sync`。
 
-脚本先跑 `uv sync`，这一步会剪掉锁文件里没有的包，其中 `eunjeon` 是韩语那条路要用的，它又依赖 `setuptools<81` 才有的 `pkg_resources`，所以拉完资产查一次元数据，缺了就把这两个补回去。
-
-`deploy.bat` 要用 CRLF 行尾保存。cmd 找标签时按 CRLF 断行，文件一大，LF 行尾会让 `goto` 报“系统找不到指定的批处理文件”。本仓库的 `core.autocrlf` 是 true，检出时会是 CRLF，手工改完记得确认。
+第二处是 `eunjeon`。韩语那条路要用它，它又依赖 `setuptools<81` 才有的 `pkg_resources`。这两个包是 `uv pip install` 补进去的，`eunjeon` 在锁文件里根本没有，`setuptools` 锁在 84.0.0，每次同步都会退回这两个状态，所以脚本拉完资产再查一次元数据，缺了就把它们补回去。
 
 想手动分步跑时，顺序是这样：
 
@@ -396,7 +434,7 @@ third_party/gpt-sovits-infer/
 
 四份权重合计 590 MiB，超过 GitHub 的单文件上限，仓库里不带：`fetch_tts.py voice` 从 ModelScope 一次拉四个，SHA256 对得上才留下。换音色时照这个布局再放一套即可，目录名决定推理版本。
 
-v2ProPlus 那一套音色名 `da_fei_yv_plus`，`refs/da_fei_yv_plus/manifest.json` 记了哈希与训练配方，2026-10-31 发布到同一个 ModelScope 仓库，`fetch_tts.py voice` 把两档四个文件一起拉下来，新装的机器 `GET /tts/speakers` 列两个音色。不带 `--speaker` 时默认取名字排序首个，也就是 `da_fei_yv`；本机部署用 `deploy.bat --start-only --autoload --speaker da_fei_yv_plus` 把默认设成 plus。选 v2ProPlus 最初是想试逐 token 流式 `gpt_streaming`（`TTS_infer_pack/streaming.py:12` 只放 v2ProPlus/v5turbo/v5dev），2080 Ti 上实测是负收益：同一份权重 `streaming_mode` 首帧 0.62～0.93 s、RTF 0.19～0.24，换 `gpt_streaming` 是 0.83～1.59 s、RTF 0.19～0.38，且它按 CUDA graph 静态形状解码，预热完的第一条真实回复要补交一次图捕获，首帧 16.25 s、启动预热从 21.3 s 涨到 165.4 s。因此 `_tts_stream_frames` 两个版本都只走 `streaming_mode`，v2ProPlus 剩下的差别只有听感。同一进程里换音色要重载两套权重，实测那一次请求首帧 9.87 s（v2ProPlus→v2Pro），之后的请求才回到 0.6 s 上下；2026-10-31 又测了一轮，切过去首帧 10.00 s、切回来 5.31 s，同一音色连发三条回到 1.14～1.39 s。
+v2ProPlus 那一套音色名 `da_fei_yv_plus`，`refs/da_fei_yv_plus/manifest.json` 记了哈希与训练配方，2026-10-31 发布到同一个 ModelScope 仓库，`fetch_tts.py voice` 把两档四个文件一起拉下来，新装的机器 `GET /tts/speakers` 列两个音色。不带 `speaker` 时的默认音色走 `_tts_default()`：`TTS_SPEAKER` 优先，其次是 `_TTS_PREFERRED_SPEAKER` 指的 `da_fei_yv_plus`，这一档不在音色表里才退回排序首个。选 v2ProPlus 最初是想试逐 token 流式 `gpt_streaming`（`TTS_infer_pack/streaming.py:12` 只放 v2ProPlus/v5turbo/v5dev），2080 Ti 上实测是负收益：同一份权重 `streaming_mode` 首帧 0.62～0.93 s、RTF 0.19～0.24，换 `gpt_streaming` 是 0.83～1.59 s、RTF 0.19～0.38，且它按 CUDA graph 静态形状解码，预热完的第一条真实回复要补交一次图捕获，首帧 16.25 s、启动预热从 21.3 s 涨到 165.4 s。因此 `_tts_stream_frames` 两个版本都只走 `streaming_mode`，v2ProPlus 剩下的差别只有听感。同一进程里换音色要重载两套权重，实测那一次请求首帧 9.87 s（v2ProPlus→v2Pro），之后的请求才回到 0.6 s 上下；2026-10-31 又测了一轮，切过去首帧 10.00 s、切回来 5.31 s，同一音色连发三条回到 1.14～1.39 s。
 
 文件名要能配成对：`.ckpt` 去掉 `-e\d+` 之后的前缀，和 `.pth` 去掉 `_e\d+_s\d+` 之后的前缀要一致，两边都得到 `da_fei_yv`。权重名里带不带版本都行，版本由所在目录决定。
 
@@ -417,7 +455,7 @@ v2ProPlus 那一套音色名 `da_fei_yv_plus`，`refs/da_fei_yv_plus/manifest.js
 | 字段 | 默认值 | 说明 |
 |---|---|---|
 | `text` | 必填 | 待合成文本，空串返回 400；表情符号和不可念的符号先由 `_tts_sanitize()` 处理，净化后为空返回 400 |
-| `speaker` | `TTS_SPEAKER`，未设则取音色名排序首个 | 名字不在表里返回 404 |
+| `speaker` | `TTS_SPEAKER`，未设则取 `da_fei_yv_plus`，该音色不存在时取排序首个 | 名字不在表里返回 404 |
 | `language` | `zh` | 中英混合。取值见上一段 |
 | `speed` | `1.0` | 语速倍率 |
 | `sample_rate` | 不重采样 | 板侧播放填 `16000` |
@@ -445,7 +483,7 @@ v2ProPlus 那一套音色名 `da_fei_yv_plus`，`refs/da_fei_yv_plus/manifest.js
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `TTS_AUTOLOAD` | `0` | 填 `1` 时启动即在后台线程预热模型，否则首个请求自己承担加载 |
-| `TTS_SPEAKER` | 音色名排序首个 | 默认音色。`deploy.bat --speaker NAME` 与 `deploy.sh --speaker NAME` 把它写进启动环境 |
+| `TTS_SPEAKER` | 未设时取 `da_fei_yv_plus` | 默认音色。`deploy.bat --speaker NAME` 与 `deploy.sh --speaker NAME` 把它写进启动环境 |
 | `TTS_DEVICE` | 有 CUDA 用 `cuda`，否则 `cpu` | 填 `cpu` 可在无显卡机器上跑 |
 | `TTS_IS_HALF` | `cuda` 时 `1`，否则 `0` | 半精度开关 |
 
@@ -511,7 +549,7 @@ curl -s -N -X POST -H "Content-Type: application/json" --data @req_stream.json l
 
 首次那 203 s 里包含建管线、G2PW 与 numba 的即时编译，模型常驻后每句 2～3 s。两次返回的字节数相同，长度稳定。整个 clone 加 `.venv` 占 12 GB，其中 5.2 GB 是 Python 环境，5.8 GB 是推理资产。
 
-2026-10-31 在开源发布副本里单跑了一遍 `fetch_tts.py voice`。那份仓库把包当普通目录入库，没有 `.venv`，也没有任何权重，等价于一次全新 clone。四个文件全部落地，SHA256 与脚本里的 `VOICE_WEIGHTS`、两份 manifest 都对得上，大小分别 155 313 376、134 946 419、155 313 376、172 765 363 字节，合计 590 MiB。之后 `fetch_tts.py check` 有六项音色探针转 `ok`（两档 s1/s2 加两份参考音频），剩下 15 项 `absent` 全归 `dicts` 与 `assets`，是预期结果。用 `_tts_speakers()` 的配对规则复核该目录，解析出 `da_fei_yv`（v2Pro）与 `da_fei_yv_plus`（v2ProPlus）两个音色，不带 `--speaker` 时默认前者。四份文件的头两字节：s1 都是 `PK\x03\x04` 的 torch zip，301 个条目、295 个张量；s2 分别是 `b"05"` 与 `b"06"`，即上游 `head2version` 里的 v2Pro 与 v2ProPlus。这一轮只验证取权重与音色解析，`assets` 要几 GB，没在发布副本重复跑。
+2026-10-31 在开源发布副本里单跑了一遍 `fetch_tts.py voice`。那份仓库把包当普通目录入库，没有 `.venv`，也没有任何权重，等价于一次全新 clone。四个文件全部落地，SHA256 与脚本里的 `VOICE_WEIGHTS`、两份 manifest 都对得上，大小分别 155 313 376、134 946 419、155 313 376、172 765 363 字节，合计 590 MiB。之后 `fetch_tts.py check` 有六项音色探针转 `ok`（两档 s1/s2 加两份参考音频），剩下 15 项 `absent` 全归 `dicts` 与 `assets`，是预期结果。用 `_tts_speakers()` 的配对规则复核该目录，解析出 `da_fei_yv`（v2Pro）与 `da_fei_yv_plus`（v2ProPlus）两个音色。四份文件的头两字节：s1 都是 `PK\x03\x04` 的 torch zip，301 个条目、295 个张量；s2 分别是 `b"05"` 与 `b"06"`，即上游 `head2version` 里的 v2Pro 与 v2ProPlus。这一轮只验证取权重与音色解析，`assets` 要几 GB，没在发布副本重复跑。
 
 ### 重新部署与启动
 
@@ -543,7 +581,7 @@ curl -s -N -X POST -H "Content-Type: application/json" --data @req_stream.json l
 
 draw.io 源文件：[tts-runtime-flow.drawio](../../diagrams/tts-runtime-flow.drawio)
 
-图里那条流式链路是板子打开 `PKG_AGENT_TTS_AUTO_PLAY` 之后的走法。板侧请求不带 `speaker`，服务端按 `TTS_SPEAKER` 取默认音色，本机当前是 `da_fei_yv_plus`，`GET /tts/speakers` 的 `default` 字段就是板子听到的那个。2026-10-31 经公网隧道用板侧原样的请求体复现过一次：33 字一句，2.53 s 收完 5 帧，共 6.92 s 音频，帧内 WAV 是 16 kHz 单声道 16 位。板侧收流与两槽乒乓的细节见 [framework.md 的文本转语音一节](../../docs/framework.md)。
+图里那条流式链路是板子打开 `PKG_AGENT_TTS_AUTO_PLAY` 之后的走法。板侧请求不带 `speaker`，服务端按 `TTS_SPEAKER` 取默认音色，没设时走 `_tts_default()` 的 `da_fei_yv_plus`，`GET /tts/speakers` 的 `default` 字段就是板子听到的那个。2026-10-31 经公网隧道用板侧原样的请求体复现过一次：33 字一句，2.53 s 收完 5 帧，共 6.92 s 音频，帧内 WAV 是 16 kHz 单声道 16 位。板侧收流与两槽乒乓的细节见 [framework.md 的文本转语音一节](../../docs/framework.md)。
 
 ## 12. 第三方与许可
 

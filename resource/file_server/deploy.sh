@@ -100,6 +100,22 @@ sync_env() {
         argv=(sync --no-default-groups --group "$group")
     fi
     # tts is orthogonal to the backend groups and simply rides along.
+    # uv sync prunes every package the selected groups do not mention, so a bare
+    # deploy would strip an assembled TTS environment. librosa only enters the venv
+    # through the tts group, so ask the venv whether that group was installed.
+    if [[ "$tts" != true ]]; then
+        local probe
+        if [[ -x .venv/Scripts/python.exe ]]; then
+            probe=.venv/Scripts/python.exe
+        else
+            probe=.venv/bin/python
+        fi
+        if [[ -x "$probe" ]] &&
+            "$probe" -c "import sys, os; sys.stdout = sys.stderr = open(os.devnull, 'w'); import importlib.metadata as m; m.version('librosa')" 2>/dev/null; then
+            tts=true
+            echo "==> tts group already installed, keeping it. Remove it with a hand-run uv sync."
+        fi
+    fi
     if [[ "$tts" == true ]]; then
         argv+=(--group tts)
         group="$group+tts"

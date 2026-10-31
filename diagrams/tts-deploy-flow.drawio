@@ -102,10 +102,10 @@
           <mxGeometry x="640" y="980" width="420" height="60" as="geometry" />
         </mxCell>
 
-        <mxCell id="b3" value="uv sync 会剪掉锁文件里没有的包&#xa;同步之后查一次元数据，缺了就补"
+        <mxCell id="b3" value="不要手工 uv sync 部署，统一用脚本&#xa;它剪掉没点名的组：tts 组 125 个依赖卸掉、torch 退回 CPU&#xa;脚本同步前查 librosa 保留 tts 组，同步后补 eunjeon"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
-          <mxGeometry x="640" y="1130" width="420" height="60" as="geometry" />
+          <mxGeometry x="640" y="1130" width="420" height="90" as="geometry" />
         </mxCell>
 
         <mxCell id="b2" value="不入库：词表、底模、权重、FFmpeg&#xa;由 fetch_tts.py 取，SHA256 校验"
