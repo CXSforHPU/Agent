@@ -23,7 +23,7 @@
                 vertex="1" parent="1">
           <mxGeometry x="120" y="400" width="520" height="80" as="geometry" />
         </mxCell>
-        <mxCell id="n4" value="_tts_stream_frames() 用 streaming_mode 合成&#xa;_TtsBlocker 攒够 1.5 s 音频封一帧"
+        <mxCell id="n4" value="_tts_stream_frames() 用 streaming_mode 合成&#xa;_TtsBlocker 攒够 1.5 s 音频封一帧&#xa;数据段补零到 2 048 字节的整数倍"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
                 vertex="1" parent="1">
           <mxGeometry x="120" y="560" width="520" height="80" as="geometry" />
@@ -69,7 +69,7 @@
                 vertex="1" parent="1">
           <mxGeometry x="740" y="550" width="520" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="a4" value="一帧 1.5 s = 48 000 字节样本 + 44 字节 WAV 头&#xa;前缀再占 4 字节，板上一共收到 48 048 字节&#xa;单声道 16 kHz 16 位 = 32 000 B/s"
+        <mxCell id="a4" value="单声道 16 kHz 16 位 = 32 000 B/s，一帧 1.5 s&#xa;数据段补零到 49 152 字节（24×2 048）&#xa;加 44 字节头，板上一共收到 49 200 字节&#xa;对齐一次 fread 的 2 048 字节，尾巴不再被当成文件尾"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
           <mxGeometry x="740" y="710" width="520" height="100" as="geometry" />
@@ -79,12 +79,12 @@
                 vertex="1" parent="1">
           <mxGeometry x="740" y="870" width="520" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="a6" value="预热后实测：首帧 0.63 s 和 0.67 s，RTF 0.19～0.24&#xa;帧间隔最长 1.02 s，短于 1.5 s 一块，饿不着&#xa;预热完成后的第一条回复另付 12.44 s 形状搜索"
+        <mxCell id="a6" value="预热后实测：首帧 0.78 s～1.64 s，RTF 0.16～0.27&#xa;帧间隔最长 1.26 s，短于 1.536 s 一块，饿不着&#xa;刚预热的进程第一条回复另付 12 s～14 s 形状搜索"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
           <mxGeometry x="740" y="1030" width="520" height="100" as="geometry" />
         </mxCell>
-        <mxCell id="a7" value="一条回复最多 64 帧，约 96 s&#xa;超限只截尾，串口打 dropped the tail"
+        <mxCell id="a7" value="一条回复最多 64 帧，约 98 s&#xa;超限只截尾，串口打 dropped the tail"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;dashed=1;"
                 vertex="1" parent="1">
           <mxGeometry x="740" y="1200" width="520" height="100" as="geometry" />

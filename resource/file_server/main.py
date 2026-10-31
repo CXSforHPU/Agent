@@ -439,6 +439,25 @@ def _tts_pipeline(sp: Dict[str, str]):
     return _TTS_PIPELINE
 
 
+# 板侧 wavplayer 的播放循环每次 fread(buf, 2048, 1, fp)，返回的是条目数：只要不满
+# 一整条就当作文件结束，那半截一个样本都不会写进声卡（wavplayer.c:412）。1.5 s 一帧
+# 数据段正好 48000 字节 = 23×2048 + 896，于是每个块边界丢 896 字节，也就是 28 ms 语音。
+# 这里把数据段补零到 2048 的整数倍：28 ms 语音丢失换成 36 ms 静音垫尾，切口不再吃字。
+_TTS_PLAY_ALIGN = 2048
+
+
+def _tts_pad_frames(audio, channels: int):
+    """把待写成 WAV 的采样补零到板侧一次 fread 的整数倍。"""
+    import numpy as np
+
+    align = _TTS_PLAY_ALIGN // (channels * 2)   # 一个采样帧占 channels*2 字节
+    pad = (-audio.shape[0]) % align
+    if not pad:
+        return audio
+    shape = (pad, channels) if audio.ndim == 2 else pad
+    return np.concatenate([audio, np.zeros(shape, dtype=audio.dtype)])
+
+
 def _tts_synth_wav(sp: Dict[str, str], text: str, language: str, speed: float,
                    out_sr: Optional[int], channels: int = 1) -> Tuple[int, bytes]:
     import numpy as np
@@ -473,7 +492,7 @@ def _tts_synth_wav(sp: Dict[str, str], text: str, language: str, speed: float,
         audio = np.repeat(audio[:, None], 2, axis=1)
 
     buf = BytesIO()
-    sf.write(buf, audio, sr, format="WAV", subtype="PCM_16")
+    sf.write(buf, _tts_pad_frames(audio, channels), sr, format="WAV", subtype="PCM_16")
     return sr, buf.getvalue()
 
 
@@ -515,7 +534,8 @@ class _TtsBlocker:
             audio = np.repeat(audio[:, None], 2, axis=1)
 
         out = BytesIO()
-        sf.write(out, audio, self.out_sr, format="WAV", subtype="PCM_16")
+        sf.write(out, _tts_pad_frames(audio, self.channels), self.out_sr,
+                 format="WAV", subtype="PCM_16")
         self.tail = pcm[-_TTS_RS_CTX:]
         return struct.pack("<I", out.tell()) + out.getvalue()
 

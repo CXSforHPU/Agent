@@ -216,10 +216,11 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include
 - 仅在 `PKG_AGENT_TTS_ENABLE` 时编译。两个入口：`msh_agent_tts` 合成一条文本，回复自动播报走 `agent_tts_speak()`。
 - 请求是 JSON POST，字段为 `text`、`sample_rate`（16000）、`channels`（1）。打开 `PKG_AGENT_TTS_AUTO_PLAY` 后多带两个字段：`stream=true` 和 `block_seconds`（1.5）。
 - `channels=1` 由本板的 I2S 拓扑决定。`libraries/HAL_Drivers/drv_i2s.c` 的 `convert_mono_to_stereo()` 把每个采样复制成左右两个 PCM 槽，一个 2048 字节的块按 64 ms 播完，正好 32,000 B/s，等于 16 kHz 单声道。喂双声道会被再翻一倍：时长拖成两倍、音调低八度，文件体积和下载流量也翻倍。
-- 流式响应是一串帧，格式 `[4 字节小端长度][自带 WAV 头的音频]`，响应头 `X-TTS-Framing: u32le-wav`。一帧 1.5 s 音频是 48,000 字节样本加 44 字节 WAV 头，板上一共读 48,048 字节。
+- 流式响应是一串帧，格式 `[4 字节小端长度][自带 WAV 头的音频]`，响应头 `X-TTS-Framing: u32le-wav`。板侧 `wavplayer` 每次 `fread` 固定 2048 字节，读不满一条就当作文件结束，那半截一个样本也不写声卡。所以服务端把每帧数据段补零到 2048 的整数倍：1.5 s 一帧是 49,152 字节样本（24×2048）加 44 字节头，落盘 49,196 字节，板上一共读 49,200 字节。
+- 补的 1,152 字节在块尾，是 36 ms 静音。改之前每帧只有 48,000 字节，尾巴 896 字节被 `fread` 丢掉，等于每个块边界少 28 ms 语音，多句连播时听着就是断句。
 - 帧头用 `tts_read_exact()` 循环拼满，因为 `webclient_read()` 遇到 HTTP chunk 边界会提前返回。帧长小于 44 或大于 4 MiB 判为字节错位，只收到半帧就丢掉这一帧收尾，播半帧听着就是戛然而止。
 - 落盘用两个槽乒乓。`tts_slot_path()` 从 `PKG_AGENT_TTS_SAVE_PATH` 派生 `/sdcard/tts0.wav` 和 `/sdcard/tts1.wav`，往空闲槽写满一帧才切过去播放。正在播的文件不会被 `O_TRUNC` 抢，下一帧的接收和当前帧的播放重叠。
-- 一条回复最多收 64 帧，约 96 s。超限时丢掉尾巴，串口打 `dropped the tail`。
+- 一条回复最多收 64 帧，约 98 s。超限时丢掉尾巴，串口打 `dropped the tail`。
 - 服务端合成到某一句失败时会正常收尾，板侧只看到帧头不足 4 字节，和“整条回复念完了”无法区分，串口不给任何提示；被截断的位置记在服务端日志 `stream stopped after N blocks`。没有这层兜底时异常会掐断连接，读帧头返回 `-7`（`-WEBCLIENT_DISCONNECT`），日志写成 `read frame header failed (-7)` 加 `stream broke after 14 blocks`，把截断误报成链路断。
 - 播报线程 `tts_spk` 优先级 12、栈 8 K，队列 8 格。`agent_tts_speak()` 把回复拷到堆上，只让指针入队，合成和播放都在线程里做，主循环不等。
 - 连上之后把收发超时放宽到 5 min。没预热的进程第一次推理要 52 s～60 s，服务端开 `TTS_AUTOLOAD=1` 可以在启动时把这笔开销花掉。
@@ -227,7 +228,7 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include
 - 打开 `PKG_AGENT_TTS_AUTO_PLAY`（依赖 `PKG_AGENT_DRIVER_AUDIO`）后，`agent_emit_answer()` 只把模型正文交给播报线程。请求失败、无回答这类兜底提示走 `agent_notify()`，不发声。
 - `msh_agent_tts` 的文本上限是 512 字节，超了直接报 `text too long`。`-f` 只合成不播放，`-o <path>` 改落盘路径，其余参数用空格拼成待合成文本。
 
-服务端预热之后的实测延迟（本机 GPU，不含公网隧道）：首帧 0.63 s 和 0.67 s，帧间隔最长 1.02 s，短于 1.5 s 一块，播放饿不着，RTF 0.19～0.24。预热完成后的第一条回复要另付一次卷积形状搜索，实测首帧 12.44 s。换音色只重载权重，实测首帧 9.87 s。
+服务端预热之后的实测延迟（本机 GPU，不含公网隧道，2026-10-31 补零之后复测）：首帧 0.78 s～1.64 s，帧间隔最长 1.26 s，短于 1.5 s 一块，播放饿不着，RTF 0.16～0.27。每帧补到 36 ms 静音不改变帧到达节奏。刚预热的进程第一条回复要另付一次形状搜索，实测首帧 14.14 s。换音色只重载权重，实测首帧 9.87 s。
 
 ### 3.11 AgentAudio
 
