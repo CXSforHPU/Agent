@@ -1,6 +1,10 @@
 #include "AgentAudio.h"
 #include "msh.h"
 
+#ifdef PKG_WP_USING_PLAY
+#include "wavplayer.h"
+#endif
+
 #define LOG_TAG "Agent.Driver.Audio"
 #define LOG_LVL LOG_LVL_INFO
 #include <ulog.h>
@@ -52,6 +56,28 @@ int agent_driver_audio_play(const char* path)
                 path);
     LOG_I("play cmd: %s", cmd);
     return msh_exec(cmd, rt_strlen(cmd));
+}
+
+/* wavplayer 起播就返回，播放线程还在读同一个 WAV 文件。合成会把这个文件
+   O_TRUNC 重写，所以覆盖之前要等上一句播完，否则正播的那条会被截断。 */
+int agent_driver_audio_play_wait(rt_int32_t timeout_ms)
+{
+#ifndef PKG_WP_USING_PLAY
+    return RT_EOK;
+#else
+    rt_int32_t waited = 0;
+
+    while (wavplayer_state_get() != PLAYER_STATE_STOPED)
+    {
+        if (waited >= timeout_ms)
+        {
+            return -RT_ETIMEOUT;
+        }
+        rt_thread_mdelay(100);
+        waited += 100;
+    }
+    return RT_EOK;
+#endif
 }
 
 int agent_driver_audio_stop(void)

@@ -1,0 +1,71 @@
+{
+ "name": "dafeiyu2_v2ProPlus_e8_s216",
+ "exported": "2026-10-31",
+ "version": "v2ProPlus",
+ "files": [
+  {
+   "role": "text2semantic (s1)",
+   "file": "GPT_weights_v2ProPlus/dafeiyu2_v2ProPlus-e40.ckpt",
+   "source": "GPT_weights_v2ProPlus/dafeiyu2_v2ProPlus-e40.ckpt",
+   "size": 155313376,
+   "sha256": "e31f8334d48fd1a81d224af3be70bcf92ffd5ea714bd97d764082324a078be12"
+  },
+  {
+   "role": "SoVITS vocoder (s2)",
+   "file": "SoVITS_weights_v2ProPlus/dafeiyu2_v2ProPlus_e8_s216.pth",
+   "source": "SoVITS_weights_v2ProPlus/dafeiyu2_v2ProPlus_e8_s216.pth",
+   "size": 172765363,
+   "sha256": "ca60c52ed0c23cb4a22f68bfbf0e7bf5e4a988eccbbb1655cfb5de91865d4b89"
+  },
+  {
+   "role": "参考音频",
+   "file": "refs/dwg_0002.wav",
+   "source": "data/dafeiyu2_32k/wavs/dwg_0002.wav",
+   "size": 285964,
+   "sha256": "173e57d693a99aa89d8ed594e755b44730c2dce20be00632941fd004bfe8dc03"
+  }
+ ],
+ "inference": {
+  "version": "v2ProPlus",
+  "device": "cuda",
+  "is_half": true,
+  "text_lang": "zh",
+  "prompt_lang": "zh",
+  "top_k": 15,
+  "top_p": 1,
+  "temperature": 1,
+  "text_split_method": "cut5",
+  "speed_factor": 1.0,
+  "seed": 43,
+  "ref_audio": "dwg_0002.wav",
+  "prompt_text": "什么嘛，这么简单的事情，你居然专门跑来问我。",
+  "note": "seed 43 沿用上一轮用户采纳样本的取值，本档没重扫 seed；同一句在各 seed 间的时长抖动与音色余弦见评测脚本的输出目录。"
+ },
+ "format_notes": {
+  "s1": "标准 torch zip（PK\\x03\\x04），torch.load(path, map_location='cpu', weights_only=False) 直接可读；顶层键 weight/config，weight 为 fp16 的 295 个张量。",
+  "s2": "上游把前 2 字节当成版本标记写成了 b\"06\"（= v2ProPlus，见 process_ckpt.py:77 head2version），不是 zip 魔数 PK。用 GPT-SoVITS 的 load_sovits_new（process_ckpt.py:141）补回 b\"PK\" 再 torch.load；顶层键 weight/config/info。第三方加载器必须自己做这一步。"
+ },
+ "required_base_not_included": [
+  {
+   "purpose": "中文 BERT 前端特征",
+   "path": "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large",
+   "size": 651495070
+  },
+  {
+   "purpose": "cnHubert 语义特征（50 Hz，s2 用）",
+   "path": "GPT_SoVITS/pretrained_models/chinese-hubert-base",
+   "size": 188813078
+  },
+  {
+   "purpose": "ERes2NetV2 说话人编码器（v2ProPlus 的音色条件，推理必需）",
+   "path": "GPT_SoVITS/pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt",
+   "size": 107528697
+  }
+ ],
+ "provenance": {
+  "dataset": "data/dafeiyu2_32k (197 条 / 1069.1 s，由 145 条把 50 条 >10 s 句级切分而来)",
+  "s1_train": "_train/gsv_run.py s1 --version v2ProPlus --batch 11 --epochs 40 --save-every 5 --exp dafeiyu2_v2ProPlus --data dafeiyu2_32k  # ScaledAdam，lr 被上游锁在 0.002；语义码用 s2Gv2ProPlus 重抽（换版本码本不同）",
+  "s2_train": "_train/gsv_run.py s2 --version v2ProPlus --batch 8 --epochs 10 --save-every 2 --exp dafeiyu2_v2ProPlus --data dafeiyu2_32k  # AdamW lr 1e-4"
+ },
+ "renamed_from": "dafeiyu2_v2ProPlus"
+}

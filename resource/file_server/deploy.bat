@@ -7,6 +7,7 @@ rem   deploy.bat --start-only        skip the deploy steps, just start
 rem   deploy.bat --print             only show the uv command, change nothing
 rem   deploy.bat --port 8001         listen on another port (default 8000)
 rem   deploy.bat --host 127.0.0.1    bind another address (default 0.0.0.0)
+rem   deploy.bat --speaker NAME      voice used when a request omits "speaker"
 rem   deploy.bat --autoload          warm the TTS model while the server boots
 rem   deploy.bat --cpu               force the CPU torch build
 rem
@@ -24,6 +25,7 @@ set "MIRROR=1"
 set "BACKEND=auto"
 set "PORTARG="
 set "HOSTARG="
+set "SPEAKER="
 set "PY=%~dp0.venv\Scripts\python.exe"
 
 :parse
@@ -45,6 +47,10 @@ if /i "%~1"=="--port" (
 if /i "%~1"=="--host" (
     if "%~2"=="" (echo --host needs a value 1>&2 & exit /b 2)
     set "HOSTARG=%~2" & shift & shift & goto parse
+)
+if /i "%~1"=="--speaker" (
+    if "%~2"=="" (echo --speaker needs a value 1>&2 & exit /b 2)
+    set "SPEAKER=%~2" & shift & shift & goto parse
 )
 if /i "%~1"=="--help" (call :usage & exit /b 0)
 echo unknown option: %~1 1>&2
@@ -109,6 +115,7 @@ if not "%HOSTARG%"=="" set "HOST=%HOSTARG%"
 if "%AUTOLOAD%"=="1" set "TTS_AUTOLOAD=1"
 if "%PORT%"=="" set "PORT=8000"
 if "%HOST%"=="" set "HOST=0.0.0.0"
+if not "%SPEAKER%"=="" set "TTS_SPEAKER=%SPEAKER%"
 
 cd /d "%~dp0"
 echo ==^> starting on %HOST%:%PORT%
@@ -154,5 +161,6 @@ exit /b 0
 
 :usage
 echo usage: deploy.bat [--tts] [--check] [--start-only] [--print] [--port N] [--host ADDR]
+echo                   [--speaker NAME]
 echo                   [--autoload] [--cpu^|--cu126^|--cu130] [--mirror^|--no-mirror]
 exit /b 0

@@ -1,11 +1,12 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 import os
 import re
 import sys
 import json
 import uuid
+import struct
 import sqlite3
 import mimetypes
 import threading
@@ -305,6 +306,10 @@ _TTS_SPEAKERS_DIR = _TTS_ROOT / "tts_speakers"
 _TTS_WEIGHT_DIRS = {
     "v2": ("GPT_weights_v2", "SoVITS_weights_v2"),
     "v2Pro": ("GPT_weights_v2Pro", "SoVITS_weights_v2Pro"),
+    # 与 v2Pro 共用 s1v3 底模和 SV 编码器；gpt_streaming 上游只放
+    # v2ProPlus/v5turbo/v5dev（TTS_infer_pack/streaming.py:12），本服务实测没收益，
+    # 见 _tts_stream_frames。
+    "v2ProPlus": ("GPT_weights_v2ProPlus", "SoVITS_weights_v2ProPlus"),
 }
 _TTS_LOCK = threading.Lock()
 _TTS_PIPELINE = None
@@ -336,7 +341,12 @@ def _tts_speakers() -> Dict[str, Dict[str, str]]:
     weights: Dict[str, Dict[str, str]] = {}
     for version, (gpt_dir, sovits_dir) in _TTS_WEIGHT_DIRS.items():
         for p in sorted((_TTS_ROOT / gpt_dir).glob("*.ckpt")):
-            w = weights.setdefault(_tts_stem(p, r"-e\d+"), {})
+            stem = _tts_stem(p, r"-e\d+")
+            w = weights.setdefault(stem, {})
+            # 权重名是 v2Pro 与 v2ProPlus 唯一的区分处，同名会静默让后扫到的版本生效
+            if w.get("version", version) != version:
+                print(f"[tts] {stem}: {w['version']} 与 {version} 同名，生效 {version}，"
+                      f"请给其中一份改名", flush=True)
             w["gpt"] = str(p)
             w["version"] = version
         for p in sorted((_TTS_ROOT / sovits_dir).glob("*.pth")):
@@ -391,6 +401,12 @@ def _tts_pipeline(sp: Dict[str, str]):
     if _TTS_PIPELINE is None:
         _tts_activate()
         from GPT_SoVITS.TTS_infer_pack.TTS import TTS, TTS_Config
+
+        # 引擎在 GPT_SoVITS/Accel/PyTorch/__init__.py:23 打开 cudnn.benchmark，每遇到
+        # 一个新的卷积形状就现场搜一遍最优算法。流式声码器每句长度都换形状，同一条启动
+        # 预热+首条真实回复的链路实测：开着时首帧 13.8 s，关掉后 1.7 s；代价是稳态
+        # RTF 从 0.249 升到 0.263（约 6%），换掉几十秒的尖峰划算。
+        torch.backends.cudnn.benchmark = False
 
         device = os.getenv("TTS_DEVICE") or ("cuda" if torch.cuda.is_available() else "cpu")
         is_half = (os.getenv("TTS_IS_HALF") or ("1" if device == "cuda" else "0")) == "1"
@@ -451,6 +467,144 @@ def _tts_synth_wav(sp: Dict[str, str], text: str, language: str, speed: float,
     return sr, buf.getvalue()
 
 
+# 流式合成的一块要独立重采样时，resampy 会把块边界当成信号端点，滤波器过渡带被
+# 削掉，听感是每块一声爆音。所以每次多带上一块尾部的若干输入样本、重采样后再丢掉
+# 它们对应的输出（overlap-save）。32k→16k 是整数倍，丢掉的样本数正好是 ctx/2。
+_TTS_RS_CTX = 512
+# 帧头：4 字节小端 payload 长度，后面是一整个可直接播放的 WAV。板侧 webclient_read()
+# 会在 HTTP chunk 边界提前返回，所以要靠这个长度自己拼帧。
+_TTS_FRAME_HDR = 4
+
+
+class _TtsBlocker:
+    """把引擎逐块吐出的原生采样率 PCM 攒成 block_seconds 秒一块，每块自带完整 WAV 头。"""
+
+    def __init__(self, sr_native: int, out_sr: Optional[int], channels: int, block_seconds: float):
+        import numpy as np
+
+        self.sr_native = sr_native
+        self.out_sr = out_sr or sr_native
+        self.channels = channels
+        self.block = max(1, int(sr_native * block_seconds))
+        self.buf = np.zeros(0, dtype=np.float32)
+        self.tail = np.zeros(0, dtype=np.float32)
+
+    def _emit(self, pcm) -> bytes:
+        import numpy as np
+        import soundfile as sf
+
+        vin = pcm if self.tail.size == 0 else np.concatenate([self.tail, pcm])
+        if self.out_sr != self.sr_native:
+            import resampy
+            audio = resampy.resample(vin, self.sr_native, self.out_sr)
+        else:
+            audio = vin
+        drop = int(round(self.tail.size * self.out_sr / self.sr_native))
+        audio = audio[drop:]
+        if self.channels == 2:
+            audio = np.repeat(audio[:, None], 2, axis=1)
+
+        out = BytesIO()
+        sf.write(out, audio, self.out_sr, format="WAV", subtype="PCM_16")
+        self.tail = pcm[-_TTS_RS_CTX:]
+        return struct.pack("<I", out.tell()) + out.getvalue()
+
+    def push(self, chunk) -> list:
+        import numpy as np
+
+        # TTS.run() 交的是 int16，归一到 [-1,1] 才能进 resampy，否则会削顶
+        self.buf = np.concatenate([self.buf, np.asarray(chunk, dtype=np.float32) / 32768.0])
+        frames = []
+        while self.buf.shape[0] >= self.block:
+            piece, self.buf = self.buf[:self.block], self.buf[self.block:]
+            frames.append(self._emit(piece))
+        return frames
+
+    def finish(self) -> list:
+        if self.buf.shape[0] == 0:
+            return []
+        piece, self.buf = self.buf, self.buf[:0]
+        return [self._emit(piece)]
+
+
+def _tts_stream_frames(sp: Dict[str, str], text: str, language: str, speed: float,
+                       out_sr: Optional[int], channels: int, block_seconds: float):
+    """流式合成：边推边发，每帧 [u32 长度][WAV]。板侧第一块到手就能起播。"""
+    # 锁要一直持到整条流发完：模型不是重入的，中途插进另一个请求会把这次推流打断，
+    # 客户端断线时生成器被关闭，with 会正常释放锁
+    with _TTS_LOCK:
+        blocker = None
+        sent = 0
+        try:
+            pipe = _tts_pipeline(sp)
+            gen = pipe.run({
+                "text": text,
+                "text_lang": language,
+                "ref_audio_path": sp["ref_audio"],
+                "prompt_text": sp["prompt_text"],
+                "prompt_lang": sp["prompt_lang"],
+                "text_split_method": "cut5",
+                "batch_size": 1,
+                "speed_factor": speed,
+                "streaming_mode": True,
+                # 25 Hz 语义帧下 16 个 token = 0.64 s 音频，再小 SOLA 拼接的痕迹会显眼。
+                # v2ProPlus 也不开 gpt_streaming：2080 Ti 上同一份权重实测 streaming_mode
+                # 首帧 0.62~0.93 s / RTF 0.19~0.24，换 gpt_streaming 是 0.83~1.59 s /
+                # RTF 0.19~0.38，还要为每个新形状补交一次 CUDA graph 捕获（预热后第一条
+                # 真实回复的首帧 16.25 s），逐 token 流式在这台机器上没有收益。
+                "min_chunk_length": 16,
+                "overlap_length": 2,
+            })
+            for frag in gen:
+                sr, chunk = frag[0], frag[1]
+                if blocker is None:
+                    blocker = _TtsBlocker(sr, out_sr, channels, block_seconds)
+                for frame in blocker.push(chunk):
+                    sent += 1
+                    yield frame
+        except Exception as e:
+            # 引擎逐句推理，某一句抛异常时前面的帧已经发出去了。这里必须正常收尾，
+            # 让 StreamingResponse 补上终止 chunk：异常逃出生成器的话 uvicorn 直接
+            # 掐断连接，板侧读下一帧头拿到 -WEBCLIENT_DISCONNECT(-7)，会把一次截断
+            # 报成链路断了。
+            traceback.print_exc()
+            print("[tts] stream stopped after %d blocks: %s: %s"
+                  % (sent, type(e).__name__, e), file=sys.stderr)
+        if blocker is not None:
+            for frame in blocker.finish():
+                yield frame
+
+
+_TTS_TEXT_MAP = (
+    ("\u00b0C", " degrees Celsius"),
+    ("\u00b0F", " degrees Fahrenheit"),
+    ("\u00b0", " degrees"),
+    ("\u2248", " about "),
+    ("\u00b1", " plus minus "),
+    ("%", " percent"),
+    ("\u2014", ", "),
+    ("\u2013", ", "),
+)
+# 引擎的切句器把非 ASCII 字符一律按中日韩处理：°C 和破折号夹在英文里会单独切成一个
+# 不含汉字的中文片段，规范化后一个 phone 都不剩，TextPreprocessor.get_bert_feature
+# 里的 torch.cat([]) 抛 ValueError，整条流式响应被 uvicorn 掐断。上游只在整句层面过滤
+# 纯符号（TextPreprocessor.preprocess），漏了句内片段。白名单留 ASCII（这些走 en 路径，
+# 符号最多被丢掉）和真正的中日韩文字与中文标点。
+_TTS_TEXT_SAFE = re.compile(
+    r"[^ -~\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\uff0c\u3002\u3001\uff1b\uff1a"
+    r"\uff01\uff1f\uff08\uff09\u2018\u2019]+",
+    re.S,
+)
+
+
+def _tts_sanitize(text: str) -> str:
+    """把念不出来的符号换成单词，剩下的非中日韩符号削成空格。"""
+    for bad, good in _TTS_TEXT_MAP:
+        text = text.replace(bad, good)
+    text = _TTS_TEXT_SAFE.sub(" ", text)
+    return re.sub(r" {2,}", " ", text).strip()
+
+
 class TTSRequest(BaseModel):
     text: str
     speaker: Optional[str] = None
@@ -458,6 +612,20 @@ class TTSRequest(BaseModel):
     speed: float = 1.0
     sample_rate: Optional[int] = None
     channels: int = 1
+    # stream=True 时响应体是 [u32 长度][WAV] 的帧序列（Transfer-Encoding: chunked），
+    # 第一帧约 1 s 内就能到；默认 false 保持原来的整条 audio/wav
+    stream: bool = False
+    block_seconds: float = 1.5
+
+
+# 不声明的话 FastAPI 按 application/json 生成 OpenAPI，Swagger UI 会拿 JSON 去解析
+# 响应体，直接报解析失败，连下载链接都不给。
+_TTS_WAV_RESPONSES = {
+    200: {
+        "description": "合成好的 WAV 字节流，响应头带 X-Speaker 与 X-Sample-Rate",
+        "content": {"audio/wav": {"schema": {"type": "string", "format": "binary"}}},
+    }
+}
 
 
 @app.get("/tts/speakers", summary="列出可用音色")
@@ -476,35 +644,47 @@ def tts_speakers():
     }
 
 
-@app.post("/tts", summary="文本转语音，返回 audio/wav 字节")
-async def tts(req: TTSRequest):
+async def _tts_handle(text: str, speaker: Optional[str], language: str, speed: float,
+                      sample_rate: Optional[int], channels: int,
+                      stream: bool = False, block_seconds: float = 1.5) -> Response:
+    """校验入参并合成，POST 与 GET 共用一条链，返回 audio/wav 响应。"""
     speakers = _tts_speakers()
     if not speakers:
         raise HTTPException(status_code=503, detail=_TTS_UNAVAILABLE)
-    text = req.text.strip()
+    text = text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text 不能为空")
     # 表情符号念不出来，切句后还白占一段推理
     text = re.sub(r"[\U00010000-\U0010FFFF]", "", text).strip()
+    text = _tts_sanitize(text)
     if not text:
-        raise HTTPException(status_code=400, detail="text 去掉表情符号后为空")
-    language = _tts_lang(req.language)
+        raise HTTPException(status_code=400, detail="text 去掉表情符号和不可念的符号后为空")
+    language = _tts_lang(language)
     if language not in _TTS_LANGS:
         raise HTTPException(status_code=400,
                             detail="language 只能是 " + "/".join(_TTS_LANGS)
                                    + "，或对应中文名 " + "/".join(_TTS_LANG_ALIAS))
-    name = req.speaker or _tts_default(speakers)
+    name = speaker or _tts_default(speakers)
     sp = speakers.get(name)
     if sp is None:
         raise HTTPException(status_code=404,
                             detail=f"音色 {name} 不存在，可用: {', '.join(sorted(speakers))}")
-    if req.channels not in (1, 2):
+    if channels not in (1, 2):
         raise HTTPException(status_code=400, detail="channels 只能是 1 或 2")
+    if not 0.5 <= block_seconds <= 5.0:
+        raise HTTPException(status_code=400, detail="block_seconds 只能在 0.5~5.0 之间")
+    if stream:
+        # 生成器已经开了响应头才出错的话没法再改状态码，只能中断；板侧靠帧长度不足
+        # 和收不到结束帧来判失败
+        return StreamingResponse(
+            _tts_stream_frames(sp, text, language, speed, sample_rate, channels, block_seconds),
+            media_type="audio/wav",
+            headers={"X-TTS-Framing": "u32le-wav", "X-Speaker": name},
+        )
     try:
         # 推理是 GPU/CPU 密集同步调用，放线程池避免拖慢同进程的上传下载
         sr, wav = await asyncio.to_thread(_tts_synth_wav, sp, text,
-                                         language, req.speed, req.sample_rate,
-                                         req.channels)
+                                         language, speed, sample_rate, channels)
     except HTTPException:
         raise
     except Exception as e:
@@ -515,9 +695,122 @@ async def tts(req: TTSRequest):
                     headers={"X-Sample-Rate": str(sr), "X-Speaker": name})
 
 
+@app.post("/tts", summary="文本转语音，返回 audio/wav 字节",
+          response_class=Response, responses=_TTS_WAV_RESPONSES)
+async def tts(req: TTSRequest):
+    return await _tts_handle(req.text, req.speaker, req.language, req.speed,
+                             req.sample_rate, req.channels, req.stream,
+                             req.block_seconds)
+
+
+@app.get("/tts", summary="文本转语音（GET 版，供浏览器与 audio 标签直接用）",
+         response_class=Response, responses=_TTS_WAV_RESPONSES)
+async def tts_get(text: str, speaker: Optional[str] = None, language: str = "zh",
+                  speed: float = 1.0, sample_rate: Optional[int] = None,
+                  channels: int = 1):
+    """浏览器地址栏打不开 POST，Swagger UI 也只给二进制响应挂下载链接、不放播放器。
+    这条 GET 让 /tts?text=... 本身就是个可播放的音频 URL，试听页 /tts/play 依赖它。"""
+    return await _tts_handle(text, speaker, language, speed, sample_rate, channels)
+
+
+_TTS_PLAYER_HTML = """<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>TTS 试听</title>
+<style>
+  body { font: 14px/1.6 system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  h1 { font-size: 18px; }
+  label { display: inline-block; min-width: 84px; }
+  input, select { font: inherit; padding: 3px 6px; }
+  #text { width: 100%; box-sizing: border-box; margin: 8px 0; }
+  .row { margin: 6px 0; }
+  #status { color: #555; min-height: 1.6em; }
+  audio { width: 100%; margin-top: 10px; }
+  a { color: #06c; }
+</style>
+</head>
+<body>
+<h1>TTS 试听</h1>
+<textarea id="text" rows="3">你好，我是大飛魚，今天天气不错。</textarea>
+<div class="row"><label for="speaker">音色</label><select id="speaker"></select>
+  <label for="language">语种</label><select id="language"></select></div>
+<div class="row"><label for="sample_rate">采样率</label><input id="sample_rate" size="7" placeholder="不重采样">
+  <label for="channels">声道</label><select id="channels"><option value="1">1</option><option value="2">2</option></select>
+  <label for="speed">语速</label><input id="speed" size="4" value="1.0"></div>
+<div class="row"><button id="go">合成并播放</button>
+  <span id="status"></span></div>
+<audio id="player" controls></audio>
+<p><a id="dl" download="tts.wav">下载本次合成</a> · <a href="/tts?text=%E4%BD%A0%E5%A5%BD">GET /tts 直链示例</a></p>
+<script>
+const $ = id => document.getElementById(id);
+const q = {};
+const params = () => {
+  const p = new URLSearchParams({ text: $("text").value, language: $("language").value,
+                                  speed: $("speed").value || "1.0", channels: $("channels").value });
+  if ($("speaker").value) p.set("speaker", $("speaker").value);
+  if ($("sample_rate").value) p.set("sample_rate", $("sample_rate").value);
+  return p;
+};
+fetch("/tts/speakers").then(r => r.json()).then(j => {
+  const d = j.data || {};
+  for (const s of d.speakers || []) {
+    const o = document.createElement("option");
+    o.value = o.textContent = s;
+    if (s === d.default) o.selected = true;
+    $("speaker").append(o);
+  }
+  for (const l of d.languages || []) {
+    const o = document.createElement("option");
+    o.value = l; o.textContent = d.language_alias[l] ? l + "（" + d.language_alias[l] + "）" : l;
+    if (l === "zh") o.selected = true;
+    $("language").append(o);
+  }
+}).catch(() => { $("status").textContent = "/tts/speakers 读取失败，接口可能未装配（503）"; });
+
+$("go").onclick = async () => {
+  $("go").disabled = true;
+  $("status").textContent = "合成中，冷启动首帧可能要等几十秒……";
+  const t0 = performance.now();
+  try {
+    const r = await fetch("/tts?" + params());
+    if (!r.ok) {
+      let detail = r.status + " " + r.statusText;
+      try { detail = (await r.json()).detail || detail; } catch (e) {}
+      throw new Error(detail);
+    }
+    const blob = await r.blob();
+    if (q.url) URL.revokeObjectURL(q.url);
+    q.url = URL.createObjectURL(blob);
+    const audio = $("player");
+    audio.src = q.url;
+    audio.play();
+    const link = $("dl");
+    link.href = q.url;
+    $("status").textContent =
+      blob.size + " 字节，" + (r.headers.get("x-sample-rate") || "?") + " Hz，" +
+      r.headers.get("x-speaker") + "，耗时 " + ((performance.now() - t0) / 1000).toFixed(1) + " s";
+  } catch (e) {
+    $("status").textContent = "失败：" + e.message;
+  } finally {
+    $("go").disabled = false;
+  }
+};
+</script>
+</body>
+</html>
+"""
+
+
+@app.get("/tts/play", summary="浏览器试听页（/docs 里播不出声音，试听走这条）",
+         response_class=HTMLResponse)
+def tts_play():
+    return HTMLResponse(_TTS_PLAYER_HTML)
+
+
 @app.on_event("startup")
 def _tts_preload():
-    """TTS_AUTOLOAD=1 时启动就预热模型，否则首帧请求要等 30 s 上下。"""
+    """TTS_AUTOLOAD=1 时启动就热一遍推理链路，否则第一条真实请求要等 50 s 上下。"""
     if os.getenv("TTS_AUTOLOAD", "0") != "1":
         return
     speakers = _tts_speakers()
@@ -526,9 +819,20 @@ def _tts_preload():
         return
 
     def _work():
+        # 只建 pipeline 不算热：首次推理还要付文本前端（roberta/chinese-hubert）和声码器
+        # 的 CUDA 冷启动。预热句要按真实回复的长度来：拿"预热。"这种两字废文本热的时候，
+        # 启动后第一条 23 字回复首帧 5.53 s（v2ProPlus）；换成一句 31 字预热同一句 1.37 s，
+        # 再往后 0.58~0.66 s。换音色那次请求另算，见 _tts_pipeline 的重载。
+        import time
+
+        sp = speakers[_tts_default(speakers)]
+        t0 = time.perf_counter()
         try:
-            with _TTS_LOCK:
-                _tts_pipeline(speakers[_tts_default(speakers)])
+            n = sum(1 for _ in _tts_stream_frames(
+                sp, "服务端把整条回复按一到两秒的块往外发，板子收到第一块就能开口说话。",
+                "zh", 1.0, None, 1, 0.5))
+            print(f"[tts] preload warm: {n} frames in {time.perf_counter() - t0:.1f} s",
+                  flush=True)
         except Exception as e:
             print(f"[tts] preload failed: {e}", flush=True)
 

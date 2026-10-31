@@ -8,6 +8,7 @@
 #   bash deploy.sh --port 8001       # listen on another port (default 8000)
 #   bash deploy.sh --host 127.0.0.1  # bind another address (default 0.0.0.0)
 #   bash deploy.sh --autoload        # warm the TTS model while the server boots
+#   bash deploy.sh --speaker NAME    # default voice for /tts requests
 #   bash deploy.sh --mirror          # route github.com downloads through gh-proxy
 #   bash deploy.sh --cpu             # force the CPU torch build
 set -euo pipefail
@@ -18,13 +19,14 @@ deploy_only=false
 start_only=false
 print_only=false
 autoload=false
+speaker=""
 mirror=false
 backend=""
 port=""
 host=""
 
 usage() {
-    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -34,6 +36,7 @@ while [[ $# -gt 0 ]]; do
         --start-only) start_only=true; shift ;;
         --print) print_only=true; shift ;;
         --autoload) autoload=true; shift ;;
+        --speaker) speaker="${2:-}"; [[ -n "$speaker" ]] || { echo "--speaker needs a value" >&2; exit 2; }; shift 2 ;;
         --mirror) mirror=true; shift ;;
         --cpu | --cu126 | --cu130) backend="${1#--}"; shift ;;
         --port) port="${2:-}"; [[ -n "$port" ]] || { echo "--port needs a value" >&2; exit 2; }; shift 2 ;;
@@ -168,6 +171,7 @@ fi
 [[ -n "$port" ]] && export PORT="$port"
 [[ -n "$host" ]] && export HOST="$host"
 [[ "$autoload" == true ]] && export TTS_AUTOLOAD=1
+[[ -n "$speaker" ]] && export TTS_SPEAKER="$speaker"
 
 echo "==> starting on ${HOST:-0.0.0.0}:${PORT:-8000}"
 exec "$python" main.py

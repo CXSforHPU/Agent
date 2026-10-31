@@ -34,6 +34,8 @@ extern const char* agent_audio_option[];
 
 /* 播放接口，wavplay内部自带线程，调用不会阻塞 */
 int agent_driver_audio_play(const char* path);
+/* 阻塞等到当前这条播完；timeout_ms 内没播完返回 -RT_ETIMEOUT */
+int agent_driver_audio_play_wait(rt_int32_t timeout_ms);
 int agent_driver_audio_stop(void);
 int agent_driver_audio_pause(void);
 int agent_driver_audio_resume(void);
