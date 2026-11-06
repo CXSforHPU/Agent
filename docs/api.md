@@ -15,6 +15,9 @@
 9. [Prompt：系统提示词](#9-prompt系统提示词)
 10. [MSH 命令](#10-msh-命令)
 11. [已知差异](#11-已知差异)
+12. [Skill：技能模块](#12-skill技能模块)
+
+设备框架工具的完整说明见 [tool_device.md](./tool_device.md)，验证方法见 [testing.md](./testing.md)。
 
 ## 1. MessageHub：消息中心与消息数组
 
@@ -119,12 +122,14 @@ typedef struct ChatResponse
     char *reasoning;
     char *context;
     cJSON *tool_call;
+    rt_bool_t complete;
 } ChatResponse, *ChatResponse_t;
 ```
 
 - `reasoning`：思考文本。
 - `context`：回答正文。
 - `tool_call`：工具调用数组，元素为 OpenAI 格式的 tool call 对象。
+- `complete`：仅表示自然文本完整结束。必须收到 `[DONE]` 和 `finish_reason: "stop"`，正文没有丢弃或截断，且没有工具调用。它不表示工具调用完成或执行成功。
 
 ### 2.2 接口
 
@@ -133,20 +138,23 @@ typedef struct ChatResponse
 发送请求并流式读取 SSE 响应。
 
 - `messages`：消息数组，函数内部复制，不取走所有权。
-- `tools`：工具定义数组，可传 `RT_NULL`。
-- `max_tokens`：最大 token 数。主循环传 32 × 1024。
+- `tools`：工具定义数组，可传 `RT_NULL`，此时请求体不包含 `tools`。
+- `max_tokens`：最大 token 数，由调用方指定。普通对话传 32 × 1024，上下文摘要请求传 512。
 - 回调都在流式解析过程中调用，可传 `RT_NULL`。
 - `on_tool_call` 在响应结束后收到完整的工具调用 JSON。
-- 成功返回 `ChatResponse_t`，必须用 `chat_response_free()` 释放；失败返回 `RT_NULL`。
+- 返回 `ChatResponse_t` 时，必须用 `chat_response_free()` 释放。请求建立或资源分配失败返回 `RT_NULL`；流中断等情况仍可能返回部分响应。
 - 网络超时为 30 s。
 
 解析规则：
 
-- 只处理以 `data: ` 开头的行，遇到 `[DONE]` 结束。
+- 处理以 `data:` 开头的行，冒号后允许一个空格，支持 LF 和 CRLF 换行；遇到 `[DONE]` 结束。
 - 思考文本优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`。
 - 正文取 `delta.content`。
 - 工具调用按 `index` 合并，`id` 与 `name` 取第一个非空值，`arguments` 逐片拼接。
 - 缺失 `id` 的调用用 `call_<index>` 补齐，空参数改为 `{}`，没有函数名的调用丢弃。
+- JSON 或响应字段格式错误、SSE 行过长被丢弃、正文超限截断或流未完整结束时，`complete` 为 `RT_FALSE`。出现工具调用时也为 `RT_FALSE`，即使该调用最后被丢弃。
+
+普通对话仍沿用部分响应的处理方式，目前只有上下文摘要调用方检查 `complete`。拿到非空响应指针不代表正文完整。
 
 #### `void chat_response_free(ChatResponse_t resp)`
 
@@ -170,14 +178,17 @@ typedef enum RoleType
 typedef struct Context
 {
     cJSON *message;
+    rt_bool_t has_summary;
     rt_err_t (*build_system_prompt)(struct Context *self);
     rt_err_t (*append_user_message)(struct Context *self, Messages_t messages);
     rt_err_t (*append_assistant_message)(struct Context *self, ChatResponse_t resp);
     rt_err_t (*append_tool_message)(struct Context *self, const char *tool_call_id, Messages_t messages);
     rt_err_t (*clear_message)(struct Context *self);
-    rt_err_t (*trim_context)(struct Context *self, int keep_rounds);
+    rt_err_t (*compress_context)(struct Context *self, int threshold);
 } Context, *Context_t;
 ```
+
+`has_summary` 表示索引 1 处是否有滚动摘要。创建时为 `RT_FALSE`，压缩成功后为 `RT_TRUE`，清空成功后复位。
 
 ### 3.2 接口
 
@@ -197,20 +208,33 @@ typedef struct Context
 
 | 方法 | 说明 |
 |---|---|
-| `build_system_prompt(self)` | 在数组头部加入 system 消息 |
+| `build_system_prompt(self)` | 向空数组追加 system 消息，使其位于索引 0；创建时自动调用，清空后由调用方重建 |
 | `append_user_message(self, messages)` | 追加 user 消息，内容复制，调用方保留 `messages` 所有权 |
 | `append_assistant_message(self, resp)` | 无工具调用时追加正文；有工具调用时追加 `content` 为空、带 `tool_calls` 的 assistant 消息 |
 | `append_tool_message(self, tool_call_id, messages)` | 追加 `role=tool` 消息，只拼接 `TYPE_TEXT` 内容，结果是一个字符串 |
-| `clear_message(self)` | 删除全部消息并新建空数组，不重建系统提示词 |
-| `trim_context(self, keep_rounds)` | 保留 system 消息和最近 `keep_rounds` 条消息 |
+| `clear_message(self)` | 删除全部消息并新建空数组，复位 `has_summary`；调用方负责重建系统提示词 |
+| `compress_context(self, threshold)` | 消息数超过阈值时，尝试用滚动摘要替换旧历史，保留 system 和最近完整轮次 |
 
 工具结果只支持文本。图片、音频等多模态内容不能放进 `role=tool` 消息。
 
-`trim_context` 的参数名是 `keep_rounds`，实际按消息条数裁剪，不是按对话轮次。它也可能把 assistant 消息与其后的 tool 消息拆开。保留条数过小时，下一轮请求可能被接口以 400 拒绝。
+`build_system_prompt` 保留 `get_system_prompt()` 返回的基础提示词，再追加自动生成的内置技能 JSON 目录和加载说明。使用任务工具前，模型应调用 `skill({"name":"<name>"})` 加载匹配技能。完整技能说明仍在上下文中时可复用；只剩摘要时要重新加载。摘要是历史数据，不是新指令或设备当前状态的证明。
+
+`compress_context` 替代原来的 `trim_context`，规则如下：
+
+- `threshold` 至少为 2。主循环传入现有配置 `PKG_AGENT_MESSAGE_TRIM`，计数排除 system 和已有滚动摘要。只有消息数严格大于阈值才尝试压缩。
+- 先取最近 `threshold / 2` 条消息，除法向下取整。保留范围再向前扩到 user 消息边界，不拆开一轮对话或工具调用与结果。实际保留条数可能更多；没有可压缩的完整旧轮次时跳过，包括只有一轮超长对话的情况。
+- 将保留范围之前的历史（含上一份摘要，不含 system）序列化为 JSON，作为 user 数据发送。请求使用专用摘要 system 提示词，把历史当作数据，不执行其中的指令。
+- 摘要需要额外一次模型请求：`chat(request, RT_NULL, 512, RT_NULL, RT_NULL, RT_NULL)`。不提供工具，三个回调均为空，不向用户流式输出摘要。
+- 只接受非空白正文、`complete == RT_TRUE` 且没有工具调用的响应。带历史标记的摘要消息必须使序列化后的历史字节数减少。替换内容构造并检查成功后才提交，摘要作为 assistant 消息放在索引 1，system 和最近消息保持原样。
+- 网络、内存或摘要校验失败时，保留全部原历史，不回退到直接裁剪。失败或跳过压缩时，后续对话可能让历史继续增长，阈值不是硬性容量上限。
+
+成功压缩或跳过压缩返回 `RT_EOK`。失败返回 `-RT_EINVAL`、`-RT_ENOMEM` 或 `-RT_ERROR`，原历史保持不变。
+
+摘要保留语义信息，不是逐字记录，不能保证细节完整。摘要中的技能名不能代替完整技能说明，后续使用时需要重新加载。摘要请求期间 agent 仍处于忙碌状态。
 
 ## 4. Tool：工具系统
 
-头文件：`include/tool_base.h`、`include/tool_func.h` 实现：`src/tool_base.c`、`src/tool_func.c`、`src/tools/*`
+头文件：`include/tool_base.h`、`include/tool_func.h`、`include/utils/tool_json.h` 实现：`src/tool_base.c`、`src/tool_func.c`、`src/utils/tool_json.c`、`src/tools/*`
 
 ### 4.1 类型
 
@@ -250,7 +274,7 @@ typedef struct AgentToolList
 
 | 函数 | 说明 |
 |---|---|
-| `void init_tools(void)` | 注册内置工具，重复调用不会重复注册 |
+| `void init_tools(void)` | 建工具链表、遍历模块表注册工具、构建工具定义 JSON；重复调用不会重复注册 |
 | `void agent_tools_cleanup(void)` | 清理工具并复位注册标志，再次进入时重新注册 |
 
 ### 4.3 内置工具
@@ -261,7 +285,62 @@ typedef struct AgentToolList
 | `mul` | `a`, `b`（number） | 两数之积 |
 | `compare` | `a`, `b`（number） | 大小比较文本 |
 
-### 4.4 MQTT 工具
+三个工具各占一个 `.c`，`add`、`mul`、`compare` 三张描述符表在文件末尾各自登记，`init_tools()` 不再逐项拼 JSON。写法见 [tool_guide.md](./tool_guide.md) 第 3 节。
+
+### 4.4 设备框架工具
+
+头文件：`src/tools/tool_device/tool_device_internal.h`（模块内部约定），注册接口在 `include/utils/tool_json.h`
+实现：`src/tools/tool_device/`（通用层 `tool_device_core.c`，一类设备一个模块文件）
+使用说明：[tool_device.md](./tool_device.md)
+
+通用层（`PKG_AGENT_TOOL_DEVICE_CORE` 且 `RT_USING_DEVICE`）注册 7 个工具。它们统一走 `rt_device_*` 框架接口，模型不需要了解具体驱动：
+
+| 工具 | 参数 | 说明 |
+|---|---|---|
+| `device_list` | `class?`（string） | 列出已注册设备，可按类名或类号过滤，只读 |
+| `device_info` | `name`（string，必填） | 查询类、标志、引用计数、驱动支持的操作，只读 |
+| `device_open` | `name`（必填），`mode?`（rdonly / wronly / rdwr），`flags?`（数组） | 打开设备，引用计数加一，首次打开触发初始化 |
+| `device_close` | `name`（必填） | 关闭一次；拒绝关闭控制台设备 |
+| `device_read` | `name`（必填），`count?`，`pos?` | 读数据并返回 hex 与可打印文本；拒绝读控制台设备 |
+| `device_write` | `name`、`data`（必填），`encoding?`（text / hex），`pos?` | 写数据，块设备必须整块写；需要用户授权 |
+| `device_control` | `name`、`cmd`（必填），`arg?`（number） | 执行框架控制命令，命令名见技能 `device-commands` |
+
+类模块一共 22 个工具，由 Kconfig 逐项决定编不编，开关是 `PKG_AGENT_TOOL_DEVICE_<模块>`：
+
+| 开关 | 内核依赖 | 工具 |
+|---|---|---|
+| `..._CORE` | 无 | `device_list` 等 7 个通用工具 |
+| `..._PIN` | `RT_USING_PIN` | `pin_mode`、`pin_write`、`pin_read` |
+| `..._PWM` | `RT_USING_PWM` | `pwm_set`、`pwm_get`、`pwm_enable`、`pwm_disable` |
+| `..._ADC` | `RT_USING_ADC`，不能开 ADC V2 | `adc_read` |
+| `..._DAC` | `RT_USING_DAC` | `dac_write`、`dac_enable`、`dac_disable` |
+| `..._I2C` | `RT_USING_I2C` | `i2c_write`、`i2c_read`、`i2c_writeread` |
+| `..._SPI` | `RT_USING_SPI` | `spi_configure`、`spi_transfer` |
+| `..._SENSOR` | `RT_USING_SENSOR`，不能开 v2 | `sensor_read`、`sensor_info`、`sensor_control` |
+| `..._LED` | `RT_USING_LED` | `led_set`、`led_get`、`led_brightness` |
+
+每个模块文件末尾用 `AGENT_TOOL_MODULE_EXPORT(标签, 工具表)` 登记自己，宏内部走 `INIT_COMPONENT_EXPORT`。`init_tools()` 只调一次 `agent_tool_register_modules()`，把模块表里全部工具挂上工具链表。设备模块与运算、技能、MQTT 工具共用这套注册机制。
+
+约定：
+
+- 字符设备忽略 `pos`，`count` 按字节计；块设备的 `pos` 与 `count` 按块计，`device_read`、`device_write` 内部先查 `BLK_GETGEOME` 拿块大小。
+- `device_control` 封装了 `BLK_GETGEOME`、`RTC_GET_TIME`、`RTC_SET_TIME`、`WDT_GET_TIMEOUT`、`WDT_SET_TIMEOUT`、`WDT_GET_TIMELEFT` 的参数。其余命令要么无参调用，要么因参数是驱动私有结构而拒绝。
+- 读、写、控制都要求设备已打开。读到 0 字节会写明原因，写入返回实际接受的字节数。
+- 控制台设备禁止 `device_read` 与 `device_close`：前者会吃掉 shell 输入，后者会中断 shell。
+- 类模块里 `sensor_read` 与 3 个 LED 工具要求先 `device_open`；其余走各自类的专用接口，不需要打开。
+
+模块表在运行时可查，四个接口返回本次编译进来了哪些模块和工具（声明见 6.2）：
+
+| 接口 | 返回 |
+|---|---|
+| `agent_tool_module_count()` | 已登记的模块数 |
+| `agent_tool_module_name(index)` | 第 `index` 个模块的标签，例如 `"pin"`；越界返回 `RT_NULL` |
+| `agent_tool_module_tools(index)` | 该模块的工具数；越界返回 0 |
+| `agent_tool_module_tool_name(module, tool)` | 该模块第 `tool` 个工具的名字；越界返回 `RT_NULL` |
+
+两个配套技能由 `skill` 工具加载：`device` 说明工作流，`device-commands` 给出命令目录。工具说明见 [tool_device.md](./tool_device.md)。
+
+### 4.5 MQTT 工具
 
 头文件：`include/tools/tool_mqtt/tool_mqtt.h`
 实现：`src/tools/tool_mqtt/`
@@ -287,7 +366,7 @@ typedef struct AgentToolList
 | `auto` | 每条消息都注入 agent |
 | `poll` | 不自动注入，由 `mqtt_receive` 取用 |
 
-### 4.5 MQTT 应用层接口
+### 4.6 MQTT 应用层接口
 
 | 函数 | 说明 |
 |---|---|
@@ -311,7 +390,7 @@ typedef struct AgentToolList
 - 优先解析 JSON 中的 `val` 字段；没有时按整段报文解析数值。
 - 不消费历史，可重复调用。
 
-### 4.6 Agent 运行时访问器
+### 4.7 Agent 运行时访问器
 
 头文件：`include/AgentRuntime.h`
 
@@ -319,9 +398,9 @@ typedef struct AgentToolList
 |---|---|
 | `MessageHub_t agent_get_message_hub(void)` | 当前消息中心，agent 未运行时返回 `RT_NULL` |
 | `rt_bool_t agent_is_running(void)` | 主循环是否正在运行 |
-| `rt_bool_t agent_is_busy(void)` | 是否正在处理一次用户请求，注入方可据此错峰 |
+| `rt_bool_t agent_is_busy(void)` | 是否正在处理一次用户请求，含上下文摘要阶段，注入方可据此错峰 |
 
-### 4.7 文本注入
+### 4.8 文本注入
 
 头文件：`include/utils.h`
 
@@ -393,6 +472,7 @@ SSE 事件依次为 `delta`、`final`、`done`。输出等待超时 30 s，失�
 ### 5.4 Debug 通道
 
 宏：`PKG_AGENT_DEBUG_CHANNEL`
+实现：`src/channels/AgentDebugChannel.c`
 
 | 函数 | 说明 |
 |---|---|
@@ -400,7 +480,15 @@ SSE 事件依次为 `delta`、`final`、`done`。输出等待超时 30 s，失�
 | `void agent_debug_reset(void)` | 置空缓存指针，幂等 |
 | `extern AgentChannelOps agent_debug_ops` | `{ agent_debug_channel, agent_debug_reset }` |
 
-通过 `agent_send_message <type> <content>` 注入消息，类型 0–4 对应 text、audio、image、video、null。命令会等待输出最多 30 s，超时返回 -1。
+MSH 命令：
+
+```
+agent_send_message <type> <content>
+```
+
+`type` 取 0 到 4，依次是 text、audio、image、video、null，0 表示文本。命令把消息投进输入邮箱，然后等输出，最多等 30 秒。超时、agent 没运行或参数个数不足时返回 -1。
+
+本项目在 `rtconfig.h` 里定义了 `PKG_AGENT_DEBUG_CHANNEL`，当前选中的是 Debug 通道。用它做真机验证的方法见 [testing.md](./testing.md)。
 
 ### 5.5 LVGL 通道
 
@@ -414,7 +502,7 @@ SSE 事件依次为 `delta`、`final`、`done`。输出等待超时 30 s，失�
 | `MessageHub_t agent_lvgl_channel_hub(void)` | 取当前 hub，未初始化时返回 `RT_NULL` |
 | `extern AgentChannelOps agent_lvgl_ops` | `{ agent_lvgl_channel, agent_lvgl_channel_reset }` |
 
-包内只有接口，`agent_lvgl_ops` 由应用实现。本仓库示例在 `applications/lvgl/demo/lv_home_agent.c`：用 `message_hub_get_timeout()` 轮询输出，通过 MSH 命令启动 agent。
+包内只有接口，`agent_lvgl_ops` 由应用实现。本仓库示例在 `applications/lvgl/demo/lv_home_agent.c`：用 `message_hub_get_timeout()` 轮询输出，通过 MSH 命令启动 agent。本项目暂时没开这个通道。
 
 ## 6. Utils：通用工具、多模态与语音
 
@@ -441,13 +529,39 @@ SSE 事件依次为 `delta`、`final`、`done`。输出等待超时 30 s，失�
   - 未启用 STT：上传后生成 `audio_url`。
 - 上传失败的消息跳过。
 
-### 6.2 工具 JSON 构建
+### 6.2 工具 JSON 构建与模块注册
+
+头文件 `include/utils/tool_json.h`，实现 `src/utils/tool_json.c`。
+
+构造函数：
 
 | 函数 | 说明 |
 |---|---|
 | `cJSON *create_tool_item(const char *func_name, const char *desc, cJSON *params_obj)` | 生成工具定义 |
 | `cJSON *create_param_obj(cJSON *props_obj, cJSON *required_arr)` | 生成 `{type:"object", properties, required}` |
 | `void create_property(cJSON *props_obj, const char *name, const char *type, const char *desc)` | 添加一个属性 |
+| `void tool_desc(cJSON *func, const char *text)` | 写入功能说明主体 |
+| `void tool_desc_more(cJSON *func, const char *text)` | 追加一句说明，前面补一个空格 |
+| `void tool_desc_read_only(cJSON *func)` | 追加 `Read-only.` |
+| `void tool_desc_state_changing(cJSON *func)` | 追加 `State-changing: call only after the user authorized this peripheral.` |
+
+`tool_desc` 系列接收的是工具项里的 `function` 子对象。注册时 description 先以空串占位，再由 `_desc` 回调覆盖。覆盖走 `cJSON_ReplaceItemInObjectCaseSensitive`，键顺序保持 `name`、`description`、`parameters`。
+
+模块表。设备工具、运算工具、技能与 MQTT 工具都用这一套：
+
+| 名字 | 说明 |
+|---|---|
+| `struct agent_tool_def` | 一个工具的静态描述：`name`、`describe` 回调、`params` 构造函数、`execute` 执行函数 |
+| `struct agent_tool_module_def` | 一个模块：模块标签、工具表指针、工具数 |
+| `AGENT_TOOL_MODULE_EXPORT(label, tools)` | 生成模块描述符，并用 `INIT_COMPONENT_EXPORT` 在内核组件初始化阶段登记 |
+| `rt_err_t agent_tool_module_add(const struct agent_tool_module_def *module)` | 登记一个模块。描述符不合法返回 `-RT_EINVAL`，表满返回 `-RT_EFULL`，重复登记返回 `RT_EOK` |
+| `void agent_tool_register_modules(void)` | 遍历模块表，依次调用每个工具的 `params` 构造函数、`create_param_obj`、`create_tool_item`、`describe` 回调、`append_tool`；由 `init_tools()` 调用 |
+| `int agent_tool_module_count(void)` | 已登记的模块数 |
+| `const char *agent_tool_module_name(int index)` | 第 `index` 个模块的标签，例如 `"pin"`；越界返回 `RT_NULL` |
+| `int agent_tool_module_tools(int index)` | 该模块的工具数；越界返回 0 |
+| `const char *agent_tool_module_tool_name(int module, int tool)` | 该模块第 `tool` 个工具的名字；越界返回 `RT_NULL` |
+
+模块表容量 24 项，登记表指针去重。`describe` 和 `params` 构造函数分别形如 `void (*)(cJSON *func)` 与 `void (*)(cJSON *props, cJSON *required)`。`params` 填 `RT_NULL` 时注册结果是一个空 `properties` 加空 `required`；`describe` 填 `RT_NULL` 时 description 留空，日志打一条 `Tool '<name>' has no description`。
 
 ### 6.3 本地语音转写
 
@@ -594,7 +708,7 @@ typedef struct agent_runtime_config
 | `main_loop_entry` | AgentLoop | 启动主循环 |
 | `cleanup_agent_entry` | AgentLoop | 停止并清理全部资源 |
 | `init_tools` | tool_func | 手动注册工具，通常由 `init_agent` 调用 |
-| `agent_send_message <type> <content>` | Debug 通道 | 注入消息，类型 0–4 |
+| `agent_send_message <type> <content>` | Debug 通道 | 注入消息，类型 0–4，等输出最多 30 s |
 | `show_llm_config` | WebNet 通道 | 打印 API Key 是否设置、模型与地址 |
 | `msh_agent_upload_download up <file_path>` | utils | 上传文件 |
 | `msh_agent_upload_download down <file_id> <save_path>` | utils | 按文件 ID 下载 |
@@ -609,3 +723,44 @@ typedef struct agent_runtime_config
 
 - LVGL 通道的 ops 实现不在包内，由应用工程提供。只启用宏而不实现 `agent_lvgl_ops`，链接会失败。
 - `cleanup_agent_entry` 不停止 MQTT 客户端。需要断开时先执行 `mqtt_tool stop` 或调用 `mqtt_tool_stop()`。
+
+## 12. Skill：技能模块
+
+头文件：`include/skill.h` 实现：`src/skill.c`
+工具：`src/tools/tool_skill.c`，文件末尾用 `AGENT_TOOL_MODULE_EXPORT(skill, skill_tools)` 登记，工具名是 `skill`
+
+### 12.1 类型
+
+```c
+struct agent_skill
+{
+    const char *name;
+    const char *content;
+    size_t size; /**< UTF-8 字节数，不含结尾的 NUL。 */
+};
+```
+
+### 12.2 接口
+
+| 函数 | 说明 |
+|---|---|
+| `size_t agent_skill_count(void)` | 内嵌技能个数 |
+| `const struct agent_skill *agent_skill_get(size_t index)` | 按下标取技能。越界返回 `RT_NULL` |
+| `const struct agent_skill *agent_skill_find(const char *name)` | 按名字取技能。名字为 `RT_NULL` 或不存在时返回 `RT_NULL` |
+| `const char *agent_skill_list(void)` | 返回技能目录的 JSON 文本，不释放 |
+
+目录是 JSON 数组，每项含 `name`、`title`、`size`。`title` 取技能 Markdown 里第一个 `# ` 标题，没有标题就用技能名。
+
+### 12.3 技能工具 `skill`
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `name` | string | 可选。技能名。省略时返回目录 |
+
+不带 `name` 时返回 `agent_skill_list()` 的内容。带 `name` 时返回该技能的完整 Markdown，技能不存在返回 `-RT_EINVAL`，文本为 `Skill not found. Call skill without name to list available skills.`。
+
+### 12.4 内嵌过程
+
+技能文件放在 `skills/` 目录，文件名去掉 `.md` 就是技能名。`skills/SConscript` 调用 `skills/embed_skills.py`，在构建时生成 `skill_data.c`，里面是 `agent_skill_table[]`、`agent_skill_table_count` 和 `agent_skill_catalog` 三份数据。技能目录由 menuconfig 选项 `PKG_AGENT_SKILL_DIR` 决定，默认 `skills`；SCons 参数 `agent_skill_dir` 可以只改这一次构建。
+
+目录会注入系统提示词，见第 3 节 `build_system_prompt`。上下文被压缩后摘要里只留技能名，要继续用某个技能，先重新调用 `skill` 加载。

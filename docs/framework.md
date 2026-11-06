@@ -7,8 +7,9 @@
 框架运行在 RT-Thread 上，处理一次用户请求的完整过程：接收消息、请求 LLM、执行工具、写回结果、输出回答。主要能力：
 
 - 流式对话：解析 SSE 中的思考过程、正文与工具调用。
-- 工具系统：注册、查找、执行本地工具，内置运算示例与 7 个 MQTT 工具。
-- 上下文管理：按 system / user / assistant / tool 角色维护历史，支持清空与裁剪。
+- 工具系统：注册、查找、执行本地工具，内置运算示例、技能加载、设备框架工具与 7 个 MQTT 工具。
+- 技能模块：把 `skills/*.md` 内嵌进固件，模型按需加载正文。
+- 上下文管理：按 system / user / assistant / tool 角色维护历史，支持清空与滚动摘要压缩。
 - 多通道：CLI、WebNet、Debug、LVGL，通过 `AgentChannelOps` 接入。
 - 多模态：图片、视频和未启用 STT 的音频上传到文件服务器。
 - 本地语音转写：音频先转成文本，再发给模型。
@@ -17,9 +18,17 @@
 
 ## 2. 架构总览
 
-![Agent 分层架构](../diagrams/architecture-layers.png)
+![Agent 分层架构](../diagrams/agent-architecture.png)
 
-draw.io 源文件：[architecture-layers.drawio](../diagrams/architecture-layers.drawio)
+draw.io 源文件：[agent-architecture.drawio](../diagrams/agent-architecture.drawio)
+
+图里画的是当前工程的实际状态：通道层选中 Debug 通道，LVGL 通道暂时停用；平台层是 RT-Thread 设备框架与挂在其下的外设。工具层按模块划分，模块全开时共 40 个工具，设备框架 29 个、运算 3 个、MQTT 7 个、skill 1 个，每个模块自己登记到模块表；内嵌技能是编进固件的 4 份 Markdown。右侧为跨层关注点：写入授权、控制台保护、摘要压缩、离线验证。
+
+工具从模块文件到模型手里的完整链路：
+
+![工具注册与调用链路](../diagrams/tool-registration.png)
+
+draw.io 源文件：[tool-registration.drawio](../diagrams/tool-registration.drawio)
 
 AgentAudio 由应用直接调用，不参与对话主循环。
 
@@ -29,11 +38,13 @@ AgentAudio 由应用直接调用，不参与对话主循环。
 |---|---|---|
 | 顶层调度 | `AgentLoop` | 初始化与清理、对话主循环、工具调度、重复调用保护 |
 | 核心 | `MessageHub` | 基于 RT-Thread 邮箱的组件间消息传递 |
-| 核心 | `Context` | 对话历史的追加、清空、裁剪 |
+| 核心 | `Context` | 对话历史的追加、清空、滚动摘要压缩 |
 | 核心 | `Chat` | LLM API 通信与 SSE 解析 |
 | 核心 | `Tool` | 工具注册、查找、执行、结果回填 |
 | 通道 | `CLI / WebNet / Debug / LVGL` | 外部交互界面，通过 `AgentChannelOps` 接入 |
 | 基础 | `AgentConfig / Utils / Prompt` | 运行时配置、多模态与文本注入、系统提示词 |
+| 基础 | `Skill` | 内嵌技能注册表、技能目录与加载入口 |
+| 工具 | `src/tools/*` | 运算、技能、MQTT 与设备框架工具模块，各自带一张描述符表 |
 | 驱动 | `AgentAudio` | 播放与录音的命令封装 |
 
 ## 3. 核心组件
@@ -46,8 +57,8 @@ AgentAudio 由应用直接调用，不参与对话主循环。
 
 - 启动时调用 `init_agent()` 创建工具、MessageHub、Context，并调用通道的 `init`。
 - 阻塞等待输入邮箱。收到消息后追加为 user 消息，释放消息对象，再调用 `agent_loop`。
-- 一次请求结束后裁剪上下文，保留最近 `PKG_AGENT_MESSAGE_TRIM` 条。
-- 处理期间 `g_agent_busy` 为真，`agent_is_busy()` 返回 `RT_TRUE`；等待新消息时返回 `RT_FALSE`。MQTT 注入等外部模块可据此错峰。
+- 一次请求结束后调用 `compress_context(g_context, PKG_AGENT_MESSAGE_TRIM)`。排除 system 和已有摘要后的消息数超过阈值时，尝试压缩旧历史，保留策略见 3.3。
+- 处理期间 `g_agent_busy` 为真，摘要请求期间也保持为真。`agent_is_busy()` 在此期间返回 `RT_TRUE`，等待新消息时返回 `RT_FALSE`。MQTT 注入等外部模块可据此错峰。
 
 `agent_loop` 的规则：
 
@@ -85,15 +96,24 @@ MSH 命令：
 
 文件：`src/context.c`、`include/context.h`
 
-维护一个 cJSON 消息数组，角色包括 system、user、assistant、tool。
+维护一个 cJSON 消息数组，角色包括 system、user、assistant、tool。`has_summary` 标记索引 1 处是否有滚动摘要。
 
-- 创建时调用 `build_system_prompt`，系统提示词来自 `src/prompt.c`。
+- 创建时调用 `build_system_prompt`。保留 `src/prompt.c` 中 `get_system_prompt()` 的内容，再追加自动生成的内置技能 JSON 目录和加载说明。
+- 技能加载说明要求模型在使用任务工具前调用 `skill({"name":"<name>"})`。完整说明仍在上下文中时可复用；只剩摘要时要重新加载。
 - `append_assistant_message`：
   - 没有工具调用时，写入 assistant 的正文。
   - 有工具调用时，写入 `content` 为空的 assistant 消息，并复制 `tool_calls`。
 - `append_tool_message`：把工具结果拼成一个字符串，写入 `content`。只拼接 `TYPE_TEXT` 项，多模态数组不适用于 `role=tool`。
-- `clear_message`：删除全部消息并新建空数组，不会自动重建 system 提示词。
-- `trim_context(keep_rounds)`：保留 system 提示词和最近 `keep_rounds` 条消息，其余从数组头部删除。参数名是 `keep_rounds`，实际按消息条数计算，不是按对话轮次。
+- `clear_message`：删除全部消息并新建空数组，复位 `has_summary`。调用方需先重建 system 提示词，再追加新消息。
+- `compress_context(self, threshold)` 替代 `trim_context`，用滚动摘要压缩旧历史。主循环传入 `PKG_AGENT_MESSAGE_TRIM`，沿用原配置名。
+
+压缩只在消息数严格大于阈值时触发，计数排除 system 和已有摘要。先保留最近 `threshold / 2` 条消息，除法向下取整，再向前扩到 user 消息边界。这样会保留完整轮次，不拆开 `assistant(tool_calls)` 与对应的 tool 结果；实际保留条数可能超过半阈值。若只有一轮超长对话，或没有可压缩的完整旧轮次，则跳过。
+
+压缩会额外请求一次模型。旧历史前缀（含上一份摘要，不含 system）先序列化为 JSON，作为 user 数据提交给专用摘要 system 提示词。请求的 `tools` 和三个回调均为 `RT_NULL`，`max_tokens` 为 512；不会调用工具或流式输出摘要。
+
+只有正文非空白、`complete` 为真且没有工具调用的摘要才可提交。带历史标记的摘要消息还必须减少序列化后的历史字节数。所有检查通过后才替换旧前缀：system 留在索引 0，assistant 摘要放在索引 1，最近消息保持原样，并设置 `has_summary`。任何失败都保留全部原历史，不回退到直接裁剪。
+
+摘要是语义压缩，不是逐字记录，可能遗漏细节。它只作为历史数据，不能当作新指令或当前设备状态的证明。摘要提示词要求记录已加载的技能名，不保留完整技能说明；需要使用时应重新加载技能。
 
 assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容接口会返回 400。
 
@@ -101,10 +121,10 @@ assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容�
 
 文件：`src/chat.c`、`include/chat.h`
 
-- 请求体包含 `model`、`messages`、`tools`、`max_tokens`、`stream: true`，使用 Bearer 认证。
-- `max_tokens` 固定为 32 × 1024。
+- 请求体包含 `model`、`messages`、`max_tokens`、`stream: true`，使用 Bearer 认证。只在工具参数非空时加入 `tools`。
+- `max_tokens` 由调用方指定：普通对话为 32 × 1024，上下文摘要请求为 512。
 - webclient 超时为 30 s。
-- 解析 `data: ` 开头的 SSE 行，遇到 `[DONE]` 结束。
+- 解析 `data:` 开头的 SSE 行，冒号后允许一个空格，支持 LF 和 CRLF 换行；遇到 `[DONE]` 结束。
 - 思考内容优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`。
 - 正文取 `delta.content`。
 - 工具调用按 `index` 合并。`id`、`name` 取第一个非空值，`arguments` 逐片追加，超过 `PKG_AGENT_MAX_TOOL_ARG_LEN` 后丢弃后续分片并打印告警。
@@ -113,17 +133,27 @@ assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容�
 - 响应结束后归一化工具调用：缺失 `id` 用 `call_<index>`，空参数改为 `{}`，没有函数名的调用丢弃。
 - 返回 `ChatResponse_t`，使用后必须调用 `chat_response_free()`。
 
+`ChatResponse.complete` 只表示自然文本完整结束，要求同时收到 `[DONE]` 和 `finish_reason: "stop"`，正文没有丢弃或截断，且没有工具调用。JSON 或响应字段格式错误、超长 SSE 行、正文超限或流未完整结束，都会使它为假。工具调用即使在归一化时被丢弃，也不能算完整文本响应。
+
+普通对话仍按原方式返回和处理部分响应，目前只有上下文摘要调用方检查 `complete`。它不是工具执行成功标志，非空响应指针也不保证正文完整。
+
 ### 3.5 Tool 工具系统
 
-文件：`src/tool_base.c`、`src/tool_func.c`、`src/tools/*`
+文件：`src/tool_base.c`、`src/tool_func.c`、`src/utils/tool_json.c`（模块表）、`src/tools/*`（设备工具在 `src/tools/tool_device/`，MQTT 工具在 `src/tools/tool_mqtt/`）
 
 - 全局单例工具链表，节点保存工具定义 JSON 与执行函数。
 - 工具函数签名：`void tool_xxx(cJSON *args, AgentToolNode_t node)`，结果写入 `node->ret.messages`。
-- `init_tools()` 注册内置工具，重复调用不会重复注册。
+- 注册走模块表：每个工具模块在自己的 `.c` 末尾写一张 `struct agent_tool_def` 表，用 `AGENT_TOOL_MODULE_EXPORT` 在内核组件初始化阶段登记到 `src/utils/tool_json.c`。`init_tools()` 调一次 `agent_tool_register_modules()` 把表里全部工具挂上链表，重复调用不会重复注册。
 - 内置运算工具：`add`、`mul`、`compare`。
-- 内置 MQTT 工具：`mqtt_connect`、`mqtt_disconnect`、`mqtt_publish`、`mqtt_subscribe`、`mqtt_receive`、`mqtt_rule`、`mqtt_history`。
+- 技能工具：`skill`，不带 `name` 时列出技能名与标题，带 `name` 时返回该技能的 Markdown 全文。
+- 设备框架通用层（`PKG_AGENT_TOOL_DEVICE_CORE`）：`device_list`、`device_info`、`device_open`、`device_close`、`device_read`、`device_write`、`device_control` 共 7 个工具，统一走 `rt_device_*` 接口，屏蔽具体驱动。
+- 设备类模块：GPIO、PWM、ADC、DAC、I2C、SPI、传感器、LED 八类共 22 个工具，一类一个 `.c`，由 `PKG_AGENT_TOOL_DEVICE_<模块>` 决定编不编。每个文件末尾用 `AGENT_TOOL_MODULE_EXPORT` 登记，功能说明写在 `<工具名>_desc`，参数说明用 `create_property` 逐项写进 `<工具名>_params`。关掉一个模块不需要改任何中心文件。
+- 配套技能 `device`（工作流）与 `device-commands`（控制命令目录），见 [tool_device.md](./tool_device.md)。
+- 内置 MQTT 工具：`mqtt_connect`、`mqtt_disconnect`、`mqtt_publish`、`mqtt_subscribe`、`mqtt_receive`、`mqtt_rule`、`mqtt_history`。注册表在 `src/tools/tool_mqtt/tool_mqtt_tools.c`，该文件受 `PKG_AGENT_TOOL_MQTT_ENABLE` 控制，开关决定编译，也就决定注册。
 - `build_tools_json()` 把工具定义交给请求体，节点不再持有这部分 JSON。
-- `agent_tools_cleanup()` 释放链表、残留结果与注册标志，再次进入时重新注册。
+- `agent_tools_cleanup()` 释放链表、残留结果与注册标志，再次进入时重新注册。模块表是静态数据，不参与清理。
+
+模块表最多 24 项，全开时占用 14 项：设备框架 9 个、运算 3 个、skill 与 MQTT 各 1 个，工具总数 40。注册到调用的每一步见 [工具注册与调用链路](../diagrams/tool-registration.png)。
 
 ### 3.6 Channels
 
@@ -147,6 +177,10 @@ typedef struct AgentChannelOps
 | Debug | `PKG_AGENT_DEBUG_CHANNEL` | `agent_debug_ops` | 保存 hub 与 ctx | 置空缓存指针 |
 
 `include/channels/AgentChannels.h` 是唯一的通道选择点，优先级为 LVGL → CLI → WebNet → Debug。Kconfig 的通道选项是单选，正常配置只会定义一个宏。
+
+**当前工程的通道选择**：本项目在 `rtconfig.h` 里定义了 `PKG_AGENT_DEBUG_CHANNEL`，实际选中的是 Debug 通道。LVGL 通道暂时没开。
+
+Debug 通道由包内实现，文件是 `src/channels/AgentDebugChannel.c`。它提供 MSH 命令 `agent_send_message <type> <content>`，`type` 取 0 到 4，0 是文本。命令把消息投给 agent，再等输出，最多等 30 秒，超时返回 -1。
 
 LVGL 通道在包内只有头文件 `AgentLvglChannel.h`。`agent_lvgl_ops` 由应用实现，本仓库的示例在 `applications/lvgl/demo/lv_home_agent.c`：保存 hub、用 `message_hub_get_timeout()` 轮询输出、用 MSH 命令启动 agent。
 
@@ -178,7 +212,7 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include
 |---|---|
 | `src/utils/message.c` | 流式打印 `print_reasoning()`、`print_tool_call()`、`print_context()` |
 | `src/utils/format.c` | `format_text()`、`create_content_array()`、`to_content()` |
-| `src/utils/tool_json.c` | `create_tool_item()`、`create_param_obj()`、`create_property()` |
+| `src/utils/tool_json.c` | `create_tool_item()`、`create_param_obj()`、`create_property()`，以及工具模块表和 `agent_tool_register_modules()` |
 | `src/utils/file_op.c` | 文件操作线程与 `msh_agent_upload_download` |
 | `src/utils/stt.c` | 本地语音转写，见 3.9 |
 | `src/utils/tts.c` | 文本转语音，见 3.10 |
@@ -253,6 +287,26 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include
 - agent 忙时，注入侧会等待空闲，避免连续请求压垮 API 与网络。
 
 完整说明见 [tool_mqtt.md](./tool_mqtt.md)。
+
+### 3.13 Skill 技能模块
+
+文件：`skills/`、`skills/SConscript`、`skills/embed_skills.py`、`src/skill.c`、`include/skill.h`、`src/tools/tool_skill.c`
+
+技能是放在 `skills/` 目录下的 Markdown 文件。文件名去掉 `.md` 就是技能名，例如 `device-commands.md` 的技能名是 `device-commands`。随包发布的有 `math`、`mqtt`、`device`、`device-commands`。
+
+构建过程：
+
+1. `skills/SConscript` 调用 `skills/embed_skills.py`，递归收集目录里的 `.md` 文件。
+2. `embed_skills.py` 生成 `skill_data.c`，里面有三份数据：`agent_skill_table[]` 是技能正文，`agent_skill_table_count` 是技能个数，`agent_skill_catalog` 是目录的 JSON。
+3. 技能目录可以改。menuconfig 选项 `PKG_AGENT_SKILL_DIR` 默认是 `skills`，相对路径按包目录解析，也支持绝对路径。SCons 参数 `agent_skill_dir` 只影响这一次构建。
+
+目录是 JSON 数组，每项包含 `name`、`title`、`size`。`title` 取 Markdown 里第一个 `# ` 标题，没有标题就用技能名。
+
+目录会注入系统提示词。`src/context.c` 的 `__build_system_prompt()` 在基础提示词后面依次接上目录和一段加载说明，要求模型在使用任务工具前调用 `skill({"name":"<name>"})` 并照着做。
+
+模型通过 `skill` 工具取正文。不带 `name` 时返回目录，带 `name` 时返回该技能的完整 Markdown。工具实现在 `src/tools/tool_skill.c`，参数说明和注册表也在同一个文件末尾。
+
+上下文被压缩后，摘要里只留技能名，不留正文。要继续用某个技能，先重新加载。
 
 ## 4. 数据流
 
@@ -383,7 +437,9 @@ sequenceDiagram
 | `PKG_AGENT_MAX_CONTENT_LEN` | 正文上限，默认 2048 |
 | `PKG_AGENT_STREAM_LINE_BUFSZ` | SSE 单行缓冲，默认 1024 |
 | `PKG_AGENT_MAX_TOOL_ARG_LEN` | 工具参数上限，默认 1024 |
-| `PKG_AGENT_MESSAGE_TRIM` | 上下文保留条数，默认 6 |
+| `PKG_AGENT_MESSAGE_TRIM` | 上下文压缩触发阈值，默认 6；排除 system 和摘要后，消息数严格大于此值才尝试压缩 |
+
+沿用 `PKG_AGENT_MESSAGE_TRIM` 配置名，帮助说明已改为摘要压缩语义。它不再表示固定保留条数，最近消息的保留范围见 3.3。
 
 ### 多模态与语音
 
@@ -427,6 +483,8 @@ MQTT 选项较多，见 [tool_mqtt.md](./tool_mqtt.md) 的配置章节。常用�
 - 通道：`CLI.c`、`AgentWebChannel.c`、`AgentDebugChannel.c`
 - 工具目录
 - MQTT 目录
+- 技能：`skills/SConscript` 在 `PKG_USING_AGENT` 打开时生成 `skill_data.c`
+- 包内 utest 用例：`test/` 目录，只在 `RT_USING_UTEST` 打开时编译
 - `config/AgentConfig.c`
 - 音频驱动（启用 `PKG_AGENT_DRIVER_AUDIO` 时）
 
@@ -450,4 +508,6 @@ LVGL 通道的实现不在包内，由应用工程编译。
 - `cleanup_agent_entry` 不停止 MQTT 客户端。需要断开连接时，先执行 `mqtt_tool stop`。
 - LVGL 通道只提供接口，包内不包含聊天界面。
 - `utils.h` 中下载函数的声明名与实际定义不一致，详见 [api.md](./api.md) 的“已知差异”。
-- `trim_context()` 按消息条数裁剪，可能把 `assistant(tool_calls)` 与后续 `tool` 消息拆开。`PKG_AGENT_MESSAGE_TRIM` 小于一轮工具调用的消息数时，下一轮请求可能被接口以 400 拒绝。
+- 上下文摘要会增加一次模型请求的耗时和 token 消耗，期间 agent 保持忙碌。压缩失败或仅有一轮超长对话时保留全部历史，后续对话可能使历史继续增长。`PKG_AGENT_MESSAGE_TRIM` 不是硬性容量上限。
+- 本项目当前选中 Debug 通道，`rtconfig.h` 里定义了 `PKG_AGENT_DEBUG_CHANNEL`。LVGL 通道暂时没开，它的 ops 要由应用工程实现。
+- 设备框架工具的完整说明见 [tool_device.md](./tool_device.md)，验证方法见 [testing.md](./testing.md)。

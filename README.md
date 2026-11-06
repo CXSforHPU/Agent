@@ -2,12 +2,15 @@
 
 基于 RT-Thread 的智能代理框架。通过 LLM API 完成流式对话，支持本地工具调用、多通道接入、多模态文件上传、本地语音转写与 MQTT 数据接入。
 
-> 文档入口：[框架文档](./docs/framework.md) ｜ [API 文档](./docs/api.md) ｜ [工具开发指南](./docs/tool_guide.md) ｜ [MQTT 工具说明](./docs/tool_mqtt.md)
+> 文档入口：[框架文档](./docs/framework.md) ｜ [API 文档](./docs/api.md) ｜ [工具开发指南](./docs/tool_guide.md) ｜ [MQTT 工具说明](./docs/tool_mqtt.md) ｜ [设备框架工具](./docs/tool_device.md) ｜ [验证方法](./docs/testing.md)
 
 ## 功能
 
 - 流式对话：解析 SSE 响应，分别处理思考过程、回答正文与工具调用。
-- 工具调用：内置 `add`、`mul`、`compare` 三个示例工具与 7 个 MQTT 工具，工具循环最多 6 轮。
+- 工具调用：内置 `add`、`mul`、`compare` 三个示例工具、设备框架工具与 7 个 MQTT 工具，工具循环最多 6 轮。设备框架工具分通用层（7 个）与 8 个设备类模块（22 个），按 Kconfig 取舍。
+- 设备框架工具：通用层 7 个工具统一走 `rt_device_*`，屏蔽具体驱动；GPIO、PWM、ADC、DAC、I2C、SPI、传感器、LED 八类各一个 `.c`，封装本类的专用 API。
+- 技能模块：`skills/*.md` 在构建时编进固件，目录注入系统提示词，模型按需加载正文。
+- 上下文管理：历史超过阈值时用滚动摘要压缩，压缩失败保留原始历史。
 - 多通道：CLI、WebNet、Debug、LVGL 四种通道，通过 `AgentChannelOps` 统一接入。
 - 多模态：图片、视频和未启用 STT 的音频上传到文件服务器，按 URL 交给模型。
 - 本地语音转写：音频消息可在本机转成文本，再按普通文本发给模型。
@@ -25,6 +28,8 @@
    ![](./pictures/1.png)
 
    LVGL 通道只提供接口，具体界面由应用实现。本仓库的示例在 `applications/lvgl/demo/lv_home_agent.c`。
+
+   本仓库当前选的是 Debug 通道：`rtconfig.h` 定义 `PKG_AGENT_DEBUG_CHANNEL`，用 MSH 命令 `agent_send_message <type> <content>` 注入消息，不依赖界面。
 
 4. 进入 `RT-Thread online packages → security packages → mbedtls`，把 `Maxium fragment length in bytes` 改为 6144。否则 TLS 握手会失败。
    ![](./pictures/2.png)
@@ -76,9 +81,17 @@ mbedtls 请选择较新的版本。旧版本会把 `certs/README.md` 一起编�
 
 ## 架构
 
-![Agent 架构总览](./diagrams/architecture-overview.png)
+![Agent 架构总览](./diagrams/agent-architecture.png)
 
-draw.io 源文件：[architecture-overview.drawio](./diagrams/architecture-overview.drawio)
+draw.io 源文件：[agent-architecture.drawio](./diagrams/agent-architecture.drawio)
+
+图里画的是当前工程的实际状态：通道层选中 Debug 通道，LVGL 通道暂时停用；平台层是 RT-Thread 设备框架与挂在其下的外设。工具层按模块划分，模块全开时共 40 个工具，设备框架 29 个、运算 3 个、MQTT 7 个、skill 1 个；内嵌技能是编进固件的 4 份 Markdown。
+
+工具从模块文件到模型手里的完整链路：
+
+![工具注册与调用链路](./diagrams/tool-registration.png)
+
+draw.io 源文件：[tool-registration.drawio](./diagrams/tool-registration.drawio)
 
 详细分层、数据流与内存约定见 [框架文档](./docs/framework.md)。
 
@@ -92,12 +105,14 @@ draw.io 源文件：[architecture-overview.drawio](./diagrams/architecture-overv
 | Chat | `src/chat.c` | 组装请求，解析 SSE 思考、正文与工具调用 |
 | MessageHub | `src/MessageHub.c` | 双邮箱消息传递，支持超时接收 |
 | Context | `src/context.c` | 维护 system / user / assistant / tool 消息 |
-| Tool | `src/tool_base.c`、`src/tool_func.c` | 工具注册、查找、执行与清理 |
+| Tool | `src/tool_base.c`、`src/tool_func.c` | 工具链表的注册、查找、执行与清理；模块表在 `src/utils/tool_json.c` |
 | Channels | `src/channels/` | CLI、WebNet、Debug 通道实现 |
 | AgentConfig | `config/AgentConfig.c` | 编译期默认值与运行时配置 |
 | Utils | `src/utils/` | 多模态转换、文件上传下载、STT 与 TTS、文本注入 |
 | AgentAudio | `src/driver/audio/AgentAudio.c` | 播放与录音命令封装 |
 | MQTT | `src/tools/tool_mqtt/` | MQTT 连接、订阅、过滤、规则与历史缓存 |
+| Device | `src/tools/tool_device/` | 设备框架工具，通用层 7 个工具加 8 个设备类模块，各模块自己登记到 `src/utils/tool_json.c` 的模块表 |
+| Skill | `src/skill.c`、`src/tools/tool_skill.c` | 内嵌技能注册表、技能目录与加载工具 |
 
 ## 核心机制
 
@@ -140,6 +155,42 @@ draw.io 源文件：[architecture-overview.drawio](./diagrams/architecture-overv
 
 默认使用 `filter` 模式：例行数据留在本地，只有报文像咨询、或命中阈值规则时，才注入 agent 分析。发布操作有 100 ms 最小间隔，避免连续请求把连接打满。完整参数与行为见 [MQTT 工具说明](./docs/tool_mqtt.md)。
 
+### 设备框架工具
+
+通用层注册 7 个工具：`device_list`、`device_info`、`device_open`、`device_close`、`device_read`、`device_write`、`device_control`。全部走 `rt_device_*`，模型不需要知道具体驱动的 API。
+
+八类设备各占一个模块文件，`src/tools/tool_device/` 下每一类一个 `.c`。开关与依赖：
+
+| 开关 | 内核依赖 | 工具 |
+|---|---|---|
+| `PKG_AGENT_TOOL_DEVICE_CORE` | 无 | 通用层 7 个 |
+| `PKG_AGENT_TOOL_DEVICE_PIN` | `RT_USING_PIN` | `pin_mode`、`pin_write`、`pin_read` |
+| `PKG_AGENT_TOOL_DEVICE_PWM` | `RT_USING_PWM` | `pwm_set`、`pwm_get`、`pwm_enable`、`pwm_disable` |
+| `PKG_AGENT_TOOL_DEVICE_ADC` | `RT_USING_ADC` | `adc_read` |
+| `PKG_AGENT_TOOL_DEVICE_DAC` | `RT_USING_DAC` | `dac_write`、`dac_enable`、`dac_disable` |
+| `PKG_AGENT_TOOL_DEVICE_I2C` | `RT_USING_I2C` | `i2c_write`、`i2c_read`、`i2c_writeread` |
+| `PKG_AGENT_TOOL_DEVICE_SPI` | `RT_USING_SPI` | `spi_configure`、`spi_transfer` |
+| `PKG_AGENT_TOOL_DEVICE_SENSOR` | `RT_USING_SENSOR` | `sensor_read`、`sensor_info`、`sensor_control` |
+| `PKG_AGENT_TOOL_DEVICE_LED` | `RT_USING_LED` | `led_set`、`led_get`、`led_brightness` |
+
+每个模块文件末尾用 `AGENT_TOOL_MODULE_EXPORT` 把自己登记到 `src/utils/tool_json.c` 的模块表，`init_tools()` 调 `agent_tool_register_modules()` 把表里的工具挂上工具链表。运算工具、技能工具和 MQTT 工具用同一套注册方式，写法见 [工具开发指南](./docs/tool_guide.md)。
+
+menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件不满足的模块会自动灰掉；关掉的模块不参与编译，工具列表里也就没有它。ADC 与传感器模块只对接 v1 框架，工程开了 `RT_USING_ADC_V2` 或 `RT_USING_SENSOR_V2` 时这两项不可选。
+
+工具按框架约定处理单位与引用计数：字符设备按字节，块设备按块，块大小由工具自己用 `BLK_GETGEOME` 探。写操作要求用户先授权，读控制台和关控制台被直接拒绝，因为控制台承载着当前 shell。参数是驱动私有结构的控制命令一律拒绝执行，不做猜测。命令目录与护栏规则见 [设备框架工具](./docs/tool_device.md)。
+
+### 技能模块
+
+`skills/` 下的 Markdown 在构建时由 `skills/embed_skills.py` 转成 C 字符串，编成 `skill_data.c`。技能名就是文件名去掉 `.md`。随包发布的有 `math`、`mqtt`、`device`、`device-commands`。
+
+技能目录以 JSON 形式注入系统提示词，模型用 `skill` 工具按名字取正文：不带 `name` 列目录，带 `name` 返回全文。这样正文不必常驻上下文，模型只在需要时加载。
+
+### 上下文压缩
+
+一次请求结束后调用 `compress_context()`。历史条数超过 `PKG_AGENT_MESSAGE_TRIM` 时，把旧历史交给模型做滚动摘要，用摘要替换原始消息，保留 system 与最近完整轮次。
+
+摘要请求不带工具。只有响应明确自然结束、正文完整、没有工具调用，并且确实变小了，才提交替换；任何一条不满足就保留原始历史。压缩后的摘要只留技能名，要继续用技能需重新加载。
+
 ## 配置
 
 主要 Kconfig 选项：
@@ -153,10 +204,23 @@ draw.io 源文件：[architecture-overview.drawio](./diagrams/architecture-overv
 | `PKG_AGENT_STT_ENABLE` / `PKG_AGENT_STT_URL` | 本地语音转写开关与接口地址 |
 | `PKG_AGENT_DRIVER_AUDIO` | 音频驱动，独立于多模态 |
 | `PKG_AGENT_TOOL_MQTT_ENABLE` | MQTT 工具开关 |
+| `PKG_AGENT_TOOL_DEVICE` 与 `PKG_AGENT_TOOL_DEVICE_*` | 设备框架工具总开关与八个类模块开关 |
 | `PKG_AGENT_RESP_BUFSZ` / `PKG_AGENT_WEB_SOCKET_BUFSZ` | HTTP 响应与会话缓冲 |
 | `PKG_AGENT_STREAM_LINE_BUFSZ` | SSE 单行缓冲，默认 1024 |
 | `PKG_AGENT_MAX_TOOL_ARG_LEN` | 工具参数拼接上限 |
-| `PKG_AGENT_MESSAGE_TRIM` | 上下文裁剪保留条数 |
+| `PKG_AGENT_MESSAGE_TRIM` | 上下文压缩阈值，历史超过这个条数就尝试滚动摘要 |
+| `PKG_AGENT_SKILL_DIR` | 内嵌技能的 Markdown 目录，默认 `skills` |
+
+## 验证
+
+包内自带 utest 用例 `agent.device_tools`，覆盖通用层工具、模块表注册与两个技能。BSP 工作区另有离线 QEMU 回归 `build/skill_qemu/`，在 webclient 边界替换模型，检查技能、上下文压缩、设备工具与端到端链路。
+
+```bash
+scons -f build/skill_qemu/SConstruct
+python -B build/skill_qemu/run.py
+```
+
+回归不需要网络，也不需要真实外设。命令、判据与「这套回归不能证明什么」见 [验证方法](./docs/testing.md)。
 
 ## 常见问题
 

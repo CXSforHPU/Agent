@@ -499,7 +499,7 @@ payload: {"temp":25}
 | `include/utils.h` + `src/utils/message.c` | **公共注入入口 `agent_inject_text()`**：把一段文本作为用户消息交给 agent。原为 MQTT 模块私有的 `mqtt_inject_text()`，现提升为框架公共 API，任何工具/驱动都能复用（MQTT 路由线程仍然调用它，`tool_mqtt_route.c` 只保留本模块自己的注入计数 `s_inject_total` 与错峰时间戳 `s_last_inject_tick`） |
 | `src/AgentLoop.c` | 实现上述访问器；`cleanup_agent` 先摘除 hub 全局引用再销毁（避免注入方访问已释放对象）；输出 mailbox 满时释放消息（避免泄漏）；请求失败自动重试 3 次；工具循环防呆（重复调用跳过、上限 6、强制文本收尾） |
 | `include/tools/tools.h` | `#ifdef PKG_AGENT_TOOL_MQTT_ENABLE` 下包含 `tool_mqtt.h` |
-| `src/tool_func.c` | 注册 `mqtt_connect` / `mqtt_disconnect` / `mqtt_publish` / `mqtt_subscribe` / `mqtt_rule` / `mqtt_history` / `mqtt_receive` 七个工具 |
+| `src/tools/tool_mqtt/tool_mqtt_tools.c` | 七个工具的描述与参数构造函数、描述符表，文件末尾用 `AGENT_TOOL_MODULE_EXPORT(mqtt, mqtt_tools)` 登记；本文件只在 `PKG_AGENT_TOOL_MQTT_ENABLE` 打开时参与编译 |
 | `SConscript` | 启用宏后遍历 `src/tools/tool_mqtt/*.c` 编译，并加入 `include/tools/tool_mqtt` 头文件路径 |
 
 ### 8.1 应用层动态增删订阅（公开 API）
