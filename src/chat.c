@@ -48,6 +48,8 @@ ChatResponse_t chat(
     char *content = RT_NULL;
     cJSON *tool_calls = RT_NULL;
     cJSON *tool_call_map = RT_NULL;
+    cJSON *payload_json = RT_NULL;
+    cJSON *request_copy = RT_NULL;
     char *payload = RT_NULL;
     ChatResponse_t response = RT_NULL;
 
@@ -56,6 +58,10 @@ ChatResponse_t chat(
     int content_len = 0;
     rt_bool_t is_answering = RT_FALSE;
     rt_bool_t skip_line = RT_FALSE;
+    rt_bool_t stream_done = RT_FALSE;
+    rt_bool_t natural_stop = RT_FALSE;
+    rt_bool_t content_lost = RT_FALSE;
+    rt_bool_t saw_tool_call = RT_FALSE;
     char stream_buffer[STREAM_LINE_BUFSZ] = {0};
     int stream_len = 0;
 
@@ -98,18 +104,26 @@ ChatResponse_t chat(
     webclient_set_timeout(webSession, 30000);
 
     /* 5. 构造请求 JSON */
-    cJSON *payload_json = cJSON_CreateObject();
-    cJSON_AddStringToObject(payload_json, "model", get_dynamic_agent_model_name());
-    cJSON_AddItemToObject(payload_json, "messages", cJSON_Duplicate(messages, cJSON_True));
+    payload_json = cJSON_CreateObject();
+    if (!payload_json || !cJSON_AddStringToObject(payload_json, "model", get_dynamic_agent_model_name()))
+        goto __cleanup;
+    request_copy = cJSON_Duplicate(messages, cJSON_True);
+    if (!request_copy || !cJSON_AddItemToObject(payload_json, "messages", request_copy))
+        goto __cleanup;
+    request_copy = RT_NULL;
     if (tools != RT_NULL)
     {
-        cJSON_AddItemToObject(payload_json, "tools", cJSON_Duplicate(tools, cJSON_True));
+        request_copy = cJSON_Duplicate(tools, cJSON_True);
+        if (!request_copy || !cJSON_AddItemToObject(payload_json, "tools", request_copy))
+            goto __cleanup;
+        request_copy = RT_NULL;
     }
-    cJSON_AddNumberToObject(payload_json, "max_tokens", max_tokens);
-    cJSON_AddBoolToObject(payload_json, "stream", RT_TRUE);
+    if (!cJSON_AddNumberToObject(payload_json, "max_tokens", max_tokens) ||
+        !cJSON_AddBoolToObject(payload_json, "stream", RT_TRUE)) goto __cleanup;
 
     payload = cJSON_PrintUnformatted(payload_json);
     cJSON_Delete(payload_json);
+    payload_json = RT_NULL;
     if (!payload)
     {
         LOG_E("chat: payload json print malloc fail\n");
@@ -148,31 +162,45 @@ ChatResponse_t chat(
                     rt_memset(stream_buffer, 0, sizeof(stream_buffer));
                     continue;
                 }
+                if (stream_len > 0 && stream_buffer[stream_len - 1] == '\r')
+                    stream_len--;
                 stream_buffer[stream_len] = '\0';
-                if (rt_strncmp(stream_buffer, "data: ", 6) == 0)
+                if (rt_strncmp(stream_buffer, "data:", 5) == 0)
                 {
-                    char *json_str = stream_buffer + 6;
+                    char *json_str = stream_buffer + 5;
+                    if (*json_str == ' ') json_str++;
                     if (rt_strcmp(json_str, "[DONE]") == 0)
                     {
+                        stream_done = RT_TRUE;
                         goto __success;
                     }
 
-                    cJSON *json = cJSON_Parse(json_str);
+                    cJSON *json = cJSON_ParseWithOpts(json_str, RT_NULL, cJSON_True);
                     if (!json)
                     {
-                        /* 解析失败：复位行缓冲，避免残留内容污染下一条 SSE 行 */
+                        content_lost = RT_TRUE;
                         stream_len = 0;
                         rt_memset(stream_buffer, 0, sizeof(stream_buffer));
                         continue;
                     }
 
                     cJSON *choices = cJSON_GetObjectItemCaseSensitive(json, "choices");
+                    if (!cJSON_IsArray(choices) || cJSON_GetObjectItemCaseSensitive(json, "error"))
+                        content_lost = RT_TRUE;
                     if (choices && cJSON_IsArray(choices))
                     {
                         cJSON *choice = cJSON_GetArrayItem(choices, 0);
+                        if (choice && !cJSON_IsObject(choice)) content_lost = RT_TRUE;
                         if (choice && cJSON_IsObject(choice))
                         {
+                            cJSON *finish = cJSON_GetObjectItemCaseSensitive(choice, "finish_reason");
+                            if (cJSON_IsString(finish))
+                            {
+                                natural_stop = rt_strcmp(finish->valuestring, "stop") == 0;
+                                if (!natural_stop) content_lost = RT_TRUE;
+                            }
                             cJSON *delta = cJSON_GetObjectItemCaseSensitive(choice, "delta");
+                            if (!cJSON_IsObject(delta) && !cJSON_IsString(finish)) content_lost = RT_TRUE;
                             if (delta && cJSON_IsObject(delta))
                             {
                                 /* 解析思考过程：兼容 reasoning_content（OpenAI 兼容推理模型）
@@ -201,6 +229,8 @@ ChatResponse_t chat(
 
                                 /* 解析回答正文（空分片不产生输出，避免多余空行） */
                                 cJSON *content_field = cJSON_GetObjectItemCaseSensitive(delta, "content");
+                                if (content_field && !cJSON_IsNull(content_field) && !cJSON_IsString(content_field))
+                                    content_lost = RT_TRUE;
                                 if (content_field && cJSON_IsString(content_field) &&
                                     content_field->valuestring[0] != '\0')
                                 {
@@ -208,10 +238,11 @@ ChatResponse_t chat(
                                     size_t seg_len = rt_strlen(seg);
                                     if (!is_answering)
                                     {
-                                        rt_kprintf("\n");
+                                        if (on_context) rt_kprintf("\n");
                                         is_answering = RT_TRUE;
                                     }
                                     int remain = MAX_CONTENT_LEN - content_len - 1;
+                                    if (seg_len > (size_t)remain) content_lost = RT_TRUE;
                                     if (remain > 0)
                                     {
                                         if ((int)seg_len > remain) seg_len = remain;
@@ -225,6 +256,9 @@ ChatResponse_t chat(
 
                                 /* 流式拼接 tool_calls */
                                 cJSON *tc_arr = cJSON_GetObjectItemCaseSensitive(delta, "tool_calls");
+                                if (tc_arr && !cJSON_IsNull(tc_arr) &&
+                                    (!cJSON_IsArray(tc_arr) || cJSON_GetArraySize(tc_arr) > 0))
+                                    saw_tool_call = RT_TRUE;
                                 if (tc_arr && cJSON_IsArray(tc_arr))
                                 {
                                     int arr_sz = cJSON_GetArraySize(tc_arr);
@@ -357,6 +391,7 @@ ChatResponse_t chat(
                           "raise PKG_AGENT_STREAM_LINE_BUFSZ if tool calls are missing\n",
                           STREAM_LINE_BUFSZ);
                     skip_line = RT_TRUE;
+                    content_lost = RT_TRUE;
                     stream_len = 0;
                     rt_memset(stream_buffer, 0, sizeof(stream_buffer));
                 }
@@ -443,9 +478,12 @@ __success:
     response->context = content;
     response->reasoning = reasoning;
     response->tool_call = tool_calls;
+    response->complete = stream_done && natural_stop && !content_lost && !saw_tool_call;
     goto __cleanup;
 
 __cleanup:
+    cJSON_Delete(request_copy);
+    cJSON_Delete(payload_json);
     if (webSession)
         webclient_close(webSession);
     if (buffer)

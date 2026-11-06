@@ -561,13 +561,11 @@ static void main_loop(void *param)
 
         g_agent_busy = RT_TRUE;
         agent_loop(g_context, get_agent_tools(), print_reasoning, print_tool_call, print_context);
-        g_agent_busy = RT_FALSE;
-
-        /* 裁剪上下文，防止无限膨胀 */
-        if (g_context->trim_context)
+        if (g_context->compress_context(g_context, PKG_AGENT_MESSAGE_TRIM) != RT_EOK)
         {
-            g_context->trim_context(g_context, PKG_AGENT_MESSAGE_TRIM);
+            LOG_W("Context compression failed; original history retained.");
         }
+        g_agent_busy = RT_FALSE;
     }
     cleanup_agent();
 }

@@ -20,13 +20,14 @@ typedef enum RoleType
 typedef struct Context
 {
     cJSON *message;  /* 消息列表 cJSON 数组 */
+    rt_bool_t has_summary;
 
     rt_err_t (*build_system_prompt)(struct Context *self);
     rt_err_t (*append_user_message)(struct Context *self, Messages_t messages);
     rt_err_t (*append_assistant_message)(struct Context *self, ChatResponse_t resp);
     rt_err_t (*append_tool_message)(struct Context *self, const char *tool_call_id, Messages_t messages);
     rt_err_t (*clear_message)(struct Context *self);
-    rt_err_t (*trim_context)(struct Context *self, int keep_rounds);
+    rt_err_t (*compress_context)(struct Context *self, int threshold);
 } Context, *Context_t;
 
 /*

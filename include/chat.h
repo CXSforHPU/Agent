@@ -12,6 +12,7 @@ typedef struct ChatResponse
     char *reasoning;      /* 思考过程文本 */
     char *context;        /* 回答内容文本 */
     cJSON *tool_call;     /* 工具调用数组 [list[Dict]] */
+    rt_bool_t complete;   /**< Natural text completion without dropped content. */
 } ChatResponse, *ChatResponse_t;
 
 /*
