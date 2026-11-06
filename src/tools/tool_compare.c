@@ -62,3 +62,28 @@ void tool_compare(cJSON *args_obj, AgentToolNode_t node)
     messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
     node->ret.ret = (node->ret.messages) ? RT_EOK : RT_ERROR;
 }
+
+static void compare_desc(cJSON *func)
+{
+    tool_desc(func, "Compare the size of two numbers");
+}
+
+static void compare_params(cJSON *props, cJSON *required)
+{
+    create_property(props, "a", "number", "Number A to compare");
+    create_property(props, "b", "number", "Number B to compare");
+    cJSON_AddItemToArray(required, cJSON_CreateString("a"));
+    cJSON_AddItemToArray(required, cJSON_CreateString("b"));
+}
+
+static const struct agent_tool_def compare_tools[] =
+{
+    {
+        "compare",
+        compare_desc,
+        compare_params,
+        tool_compare
+    }
+};
+
+AGENT_TOOL_MODULE_EXPORT(compare, compare_tools)

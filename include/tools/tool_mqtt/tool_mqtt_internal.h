@@ -31,9 +31,10 @@
 /* 注入文本缓冲上限（按最大批量估算，堆上分配） */
 #define MQTT_TOOL_INJECT_TEXT_MAX   (PKG_AGENT_TOOL_MQTT_INJECT_BATCH_MAX * \
                                      (MQTT_TOOL_TOPIC_MAX_LEN + MQTT_TOOL_PAYLOAD_MAX_LEN + 48) + 256)
-/* 工具结果缓冲：小（发布/订阅）/ 中（订阅与规则列表）/ 大（批量收取）/ 超大（近期历史），均堆分配 */
+/* 工具结果缓冲：小（发布/订阅）/ 中（订阅与规则列表）/ 大（批量收取）/ 超大（近期历史），均堆分配。
+   中号要装下多条订阅后的 rules/summary 段尾，768 会在约 6 条订阅时截断 */
 #define MQTT_TOOL_RESULT_SMALL      256
-#define MQTT_TOOL_RESULT_MID        768
+#define MQTT_TOOL_RESULT_MID        1536
 #define MQTT_TOOL_RESULT_LARGE      (MQTT_TOOL_POLL_DEPTH * \
                                      (MQTT_TOOL_TOPIC_MAX_LEN + MQTT_TOOL_PAYLOAD_MAX_LEN + 48) + 512)
 #define MQTT_TOOL_RESULT_XLARGE     (MQTT_TOOL_MAX_SUB_TOPICS * \

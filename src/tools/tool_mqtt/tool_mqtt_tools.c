@@ -451,3 +451,191 @@ void tool_mqtt_disconnect(cJSON *args_obj, AgentToolNode_t node)
     rt_free(result);
 }
 
+/* ==========================================================================
+ * 工具描述符表与模块自注册
+ * 本文件只在 PKG_AGENT_TOOL_MQTT_ENABLE 打开时参与编译，关掉后模块表里自然没有 mqtt。
+ * ========================================================================== */
+
+static void mqtt_connect_desc(cJSON *func)
+{
+    tool_desc(func, "Connect the MQTT client to the broker (starts it if needed) and report the "
+        "connection state.");
+    tool_desc_more(func, "Use it when the user asks to connect/go online, or to diagnose why "
+        "publishing or subscribing fails.");
+    tool_desc_more(func, "publish/subscribe already perform this check automatically.");
+}
+
+static void mqtt_connect_params(cJSON *props, cJSON *required)
+{
+    create_property(props, "timeout_ms", "number",
+        "How long to wait for the connection, in milliseconds (default: the "
+        "built-in connect wait).");
+}
+
+static void mqtt_disconnect_desc(cJSON *func)
+{
+    tool_desc(func, "Disconnect the MQTT client and release its worker/receive threads.");
+    tool_desc_more(func, "Subscriptions are kept and will be re-subscribed automatically on the "
+        "next mqtt_connect.");
+    tool_desc_more(func, "Use it when the user asks to go offline, stop MQTT traffic, or before "
+        "reconfiguring the broker.");
+}
+
+static void mqtt_disconnect_params(cJSON *props, cJSON *required)
+{
+    (void)props;
+    (void)required;
+}
+
+static void mqtt_publish_desc(cJSON *func)
+{
+    tool_desc(func, "Publish a message to an MQTT topic to send a command to a device or "
+        "service.");
+    tool_desc_more(func, "Use this when the user asks to send/issue a command over MQTT.");
+    tool_desc_more(func, "Returns the publish result including topic and payload byte length.");
+}
+
+static void mqtt_publish_params(cJSON *props, cJSON *required)
+{
+    create_property(props, "topic", "string",
+        "Target MQTT topic, e.g. 'device/cmd'. Omit to use the default "
+        "publish topic.");
+    create_property(props, "message", "string",
+        "Message payload to publish (plain text or a JSON string).");
+    cJSON_AddItemToArray(required, cJSON_CreateString("message"));
+}
+
+static void mqtt_subscribe_desc(cJSON *func)
+{
+    tool_desc(func, "Subscribe to an MQTT topic to watch it, or unsubscribe / list current "
+        "subscriptions.");
+    tool_desc_more(func, "In the default 'filter' mode you are only woken up when a message needs "
+        "advice or a threshold rule (see mqtt_rule) is exceeded; routine readings are filtered "
+        "locally.");
+}
+
+static void mqtt_subscribe_params(cJSON *props, cJSON *required)
+{
+    create_property(props, "action", "string",
+        "One of 'subscribe' (default), 'unsubscribe', 'list'.");
+    create_property(props, "topic", "string",
+        "Topic filter to subscribe/unsubscribe, wildcards '+' and '#' "
+        "supported.");
+    create_property(props, "mode", "string",
+        "'filter' (default): only forward messages that look like a question or match an mqtt_rule "
+        "threshold, everything else stays local; 'auto': forward every message to you; 'poll': only "
+        "buffer them.");
+    cJSON_AddItemToArray(required, cJSON_CreateString("action"));
+}
+
+static void mqtt_receive_desc(cJSON *func)
+{
+    tool_desc(func, "Fetch MQTT messages buffered by topics that are not auto-forwarded "
+        "(filter/poll mode).");
+    tool_desc_more(func, "Use it when the user asks for recent readings or the current value of a "
+        "topic.");
+}
+
+static void mqtt_receive_params(cJSON *props, cJSON *required)
+{
+    create_property(props, "max", "number",
+        "Maximum number of buffered messages to fetch (up to 8).");
+    create_property(props, "topic", "string",
+        "Only fetch messages of this topic (wildcards supported).");
+}
+
+static void mqtt_rule_desc(cJSON *func)
+{
+    tool_desc(func, "Manage threshold rules so you are only notified when a subscribed value is "
+        "out of range (normal readings are filtered locally and never wake you up).");
+    tool_desc_more(func, "Example: set topic='agent/sub', field='hum', op='>', value=30 to be "
+        "told when humidity goes above 30.");
+    tool_desc_more(func, "Use it whenever the user asks to 'watch', 'monitor' or 'alert me when "
+        "...'.");
+}
+
+static void mqtt_rule_params(cJSON *props, cJSON *required)
+{
+    create_property(props, "action", "string",
+        "One of 'set' (default), 'clear' (remove rules), 'list'.");
+    create_property(props, "topic", "string",
+        "Topic filter the rule applies to (wildcards supported; '*' clears "
+        "all).");
+    create_property(props, "field", "string",
+        "JSON field path to compare. Nested objects use '.', arrays use '[n]' and '[*]' (any "
+        "element). Examples: 'hum', 'sensor.hum', 'readings[0].t', 'readings[*].temp'. Omit it when "
+        "the whole payload is a bare number (e.g. '35').");
+    create_property(props, "op", "string",
+        "Comparison operator: '>', '>=', '<', '<=', '==' or '!=' (default "
+        "'>').");
+    create_property(props, "value", "number", "Threshold value, e.g. 30.");
+    cJSON_AddItemToArray(required, cJSON_CreateString("action"));
+}
+
+static void mqtt_history_desc(cJSON *func)
+{
+    tool_desc(func, "Summarize what happened recently on subscribed MQTT topics: the latest "
+        "messages with their raw payloads, min/max/average/last of every numeric field, and how "
+        "many messages were received/forwarded/filtered.");
+    tool_desc_more(func, "Read-only (it does not consume anything).");
+    tool_desc_more(func, "Use this whenever the user asks how things have been, wants a trend, or "
+        "asks you to assess the recent situation of a sensor/topic.");
+}
+
+static void mqtt_history_params(cJSON *props, cJSON *required)
+{
+    create_property(props, "topic", "string",
+        "Topic filter to summarize; omit to summarize every subscribed "
+        "topic.");
+    create_property(props, "max", "number",
+        "How many recent messages to list per topic (default 8).");
+}
+
+static const struct agent_tool_def mqtt_tools[] =
+{
+    {
+        "mqtt_connect",
+        mqtt_connect_desc,
+        mqtt_connect_params,
+        tool_mqtt_connect
+    },
+    {
+        "mqtt_disconnect",
+        mqtt_disconnect_desc,
+        mqtt_disconnect_params,
+        tool_mqtt_disconnect
+    },
+    {
+        "mqtt_publish",
+        mqtt_publish_desc,
+        mqtt_publish_params,
+        tool_mqtt_publish
+    },
+    {
+        "mqtt_subscribe",
+        mqtt_subscribe_desc,
+        mqtt_subscribe_params,
+        tool_mqtt_subscribe
+    },
+    {
+        "mqtt_receive",
+        mqtt_receive_desc,
+        mqtt_receive_params,
+        tool_mqtt_receive
+    },
+    {
+        "mqtt_rule",
+        mqtt_rule_desc,
+        mqtt_rule_params,
+        tool_mqtt_rule
+    },
+    {
+        "mqtt_history",
+        mqtt_history_desc,
+        mqtt_history_params,
+        tool_mqtt_history
+    }
+};
+
+AGENT_TOOL_MODULE_EXPORT(mqtt, mqtt_tools)
+

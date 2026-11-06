@@ -50,3 +50,28 @@ void tool_add(cJSON *args_obj, AgentToolNode_t node)
     messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
     node->ret.ret = (node->ret.messages) ? RT_EOK : RT_ERROR;
 }
+
+static void add_desc(cJSON *func)
+{
+    tool_desc(func, "Calculate the sum of two numbers");
+}
+
+static void add_params(cJSON *props, cJSON *required)
+{
+    create_property(props, "a", "number", "First number");
+    create_property(props, "b", "number", "Second number");
+    cJSON_AddItemToArray(required, cJSON_CreateString("a"));
+    cJSON_AddItemToArray(required, cJSON_CreateString("b"));
+}
+
+static const struct agent_tool_def add_tools[] =
+{
+    {
+        "add",
+        add_desc,
+        add_params,
+        tool_add
+    }
+};
+
+AGENT_TOOL_MODULE_EXPORT(add, add_tools)

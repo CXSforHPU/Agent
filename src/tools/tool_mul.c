@@ -50,3 +50,28 @@ void tool_mul(cJSON *args_obj, AgentToolNode_t node)
     messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
     node->ret.ret = (node->ret.messages) ? RT_EOK : RT_ERROR;
 }
+
+static void mul_desc(cJSON *func)
+{
+    tool_desc(func, "Calculate the product of two numbers");
+}
+
+static void mul_params(cJSON *props, cJSON *required)
+{
+    create_property(props, "a", "number", "First multiplier");
+    create_property(props, "b", "number", "Second multiplier");
+    cJSON_AddItemToArray(required, cJSON_CreateString("a"));
+    cJSON_AddItemToArray(required, cJSON_CreateString("b"));
+}
+
+static const struct agent_tool_def mul_tools[] =
+{
+    {
+        "mul",
+        mul_desc,
+        mul_params,
+        tool_mul
+    }
+};
+
+AGENT_TOOL_MODULE_EXPORT(mul, mul_tools)
