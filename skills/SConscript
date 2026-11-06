@@ -1,0 +1,35 @@
+import ast
+import importlib.util
+import os
+
+from building import *
+from SCons.Script import ARGUMENTS, Action, Dir, File, Import, Value
+
+Import('env')
+
+cwd = GetCurrentDir()
+package_dir = os.path.dirname(cwd)
+configured_dir = GetConfigValue('PKG_AGENT_SKILL_DIR')
+skill_dir = ARGUMENTS.get('agent_skill_dir',
+                          ast.literal_eval(configured_dir) if configured_dir else 'skills')
+if not os.path.isabs(skill_dir):
+    skill_dir = os.path.join(package_dir, skill_dir)
+skill_dir = os.path.abspath(skill_dir)
+
+generator = os.path.join(cwd, 'embed_skills.py')
+spec = importlib.util.spec_from_file_location('agent_embed_skills', generator)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+paths, names = module.collect_skills(skill_dir)
+
+skill_env = env.Clone(AGENT_SKILL_NAMES=names)
+src = skill_env.Command(
+    Dir('.').File('skill_data.c'),
+    [File(str(path)) for path in paths],
+    Action(module.generate, 'Embedding Agent skills -> $TARGET'),
+)
+# Track the input list as well as contents so removals and directory switches rebuild.
+skill_env.Depends(src, [File(generator), File(os.path.join(cwd, 'SConscript')),
+                        Value((skill_dir, names))])
+
+Return('src')

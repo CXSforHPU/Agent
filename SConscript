@@ -28,6 +28,8 @@ INC_TOOLS = os.path.join(INC_ROOT, "tools")
 SRC_TOOL_MQTT = os.path.join(SRC_TOOLS, "tool_mqtt")
 INC_TOOL_MQTT = os.path.join(INC_TOOLS, "tool_mqtt")
 
+SRC_TOOL_DEVICE = os.path.join(SRC_TOOLS, "tool_device")
+
 SRC_UTILS = os.path.join(SRC_ROOT, "utils")
 
 SRC_DRIVER_AUDIO = os.path.join(SRC_ROOT, "driver", "audio")
@@ -47,6 +49,9 @@ for filename in os.listdir(SRC_ROOT):
         src.append(file_fullpath)
 # 添加核心头文件目录
 CPPPATH.append(INC_ROOT)
+
+if GetDepend(["PKG_USING_AGENT"]):
+    src += list(SConscript("skills/SConscript"))
 
 # ---------------------- Utils 工具模块 ----------------------
 # 按模块拆成多个 c 文件，各自的 Kconfig 开关写在文件里，这里统一全收
@@ -83,6 +88,23 @@ if GetDepend(["PKG_AGENT_TOOL_MQTT_ENABLE"]):
         if filename.endswith(".c") and os.path.isfile(file_fullpath):
             src.append(file_fullpath)
     CPPPATH.append(INC_TOOL_MQTT)
+
+# 设备框架工具（总开关收整个目录，每类设备的 PKG_AGENT_TOOL_DEVICE_XXX 开关写在文件里，
+# 关掉即整文件不参与编译，模块自注册宏也就不会执行）
+if GetDepend(["PKG_AGENT_TOOL_DEVICE"]):
+    for filename in os.listdir(SRC_TOOL_DEVICE):
+        file_fullpath = os.path.join(SRC_TOOL_DEVICE, filename)
+        if filename.endswith(".c") and os.path.isfile(file_fullpath):
+            src.append(file_fullpath)
+    CPPPATH.append(SRC_TOOL_DEVICE)
+
+# ---------------------- Test utest 用例 ---------------------- # RT_USING_UTEST 打开时编译包内 utest 测试用例
+SRC_TEST = os.path.join(CWD, "test")
+if GetDepend(["RT_USING_UTEST"]) and os.path.isdir(SRC_TEST):
+    for filename in os.listdir(SRC_TEST):
+        file_fullpath = os.path.join(SRC_TEST, filename)
+        if filename.endswith(".c") and os.path.isfile(file_fullpath):
+            src.append(file_fullpath)
 
 # ---------------------- Config 配置模块 ----------------------
 src.append(os.path.join(CFG_ROOT, "AgentConfig.c"))

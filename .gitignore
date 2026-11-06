@@ -1,5 +1,6 @@
 # 编译产物
 *.o
+/skills/skill_data.c
 
 # IDE / AI工具目录
 .vscode/
