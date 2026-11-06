@@ -165,7 +165,7 @@ void mqtt_hist_push(mqtt_sub_entry_t *entry, const mqtt_rx_item_t *item);
 void poll_push(const mqtt_rx_item_t *item);
 int poll_clear(void);
 
-/* 注：向 agent 注入文本用的是框架公共 API agent_inject_text()（include/utils.h），
+/* 注：向 agent 注入文本用的是框架公共 API agent_inject_text()（inc/utils.h），
  *     不再在 MQTT 模块内定义；MQTT 侧的注入计数/错峰时间戳由 tool_mqtt_route.c 维护。 */
 
 /* ==========================================================================

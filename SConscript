@@ -14,9 +14,7 @@ CWD = GetCurrentDir()
 # 源码根目录
 SRC_ROOT = os.path.join(CWD, "src")
 # 头文件根目录
-INC_ROOT = os.path.join(CWD, "include")
-# 配置文件目录
-CFG_ROOT = os.path.join(CWD, "config")
+INC_ROOT = os.path.join(CWD, "inc")
 
 # 子模块目录
 SRC_CHANNELS = os.path.join(SRC_ROOT, "channels")
@@ -99,16 +97,12 @@ if GetDepend(["PKG_AGENT_TOOL_DEVICE"]):
     CPPPATH.append(SRC_TOOL_DEVICE)
 
 # ---------------------- Test utest 用例 ---------------------- # RT_USING_UTEST 打开时编译包内 utest 测试用例
-SRC_TEST = os.path.join(CWD, "test")
+SRC_TEST = os.path.join(CWD, "tests")
 if GetDepend(["RT_USING_UTEST"]) and os.path.isdir(SRC_TEST):
     for filename in os.listdir(SRC_TEST):
         file_fullpath = os.path.join(SRC_TEST, filename)
         if filename.endswith(".c") and os.path.isfile(file_fullpath):
             src.append(file_fullpath)
-
-# ---------------------- Config 配置模块 ----------------------
-src.append(os.path.join(CFG_ROOT, "AgentConfig.c"))
-CPPPATH.append(CFG_ROOT)
 
 # ---------------------- Driver 驱动模块 ----------------------
 # Audio音频驱动

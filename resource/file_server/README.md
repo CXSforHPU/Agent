@@ -130,7 +130,7 @@ uv run --no-sync main.py
 
 服务默认监听 `0.0.0.0:8000`。本机可以打开 `http://127.0.0.1:8000/docs` 查看接口文档。语音合成要在网页里直接听，打开 `http://127.0.0.1:8000/tts/play`，`/docs` 里放不出声音，原因见第 11 节。
 
-![本地接口文档](../../pictures/本地网页访问.png)
+![本地接口文档](../../docs/pictures/本地网页访问.png)
 
 服务使用两个本地文件：
 
@@ -219,7 +219,7 @@ STT 失败时，Agent 不会上传音频，而是给模型一条“语音消息�
 
 通道类型优先选付费通道，带宽和稳定性更好，大文件上传不容易超时。
 
-![选择穿透通道](../../pictures/飞鸽内网穿透建议通道.png)
+![选择穿透通道](../../docs/pictures/飞鸽内网穿透建议通道.png)
 
 通道配置：
 
@@ -229,17 +229,17 @@ STT 失败时，Agent 不会上传音频，而是给模型一条“语音消息�
 | 前置域名 | 自定义前缀 |
 | 证书 | 系统默认证书 |
 
-![通道参数](../../pictures/飞鸽内网穿透通道配置.png)
+![通道参数](../../docs/pictures/飞鸽内网穿透通道配置.png)
 
 穿透成功后会得到 HTTP 与 HTTPS 两个地址。
 
 HTTP 地址：
 
-![HTTP 访问地址](../../pictures/飞鸽内网穿透http访问.png)
+![HTTP 访问地址](../../docs/pictures/飞鸽内网穿透http访问.png)
 
 HTTPS 地址：
 
-![HTTPS 访问地址](../../pictures/飞鸽内网穿透https服务.png)
+![HTTPS 访问地址](../../docs/pictures/飞鸽内网穿透https服务.png)
 
 ### 上传地址使用 HTTP
 
@@ -267,7 +267,7 @@ PKG_AGENT_STT_URL      = http://xxx.fgnwct.com/stt
 
 menuconfig 中的填写位置：
 
-![文件服务器地址配置](../../pictures/文件上传服务器menuconfig设置.png)
+![文件服务器地址配置](../../docs/pictures/文件上传服务器menuconfig设置.png)
 
 ## 8. 验证
 
@@ -284,13 +284,13 @@ menuconfig 中的填写位置：
 ## 9. 多模态聊天示例
 
 1. 通道选择 `PKG_AGENT_DEBUG_CHANNEL`。
-   ![](../../pictures/启用PKG_AGENT_DEBUG_CHANNEL.png)
+   ![](../../docs/pictures/启用PKG_AGENT_DEBUG_CHANNEL.png)
 
 2. 发送一张图片。
-   ![](../../pictures/多模态测试照片.jpg)
+   ![](../../docs/pictures/多模态测试照片.jpg)
 
 3. 模型回复。
-   ![](../../pictures/多模态照片demo.jpg)
+   ![](../../docs/pictures/多模态照片demo.jpg)
 
 ## 10. 常见问题
 
@@ -340,9 +340,9 @@ python fetch_tts.py dicts voice assets          # 都要联网，assets 要几 G
 python fetch_tts.py check                       # 逐项自检，缺什么一眼看到
 ```
 
-![TTS 部署流程](../../diagrams/tts-deploy-flow.png)
+![TTS 部署流程](../../docs/diagrams/tts-deploy-flow.png)
 
-draw.io 源文件：[tts-deploy-flow.drawio](../../diagrams/tts-deploy-flow.drawio)
+draw.io 源文件：[tts-deploy-flow.drawio](../../docs/diagrams/tts-deploy-flow.drawio)
 
 `fetch_tts.py` 做的事，全部幂等（已存在即跳过）：
 
@@ -579,9 +579,9 @@ curl -s -N -X POST -H "Content-Type: application/json" --data @req_stream.json l
 
 板端发出合成请求到喇叭出声，中间经过这几步：
 
-![TTS 运行时链路](../../diagrams/tts-runtime-flow.png)
+![TTS 运行时链路](../../docs/diagrams/tts-runtime-flow.png)
 
-draw.io 源文件：[tts-runtime-flow.drawio](../../diagrams/tts-runtime-flow.drawio)
+draw.io 源文件：[tts-runtime-flow.drawio](../../docs/diagrams/tts-runtime-flow.drawio)
 
 图里那条流式链路是板子打开 `PKG_AGENT_TTS_AUTO_PLAY` 之后的走法。板侧请求不带 `speaker`，服务端按 `TTS_SPEAKER` 取默认音色，没设时走 `_tts_default()` 的 `da_fei_yv_plus`，`GET /tts/speakers` 的 `default` 字段就是板子听到的那个。2026-10-31 经公网隧道用板侧原样的请求体复现过一次：33 字一句，2.53 s 收完 5 帧，共 6.92 s 音频，帧内 WAV 是 16 kHz 单声道 16 位。板侧收流与两槽乒乓的细节见 [framework.md 的文本转语音一节](../../docs/framework.md)。
 

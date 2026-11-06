@@ -1,3 +1,0 @@
-source "stubs/Kconfig.deps"
-
-source "Agent.Kconfig.current"

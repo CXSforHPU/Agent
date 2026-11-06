@@ -15,12 +15,12 @@
 | `audio_check.py` | 验证音频驱动 select 修复（旧文件里该选项实际无法生效） |
 | `Kconfig.test` | 脚本生成的临时入口（source 桩 + 被测文件） |
 
-注意：这两份 Kconfig 是早期快照，不包含当前安装包里的 `PKG_AGENT_STT_*`、`PKG_AGENT_LVGL_CHANNEL` 以及后续新增的 MQTT 选项，不能用于校验当前安装包。`kparse.py`、`scenarios.py`、`audio_check.py` 写死了 `D:\rtt\env-windows` 的 kconfiglib 路径，`inventory.py` 与 `audio_check.py` 还写死了旧的 Desktop 工程路径，运行前都要改成本机路径。
+注意：这两份 Kconfig 是早期快照，不包含当前安装包里的 `PKG_AGENT_STT_*`、`PKG_AGENT_LVGL_CHANNEL` 以及后续新增的 MQTT 选项，不能用于校验当前安装包。四个脚本都按自身位置定位目录，不再写死本机路径；导入 `kconfiglib` 失败时会提示改用 env 自带的 python。
 
 运行（用 env 自带的 python + kconfiglib，无需编译）：
 
 ```powershell
-$py = 'C:\Users\Public\Downloads\rtt\env-windows\.venv\Scripts\python.exe'
+$py = '<env-windows>\.venv\Scripts\python.exe'   # 本机 RT-Thread Env 安装目录
 & $py .\kparse.py Agent.Kconfig         # 也接受 Agent.Kconfig.current
 & $py .\scenarios.py Agent.Kconfig
 & $py .\inventory.py

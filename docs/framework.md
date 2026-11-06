@@ -18,17 +18,17 @@
 
 ## 2. 架构总览
 
-![Agent 分层架构](../diagrams/agent-architecture.png)
+![Agent 分层架构](diagrams/agent-architecture.png)
 
-draw.io 源文件：[agent-architecture.drawio](../diagrams/agent-architecture.drawio)
+draw.io 源文件：[agent-architecture.drawio](diagrams/agent-architecture.drawio)
 
 图里画的是当前工程的实际状态：通道层选中 Debug 通道，LVGL 通道暂时停用；平台层是 RT-Thread 设备框架与挂在其下的外设。工具层按模块划分，模块全开时共 40 个工具，设备框架 29 个、运算 3 个、MQTT 7 个、skill 1 个，每个模块自己登记到模块表；内嵌技能是编进固件的 4 份 Markdown。右侧为跨层关注点：写入授权、控制台保护、摘要压缩、离线验证。
 
 工具从模块文件到模型手里的完整链路：
 
-![工具注册与调用链路](../diagrams/tool-registration.png)
+![工具注册与调用链路](diagrams/tool-registration.png)
 
-draw.io 源文件：[tool-registration.drawio](../diagrams/tool-registration.drawio)
+draw.io 源文件：[tool-registration.drawio](diagrams/tool-registration.drawio)
 
 AgentAudio 由应用直接调用，不参与对话主循环。
 
@@ -82,7 +82,7 @@ MSH 命令：
 
 ### 3.2 MessageHub
 
-文件：`src/MessageHub.c`、`include/MessageHub.h`
+文件：`src/MessageHub.c`、`inc/MessageHub.h`
 
 - 输入邮箱 `AgentInputMb`，容量 10，方向为通道 → 主循环。
 - 输出邮箱 `AgentOutMb`，容量 10，方向为主循环 → 通道。
@@ -94,7 +94,7 @@ MSH 命令：
 
 ### 3.3 Context
 
-文件：`src/context.c`、`include/context.h`
+文件：`src/context.c`、`inc/context.h`
 
 维护一个 cJSON 消息数组，角色包括 system、user、assistant、tool。`has_summary` 标记索引 1 处是否有滚动摘要。
 
@@ -119,7 +119,7 @@ assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容�
 
 ### 3.4 Chat
 
-文件：`src/chat.c`、`include/chat.h`
+文件：`src/chat.c`、`inc/chat.h`
 
 - 请求体包含 `model`、`messages`、`max_tokens`、`stream: true`，使用 Bearer 认证。只在工具参数非空时加入 `tools`。
 - `max_tokens` 由调用方指定：普通对话为 32 × 1024，上下文摘要请求为 512。
@@ -153,11 +153,11 @@ assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容�
 - `build_tools_json()` 把工具定义交给请求体，节点不再持有这部分 JSON。
 - `agent_tools_cleanup()` 释放链表、残留结果与注册标志，再次进入时重新注册。模块表是静态数据，不参与清理。
 
-模块表最多 24 项，全开时占用 14 项：设备框架 9 个、运算 3 个、skill 与 MQTT 各 1 个，工具总数 40。注册到调用的每一步见 [工具注册与调用链路](../diagrams/tool-registration.png)。
+模块表最多 24 项，全开时占用 14 项：设备框架 9 个、运算 3 个、skill 与 MQTT 各 1 个，工具总数 40。注册到调用的每一步见 [工具注册与调用链路](diagrams/tool-registration.png)。
 
 ### 3.6 Channels
 
-文件：`src/channels/*`、`include/channels/*`
+文件：`src/channels/*`、`inc/channels/*`
 
 四个通道实现同一个接口：
 
@@ -176,7 +176,7 @@ typedef struct AgentChannelOps
 | WebNet | `PKG_AGENT_WEBNET_CHANNEL` | `agent_webnet_ops` | 注册 CGI | 置空缓存指针 |
 | Debug | `PKG_AGENT_DEBUG_CHANNEL` | `agent_debug_ops` | 保存 hub 与 ctx | 置空缓存指针 |
 
-`include/channels/AgentChannels.h` 是唯一的通道选择点，优先级为 LVGL → CLI → WebNet → Debug。Kconfig 的通道选项是单选，正常配置只会定义一个宏。
+`inc/channels/AgentChannels.h` 是唯一的通道选择点，优先级为 LVGL → CLI → WebNet → Debug。Kconfig 的通道选项是单选，正常配置只会定义一个宏。
 
 **当前工程的通道选择**：本项目在 `rtconfig.h` 里定义了 `PKG_AGENT_DEBUG_CHANNEL`，实际选中的是 Debug 通道。LVGL 通道暂时没开。
 
@@ -198,7 +198,7 @@ WebNet 通道提供三个 CGI：
 
 ### 3.7 AgentConfig
 
-文件：`config/AgentConfig.c`、`config/AgentConfig.h`
+文件：`src/AgentConfig.c`、`inc/AgentConfig.h`
 
 - 编译期默认值来自 `PKG_AGENT_API_KEY`、`PKG_AGENT_MODEL_NAME`、`PKG_AGENT_API_URL`。
 - 运行时可用 `agent_config_set()` 修改，`get_dynamic_agent_*()` 优先返回运行时值。
@@ -206,7 +206,7 @@ WebNet 通道提供三个 CGI：
 
 ### 3.8 Utils 与多模态
 
-Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include/utils/` 下一个同名 .h。`include/utils/utils_internal.h` 负责按启用的宏导入这些模块头，`include/utils.h` 只做一行转发，包内其它模块仍然只 include `utils.h`。
+Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `inc/utils/` 下一个同名 .h。`inc/utils/utils_internal.h` 负责按启用的宏导入这些模块头，`inc/utils.h` 只做一行转发，包内其它模块仍然只 include `utils.h`。
 
 | 文件 | 内容 |
 |---|---|
@@ -245,7 +245,7 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include
 
 ### 3.10 文本转语音
 
-文件：`src/utils/tts.c`。板端到喇叭的完整过程见 [TTS 运行时链路](../diagrams/tts-runtime-flow.png)。
+文件：`src/utils/tts.c`。板端到喇叭的完整过程见 [TTS 运行时链路](diagrams/tts-runtime-flow.png)。
 
 - 仅在 `PKG_AGENT_TTS_ENABLE` 时编译。两个入口：`msh_agent_tts` 合成一条文本，回复自动播报走 `agent_tts_speak()`。
 - 请求是 JSON POST，字段为 `text`、`sample_rate`（16000）、`channels`（1）。打开 `PKG_AGENT_TTS_AUTO_PLAY` 后多带两个字段：`stream=true` 和 `block_seconds`（1.5）。
@@ -266,7 +266,7 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include
 
 ### 3.11 AgentAudio
 
-文件：`src/driver/audio/AgentAudio.c`、`include/driver/audio/AgentAudio.h`
+文件：`src/driver/audio/AgentAudio.c`、`inc/driver/audio/AgentAudio.h`
 
 音频驱动封装 `wavplay` 与 `wavrecord` 命令，与多模态开关无关。
 
@@ -290,7 +290,7 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `include
 
 ### 3.13 Skill 技能模块
 
-文件：`skills/`、`skills/SConscript`、`skills/embed_skills.py`、`src/skill.c`、`include/skill.h`、`src/tools/tool_skill.c`
+文件：`skills/`、`skills/SConscript`、`skills/embed_skills.py`、`src/skill.c`、`inc/skill.h`、`src/tools/tool_skill.c`
 
 技能是放在 `skills/` 目录下的 Markdown 文件。文件名去掉 `.md` 就是技能名，例如 `device-commands.md` 的技能名是 `device-commands`。随包发布的有 `math`、`mqtt`、`device`、`device-commands`。
 
@@ -484,8 +484,7 @@ MQTT 选项较多，见 [tool_mqtt.md](./tool_mqtt.md) 的配置章节。常用�
 - 工具目录
 - MQTT 目录
 - 技能：`skills/SConscript` 在 `PKG_USING_AGENT` 打开时生成 `skill_data.c`
-- 包内 utest 用例：`test/` 目录，只在 `RT_USING_UTEST` 打开时编译
-- `config/AgentConfig.c`
+- 包内 utest 用例：`tests/` 目录，只在 `RT_USING_UTEST` 打开时编译
 - 音频驱动（启用 `PKG_AGENT_DRIVER_AUDIO` 时）
 
 LVGL 通道的实现不在包内，由应用工程编译。

@@ -21,7 +21,7 @@
 
 ## 1. MessageHub：消息中心与消息数组
 
-头文件：`include/MessageHub.h` 实现：`src/MessageHub.c`
+头文件：`inc/MessageHub.h` 实现：`src/MessageHub.c`
 
 ### 1.1 类型
 
@@ -112,7 +112,7 @@ typedef struct MessageHub
 
 ## 2. Chat：LLM 通信
 
-头文件：`include/chat.h` 实现：`src/chat.c`
+头文件：`inc/chat.h` 实现：`src/chat.c`
 
 ### 2.1 类型
 
@@ -162,7 +162,7 @@ typedef struct ChatResponse
 
 ## 3. Context：上下文管理器
 
-头文件：`include/context.h` 实现：`src/context.c`
+头文件：`inc/context.h` 实现：`src/context.c`
 
 ### 3.1 类型
 
@@ -234,7 +234,7 @@ typedef struct Context
 
 ## 4. Tool：工具系统
 
-头文件：`include/tool_base.h`、`include/tool_func.h`、`include/utils/tool_json.h` 实现：`src/tool_base.c`、`src/tool_func.c`、`src/utils/tool_json.c`、`src/tools/*`
+头文件：`inc/tool_base.h`、`inc/tool_func.h`、`inc/utils/tool_json.h` 实现：`src/tool_base.c`、`src/tool_func.c`、`src/utils/tool_json.c`、`src/tools/*`
 
 ### 4.1 类型
 
@@ -289,7 +289,7 @@ typedef struct AgentToolList
 
 ### 4.4 设备框架工具
 
-头文件：`src/tools/tool_device/tool_device_internal.h`（模块内部约定），注册接口在 `include/utils/tool_json.h`
+头文件：`src/tools/tool_device/tool_device_internal.h`（模块内部约定），注册接口在 `inc/utils/tool_json.h`
 实现：`src/tools/tool_device/`（通用层 `tool_device_core.c`，一类设备一个模块文件）
 使用说明：[tool_device.md](./tool_device.md)
 
@@ -342,7 +342,7 @@ typedef struct AgentToolList
 
 ### 4.5 MQTT 工具
 
-头文件：`include/tools/tool_mqtt/tool_mqtt.h`
+头文件：`inc/tools/tool_mqtt/tool_mqtt.h`
 实现：`src/tools/tool_mqtt/`
 使用说明：[tool_mqtt.md](./tool_mqtt.md)
 
@@ -392,7 +392,7 @@ typedef struct AgentToolList
 
 ### 4.7 Agent 运行时访问器
 
-头文件：`include/AgentRuntime.h`
+头文件：`inc/AgentRuntime.h`
 
 | 函数 | 说明 |
 |---|---|
@@ -402,7 +402,7 @@ typedef struct AgentToolList
 
 ### 4.8 文本注入
 
-头文件：`include/utils.h`
+头文件：`inc/utils.h`
 
 | 函数 | 说明 |
 |---|---|
@@ -423,7 +423,7 @@ if (agent_inject_text("topic: device/1/data\npayload: {\"temp\":42}") != RT_EOK)
 
 ## 5. Channels：交互通道
 
-头文件：`include/channels/*` 实现：`src/channels/*`
+头文件：`inc/channels/*` 实现：`src/channels/*`
 
 ### 5.1 通道接口
 
@@ -435,7 +435,7 @@ typedef struct AgentChannelOps
 } AgentChannelOps;
 ```
 
-`AgentLoop` 通过 `AGENT_CHANNEL_OPS` 选择通道，选择点在 `include/channels/AgentChannels.h`。优先级为 LVGL → CLI → WebNet → Debug，未配置时返回 `RT_NULL`。
+`AgentLoop` 通过 `AGENT_CHANNEL_OPS` 选择通道，选择点在 `inc/channels/AgentChannels.h`。优先级为 LVGL → CLI → WebNet → Debug，未配置时返回 `RT_NULL`。
 
 ### 5.2 CLI 通道
 
@@ -493,7 +493,7 @@ agent_send_message <type> <content>
 ### 5.5 LVGL 通道
 
 宏：`PKG_AGENT_LVGL_CHANNEL`
-头文件：`include/channels/AgentLvglChannel.h`
+头文件：`inc/channels/AgentLvglChannel.h`
 
 | 函数 | 说明 |
 |---|---|
@@ -506,7 +506,7 @@ agent_send_message <type> <content>
 
 ## 6. Utils：通用工具、多模态与语音
 
-头文件：`include/utils.h`，它只转发到 `include/utils/utils_internal.h`，由后者按启用的宏导入模块头。声明在 `include/utils/`、实现在 `src/utils/`，两边同名：`message`、`format`、`tool_json`、`file_op`、`stt`、`tts`。
+头文件：`inc/utils.h`，它只转发到 `inc/utils/utils_internal.h`，由后者按启用的宏导入模块头。声明在 `inc/utils/`、实现在 `src/utils/`，两边同名：`message`、`format`、`tool_json`、`file_op`、`stt`、`tts`。
 
 ### 6.1 文本与 JSON
 
@@ -531,7 +531,7 @@ agent_send_message <type> <content>
 
 ### 6.2 工具 JSON 构建与模块注册
 
-头文件 `include/utils/tool_json.h`，实现 `src/utils/tool_json.c`。
+头文件 `inc/utils/tool_json.h`，实现 `src/utils/tool_json.c`。
 
 构造函数：
 
@@ -565,7 +565,7 @@ agent_send_message <type> <content>
 
 ### 6.3 本地语音转写
 
-仅在 `PKG_AGENT_STT_ENABLE` 时编译。`agent_stt_transcribe(const char *path)` 定义在 `src/utils/stt.c`，声明在 `include/utils/stt.h`，由 `to_content()` 处理音频时调用。
+仅在 `PKG_AGENT_STT_ENABLE` 时编译。`agent_stt_transcribe(const char *path)` 定义在 `src/utils/stt.c`，声明在 `inc/utils/stt.h`，由 `to_content()` 处理音频时调用。
 
 - 向 `PKG_AGENT_STT_URL` 发送 multipart POST。
 - 连接建立后把收发超时放宽到 120 s，首次加载 whisper 模型可能耗时较久。
@@ -577,9 +577,9 @@ agent_send_message <type> <content>
 
 ### 6.4 文本转语音
 
-仅在 `PKG_AGENT_TTS_ENABLE` 时编译，实现文件 `src/utils/tts.c`。板端到喇叭的过程见 [TTS 运行时链路](../diagrams/tts-runtime-flow.png)。
+仅在 `PKG_AGENT_TTS_ENABLE` 时编译，实现文件 `src/utils/tts.c`。板端到喇叭的过程见 [TTS 运行时链路](diagrams/tts-runtime-flow.png)。
 
-对外函数声明在 `include/utils/tts.h`，只在 `PKG_AGENT_TTS_AUTO_PLAY` 打开时存在，该开关依赖 `PKG_AGENT_DRIVER_AUDIO`，由 `AgentLoop.c` 调用：
+对外函数声明在 `inc/utils/tts.h`，只在 `PKG_AGENT_TTS_AUTO_PLAY` 打开时存在，该开关依赖 `PKG_AGENT_DRIVER_AUDIO`，由 `AgentLoop.c` 调用：
 
 ```c
 void agent_tts_speak_init(void);        /* init_agent() 里创建队列和线程 */
@@ -601,7 +601,7 @@ void agent_tts_speak(const char *text); /* 把回复文本入队，不等合成 
 
 返回值：`agent_tts_synth()` 成功返回 `RT_EOK`，落地字节数写进 `out_len`，该参数可以为 `NULL`。文本或路径为空、`PKG_AGENT_TTS_URL` 为空返回 `-RT_EINVAL`。连接、收流、写盘任一段出错返回负值，串口打印 HTTP 状态码或者断点位置。`Content-Length` 已知而实际收到的字节更少算失败，不留半条 WAV。
 
-模块常量集中在 `include/utils/tts.h`，用 `AGENT_` 前缀：`AGENT_TTS_IO_BUF_SZ` 8192、`AGENT_TTS_SLOT_PATH_SZ` 64、`AGENT_TTS_BLOCK_SECONDS` 1.5、`AGENT_TTS_MAX_BLOCKS` 64、`AGENT_TTS_SPEAK_QUEUE` 8、`AGENT_TTS_SPEAK_STACK` 8192、`AGENT_TTS_PLAY_WAIT_MS` 60000。能在 menuconfig 里改的参数保留 `PKG_AGENT_` 前缀，由 `rtconfig.h` 提供。
+模块常量集中在 `inc/utils/tts.h`，用 `AGENT_` 前缀：`AGENT_TTS_IO_BUF_SZ` 8192、`AGENT_TTS_SLOT_PATH_SZ` 64、`AGENT_TTS_BLOCK_SECONDS` 1.5、`AGENT_TTS_MAX_BLOCKS` 64、`AGENT_TTS_SPEAK_QUEUE` 8、`AGENT_TTS_SPEAK_STACK` 8192、`AGENT_TTS_PLAY_WAIT_MS` 60000。能在 menuconfig 里改的参数保留 `PKG_AGENT_` 前缀，由 `rtconfig.h` 提供。
 
 文件服务器端的 `/tts` 接口见 [resource/file_server/README.md](../resource/file_server/README.md)。
 
@@ -642,7 +642,7 @@ typedef struct
 
 ## 7. AgentAudio：音频驱动
 
-头文件：`include/driver/audio/AgentAudio.h` 实现：`src/driver/audio/AgentAudio.c`
+头文件：`inc/driver/audio/AgentAudio.h` 实现：`src/driver/audio/AgentAudio.c`
 
 启用宏：`PKG_AGENT_DRIVER_AUDIO`
 
@@ -669,7 +669,7 @@ typedef struct
 
 ## 8. AgentConfig：运行时配置
 
-头文件：`config/AgentConfig.h` 实现：`config/AgentConfig.c`
+头文件：`inc/AgentConfig.h`，实现：`src/AgentConfig.c`
 
 ```c
 typedef struct agent_runtime_config
@@ -693,7 +693,7 @@ typedef struct agent_runtime_config
 
 ## 9. Prompt：系统提示词
 
-头文件：`include/prompt.h` 实现：`src/prompt.c`
+头文件：`inc/prompt.h` 实现：`src/prompt.c`
 
 | 函数 | 说明 |
 |---|---|
@@ -726,7 +726,7 @@ typedef struct agent_runtime_config
 
 ## 12. Skill：技能模块
 
-头文件：`include/skill.h` 实现：`src/skill.c`
+头文件：`inc/skill.h` 实现：`src/skill.c`
 工具：`src/tools/tool_skill.c`，文件末尾用 `AGENT_TOOL_MODULE_EXPORT(skill, skill_tools)` 登记，工具名是 `skill`
 
 ### 12.1 类型

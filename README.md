@@ -22,20 +22,20 @@
 1. 打开 menuconfig，进入 `RT-Thread online packages → AI packages → Lightweight Agent software for RT-Thread`。
 
 2. 配置 `Agent Runtime Configuration`，填入 API Key、模型名与服务地址。
-   ![](./pictures/0.png)
+   ![](./docs/pictures/0.png)
 
 3. 配置交互通道 `Agent interaction communication channel`。默认是 CLI。
-   ![](./pictures/1.png)
+   ![](./docs/pictures/1.png)
 
    LVGL 通道只提供接口，具体界面由应用实现。本仓库的示例在 `applications/lvgl/demo/lv_home_agent.c`。
 
    本仓库当前选的是 Debug 通道：`rtconfig.h` 定义 `PKG_AGENT_DEBUG_CHANNEL`，用 MSH 命令 `agent_send_message <type> <content>` 注入消息，不依赖界面。
 
 4. 进入 `RT-Thread online packages → security packages → mbedtls`，把 `Maxium fragment length in bytes` 改为 6144。否则 TLS 握手会失败。
-   ![](./pictures/2.png)
+   ![](./docs/pictures/2.png)
 
 5. 进入 `RT-Thread online packages → IoT - internet of things → WebClient: A HTTP/HTTPS Client for RT-Thread`，选中 `MbedTLS support`。
-   ![](./pictures/3.png)
+   ![](./docs/pictures/3.png)
 
 6. 保存配置，退出 menuconfig，执行 `pkgs --update` 拉取软件包。
 
@@ -43,7 +43,7 @@
 
 8. 在 MSH 输入 `main_loop_entry` 进入聊天终端，按 CTRL+D 退出。执行 `cleanup_agent_entry` 释放资源后，可以再次进入。
 
-   ![](./pictures/demo.png)
+   ![](./docs/pictures/demo.png)
 
 ### 使用多模态和语音
 
@@ -73,7 +73,7 @@ msh_agent_tts -o /a.wav 今天天气不错
 ### mbedtls 证书不可用时
 
 1. 打开 menuconfig，进入 `RT-Thread online packages → security packages → mbedtls → Select Root Certificat`，选中 `Using user CA`。
-   ![](./pictures/mbedtls选择userCA.png)
+   ![](./docs/pictures/mbedtls选择userCA.png)
 
 2. 把 `resource` 目录下的 `*.cer` 或你自己的 CA 复制到 `mbedtls-xx/certs/`。
 
@@ -81,17 +81,17 @@ mbedtls 请选择较新的版本。旧版本会把 `certs/README.md` 一起编�
 
 ## 架构
 
-![Agent 架构总览](./diagrams/agent-architecture.png)
+![Agent 架构总览](./docs/diagrams/agent-architecture.png)
 
-draw.io 源文件：[agent-architecture.drawio](./diagrams/agent-architecture.drawio)
+draw.io 源文件：[agent-architecture.drawio](./docs/diagrams/agent-architecture.drawio)
 
 图里画的是当前工程的实际状态：通道层选中 Debug 通道，LVGL 通道暂时停用；平台层是 RT-Thread 设备框架与挂在其下的外设。工具层按模块划分，模块全开时共 40 个工具，设备框架 29 个、运算 3 个、MQTT 7 个、skill 1 个；内嵌技能是编进固件的 4 份 Markdown。
 
 工具从模块文件到模型手里的完整链路：
 
-![工具注册与调用链路](./diagrams/tool-registration.png)
+![工具注册与调用链路](./docs/diagrams/tool-registration.png)
 
-draw.io 源文件：[tool-registration.drawio](./diagrams/tool-registration.drawio)
+draw.io 源文件：[tool-registration.drawio](./docs/diagrams/tool-registration.drawio)
 
 详细分层、数据流与内存约定见 [框架文档](./docs/framework.md)。
 
@@ -107,12 +107,27 @@ draw.io 源文件：[tool-registration.drawio](./diagrams/tool-registration.draw
 | Context | `src/context.c` | 维护 system / user / assistant / tool 消息 |
 | Tool | `src/tool_base.c`、`src/tool_func.c` | 工具链表的注册、查找、执行与清理；模块表在 `src/utils/tool_json.c` |
 | Channels | `src/channels/` | CLI、WebNet、Debug 通道实现 |
-| AgentConfig | `config/AgentConfig.c` | 编译期默认值与运行时配置 |
+| AgentConfig | `src/AgentConfig.c` | 编译期默认值与运行时配置 |
 | Utils | `src/utils/` | 多模态转换、文件上传下载、STT 与 TTS、文本注入 |
 | AgentAudio | `src/driver/audio/AgentAudio.c` | 播放与录音命令封装 |
 | MQTT | `src/tools/tool_mqtt/` | MQTT 连接、订阅、过滤、规则与历史缓存 |
 | Device | `src/tools/tool_device/` | 设备框架工具，通用层 7 个工具加 8 个设备类模块，各模块自己登记到 `src/utils/tool_json.c` 的模块表 |
 | Skill | `src/skill.c`、`src/tools/tool_skill.c` | 内嵌技能注册表、技能目录与加载工具 |
+
+### 目录结构
+
+| 目录 | 内容 |
+|---|---|
+| `inc/` | 对外头文件，与 `src/` 同层级分目录：`channels/`、`tools/`、`utils/`、`driver/audio/` |
+| `src/` | 源码。根目录的 .c 由 `SConscript` 全收，子目录按 Kconfig 开关取舍 |
+| `skills/` | 内嵌技能的 Markdown，`embed_skills.py` 在编译期生成 `skill_data.c` |
+| `tests/` | 包内 utest 用例，只在 `RT_USING_UTEST` 打开时编译 |
+| `docs/` | 中文文档。图在 `docs/diagrams/`（draw.io 源文件加导出的 PNG），界面截图在 `docs/pictures/` |
+| `scripts/` | 板侧开发脚本，不参与编译。`kconfig_check/` 离线校验 Kconfig，`mqtt_test/` 是 QEMU 复现与回归脚本 |
+| `resource/` | 板外配套资源：文件服务器 `file_server/`、TLS 根证书、WebNet 页面 `index.html` |
+| 根目录三个文件 | `Kconfig` 菜单项定义、`SConscript` 构建脚本、`package.json` 索引元数据 |
+
+`scripts/` 放的是给开发者跑的脚本，`src/tools/` 放的是给模型调用的工具，两者不要混淆。
 
 ## 核心机制
 
@@ -129,7 +144,7 @@ draw.io 源文件：[tool-registration.drawio](./diagrams/tool-registration.draw
 
 ### 通道选择
 
-`include/channels/AgentChannels.h` 是唯一的通道选择点。Kconfig 的通道选项是单选，通常只会定义一个宏。如果同时定义了多个宏，优先级为 LVGL → CLI → WebNet → Debug。
+`inc/channels/AgentChannels.h` 是唯一的通道选择点。Kconfig 的通道选项是单选，通常只会定义一个宏。如果同时定义了多个宏，优先级为 LVGL → CLI → WebNet → Debug。
 
 | 通道 | 宏 | 说明 |
 |---|---|---|

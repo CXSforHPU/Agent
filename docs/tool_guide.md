@@ -29,9 +29,9 @@ agent_loop 按 function.name 查找工具节点
 
 ### 1.1 注册与调用链路
 
-![工具注册与调用链路](../diagrams/tool-registration.png)
+![工具注册与调用链路](diagrams/tool-registration.png)
 
-draw.io 源文件：[tool-registration.drawio](../diagrams/tool-registration.drawio)
+draw.io 源文件：[tool-registration.drawio](diagrams/tool-registration.drawio)
 
 图分四段：编译期在模块文件里写描述符表并自注册；进入对话时把模块表里的工具挂上链表；每轮请求把工具定义发给模型，模型点名后执行对应工具；退出对话时释放链表。
 
@@ -57,7 +57,7 @@ draw.io 源文件：[tool-registration.drawio](../diagrams/tool-registration.dra
 }
 ```
 
-`include/utils/tool_json.h` 提供两组构造函数，参数侧三个，描述侧四个：
+`inc/utils/tool_json.h` 提供两组构造函数，参数侧三个，描述侧四个：
 
 | 函数 | 作用 |
 |---|---|
@@ -189,7 +189,7 @@ AGENT_TOOL_MODULE_EXPORT(add, add_tools)
 
 宏生成模块描述符，并用 `INIT_COMPONENT_EXPORT` 在内核组件初始化阶段调 `agent_tool_module_add()`，把模块登记进 `src/utils/tool_json.c` 的模块表。`init_tools()` 调一次 `agent_tool_register_modules()`，遍历模块表把每个工具挂上工具链表。模块表容量 24 项。
 
-`src/tools/*.c` 由 `SConscript` 自动收录，不需要改构建脚本。加一个工具也不用动 `src/tool_func.c` 和 `include/tools/tools.h`。只有包外还要直接调用这个执行函数时，才需要新建头文件并加进 `tools.h`，`tool_add.h` 就是这种情况。
+`src/tools/*.c` 由 `SConscript` 自动收录，不需要改构建脚本。加一个工具也不用动 `src/tool_func.c` 和 `inc/tools/tools.h`。只有包外还要直接调用这个执行函数时，才需要新建头文件并加进 `tools.h`，`tool_add.h` 就是这种情况。
 
 ## 4. 示例：求余工具 mod
 
@@ -456,7 +456,7 @@ AGENT_TOOL_MODULE_EXPORT(pwm, pwm_tools)
 
 新增模块要一并做三件事：结果文本里给出单位和 `note:`；写类操作在 `_desc` 里调 `tool_desc_state_changing(func)`；在 `skills/device.md` 的类工具一节补一行。
 
-设备工具的类模块不进对外头文件。执行函数的声明集中在 `src/tools/tool_device/tool_device_internal.h`，它 include `utils/tool_json.h` 拿到表结构和注册宏。`include/tools/tools.h` 只导出 `add`、`mul`、`compare`、`tool_mqtt.h` 这些包外还要直接调用的接口，新增加的工具不需要往里加。
+设备工具的类模块不进对外头文件。执行函数的声明集中在 `src/tools/tool_device/tool_device_internal.h`，它 include `utils/tool_json.h` 拿到表结构和注册宏。`inc/tools/tools.h` 只导出 `add`、`mul`、`compare`、`tool_mqtt.h` 这些包外还要直接调用的接口，新增加的工具不需要往里加。
 
 ## 9. 重复调用与轮次上限
 

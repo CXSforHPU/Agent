@@ -9,7 +9,7 @@
 
 | 手段 | 位置 | 覆盖范围 | 需要硬件 |
 |---|---|---|---|
-| 包内 utest 用例 | `packages/Agent-latest/test/device_tools_tc.c` | 通用层设备工具、模块表注册、两个技能，逐条断言 | 否，虚拟设备 |
+| 包内 utest 用例 | `packages/Agent-latest/tests/device_tools_tc.c` | 通用层设备工具、模块表注册、两个技能，逐条断言 | 否，虚拟设备 |
 | 离线 QEMU 回归 | BSP 工作区 `build/skill_qemu/` | 技能、上下文压缩、设备工具、端到端链路 | 否，QEMU 模拟机 |
 
 两套都在 QEMU 或板子上用 MSH 命令触发，不需要手工点界面。
@@ -20,7 +20,7 @@
 
 ### 2.1 编译条件
 
-包内 `SConscript` 只在 `RT_USING_UTEST` 打开时编译 `test/` 目录：
+包内 `SConscript` 只在 `RT_USING_UTEST` 打开时编译 `tests/` 目录：
 
 ```python
 SRC_TEST = os.path.join(CWD, "test")
@@ -33,7 +33,7 @@ if GetDepend(["RT_USING_UTEST"]) and os.path.isdir(SRC_TEST):
 
 ### 2.2 运行方法
 
-用例文件 `packages/Agent-latest/test/device_tools_tc.c`，导出名是 `agent.device_tools`：
+用例文件 `packages/Agent-latest/tests/device_tools_tc.c`，导出名是 `agent.device_tools`：
 
 ```c
 UTEST_TC_EXPORT(testcase, "agent.device_tools", utest_tc_init, utest_tc_cleanup, 60);
@@ -91,7 +91,7 @@ msh /> utest_run -thread agent.device_tools
 
 - 链接参数加 `-Wl,--wrap=webclient_post,--wrap=webclient_read`，把模型换掉。
 - `UTEST_THR_STACK_SIZE` 提到 16384，`RT_UTEST_MAX_OPTIONS` 设为 64。
-- 额外编入 `rt-thread/components/utilities/utest/utest.c` 与 `packages/Agent-latest/test/device_tools_tc.c`。
+- 额外编入 `rt-thread/components/utilities/utest/utest.c` 与 `packages/Agent-latest/tests/device_tools_tc.c`。
 
 ### 3.2 模型替换方式
 

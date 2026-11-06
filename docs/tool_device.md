@@ -43,7 +43,7 @@ AGENT_TOOL_MODULE_EXPORT(pin, pin_tools)
 
 这个宏生成一个模块描述符，并用 `INIT_COMPONENT_EXPORT` 在内核组件初始化阶段把它交给 `agent_tool_module_add()`。模块表在 `src/utils/tool_json.c`，`init_tools()` 调一次 `agent_tool_register_modules()`，把表里全部工具挂上工具链表。关掉一个模块，对应的 `.c` 不参与编译，模块表和工具列表里自然没有它。设备模块与运算、技能、MQTT 工具共用同一套注册机制和同一张表结构。
 
-注册用的数据结构、注册宏和模块表查询接口都声明在 `include/utils/tool_json.h`。模块内部共用的设备查找、结果拼装放在 `tool_device_common.c`，约定写在 `src/tools/tool_device/tool_device_internal.h`。
+注册用的数据结构、注册宏和模块表查询接口都声明在 `inc/utils/tool_json.h`。模块内部共用的设备查找、结果拼装放在 `tool_device_common.c`，约定写在 `src/tools/tool_device/tool_device_internal.h`。
 
 包内还带两个配套技能：`device`（工作流）与 `device-commands`（命令目录）。模型先加载技能，再调用工具。
 
@@ -384,7 +384,7 @@ LED 设备注册成 class 为 char，名字是 `led` 加数字。工具走 LED �
 
 ### 8.9 模块表自检
 
-模块表在运行时可查，四个接口在 `include/utils/tool_json.h`：`agent_tool_module_count()`、`agent_tool_module_name()`、`agent_tool_module_tools()`、`agent_tool_module_tool_name()`。它们给出这次编译进来了哪些模块、每个模块提供哪些工具，设备模块和其他工具模块共用这一张表。`test/device_tools_tc.c` 和 QEMU 回归都用它核对一件事：模块表里声明的每个工具都能从工具链表查到。
+模块表在运行时可查，四个接口在 `inc/utils/tool_json.h`：`agent_tool_module_count()`、`agent_tool_module_name()`、`agent_tool_module_tools()`、`agent_tool_module_tool_name()`。它们给出这次编译进来了哪些模块、每个模块提供哪些工具，设备模块和其他工具模块共用这一张表。`tests/utest_device_tools.c` 和 QEMU 回归都用它核对一件事：模块表里声明的每个工具都能从工具链表查到。
 
 回归还顺着链表取出每个工具定义里的 `function.description`，按 60 列分段打在串口上（`TOOL_DESC <工具名> <段号> |文字|`，结尾一行段号写 `end`）。改描述写法、合并措辞时，把这些行拼回去和改造前的文本逐条比一遍，能确认发给模型的文字一字未变。
 
@@ -437,6 +437,6 @@ LED 设备注册成 class 为 char，名字是 `led` 加数字。工具走 LED �
 
 ## 12. 验证
 
-包内自带 utest 用例 `test/device_tools_tc.c`，导出名 `agent.device_tools`。它覆盖通用层 7 个工具、模块表与工具链表的一致性，以及两个技能。
+包内自带 utest 用例 `tests/utest_device_tools.c`，导出名 `agent.device_tools`。它覆盖通用层 7 个工具、模块表与工具链表的一致性，以及两个技能。
 
 类模块的覆盖分两种。当前 BSP 打开了 GPIO、I2C、SPI 三个类模块，它们在 QEMU 回归里跟着固件一起跑。PWM、ADC、DAC、传感器、LED 五类在这份配置里没有驱动，模块不参与链接，只做编译检查：把缺失的 `RT_USING_*` 与 `PKG_AGENT_TOOL_DEVICE_*` 补成命令行宏，逐个编译 `src/tools/tool_device/` 下的文件。跑法见 [testing.md](./testing.md) 第 3.3 节。

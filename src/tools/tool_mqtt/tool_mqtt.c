@@ -528,7 +528,7 @@ int poll_clear(void)
 
 /*
  * 注：向 agent 注入文本的能力已提升为框架公共 API ——
- *     agent_inject_text()（声明见 include/utils.h，实现见 src/utils/message.c），
+ *     agent_inject_text()（声明见 inc/utils.h，实现见 src/utils/message.c），
  *     MQTT 模块（tool_mqtt_route.c）与其它工具共用同一入口；
  *     MQTT 特有的注入计数/错峰时间戳留在本模块里维护。
  */

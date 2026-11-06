@@ -244,7 +244,7 @@ static void mqtt_route_item(const mqtt_rx_item_t *item)
                    "arrived in the same batch and are not repeated above.", dup_count);
     }
 
-    /* 注入到 agent：公共 API，其它工具/驱动也用同一入口（见 include/utils.h） */
+    /* 注入到 agent：公共 API，其它工具/驱动也用同一入口（见 inc/utils.h） */
     if (agent_inject_text(text) == RT_EOK)
     {
         int i;

@@ -8,8 +8,11 @@ Usage:
 import os
 import sys
 
-sys.path.insert(0, r"D:\rtt\env-windows\.venv\Lib\site-packages")
-import kconfiglib
+try:
+    import kconfiglib
+except ImportError:
+    sys.exit("kconfiglib missing; run this file with the RT-Thread Env python "
+             "(<env-windows>/.venv/Scripts/python.exe) or pip install kconfiglib")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 os.chdir(HERE)

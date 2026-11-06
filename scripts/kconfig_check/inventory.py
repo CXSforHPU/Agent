@@ -1,6 +1,6 @@
 ﻿import os, re, sys
-HERE = r"C:\Users\31309\Desktop\agent_test\packages\Agent-latest\resource\kconfig_check"
-BSP = r"C:\Users\31309\Desktop\agent_test"
+HERE = os.path.dirname(os.path.abspath(__file__))
+BSP = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".."))
 kc = open(os.path.join(HERE, "Agent.Kconfig"), encoding="utf-8").read()
 syms = set(re.findall(r"^\s*(?:menuconfig|config)\s+(PKG_[A-Z0-9_]+)", kc, re.M))
 real = set()

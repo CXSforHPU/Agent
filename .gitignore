@@ -11,9 +11,14 @@ resource/file_server/.venv/
 resource/file_server/upload_files/
 resource/file_server/file_db.sqlite
 
-# test目录：忽略test下所有，只保留 *.py
+# file_server 自带的测试目录：忽略全部内容，只保留 *.py
 resource/file_server/test/*
 !resource/file_server/test/*.py
+
+# Kconfig 离线校验脚本运行时生成的临时文件
+/scripts/kconfig_check/Kconfig.test
+/scripts/kconfig_check/.config.audio
+/scripts/kconfig_check/.config.scen
 
 # python缓存
 __pycache__/

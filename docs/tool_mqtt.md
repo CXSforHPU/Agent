@@ -50,9 +50,9 @@
 `tool_mqtt.c` 原本是单文件（2500+ 行），现已拆为「1 个对外头 + 1 个内部头 + 7 个源文件」，
 每个文件职责单一、只通过 `tool_mqtt_internal.h` 交换状态与函数声明：
 
-![MQTT 工具模块划分](../diagrams/mqtt-modules.png)
+![MQTT 工具模块划分](diagrams/mqtt-modules.png)
 
-draw.io 源文件：[mqtt-modules.drawio](../diagrams/mqtt-modules.drawio)
+draw.io 源文件：[mqtt-modules.drawio](diagrams/mqtt-modules.drawio)
 
 | 文件 | 行数级 | 职责 |
 |---|---|---|
@@ -74,15 +74,15 @@ draw.io 源文件：[mqtt-modules.drawio](../diagrams/mqtt-modules.drawio)
 
 ### 3.1 下发命令（agent → 话题）
 
-![MQTT 发布流程](../diagrams/mqtt-publish-flow.png)
+![MQTT 发布流程](diagrams/mqtt-publish-flow.png)
 
-draw.io 源文件：[mqtt-publish-flow.drawio](../diagrams/mqtt-publish-flow.drawio)
+draw.io 源文件：[mqtt-publish-flow.drawio](diagrams/mqtt-publish-flow.drawio)
 
 ### 3.2 订阅消息分析（话题 → agent）
 
-![MQTT 接收与过滤流程](../diagrams/mqtt-receive-flow.png)
+![MQTT 接收与过滤流程](diagrams/mqtt-receive-flow.png)
 
-draw.io 源文件：[mqtt-receive-flow.drawio](../diagrams/mqtt-receive-flow.drawio)
+draw.io 源文件：[mqtt-receive-flow.drawio](diagrams/mqtt-receive-flow.drawio)
 
 > 说明：agent 未运行时被放行的消息同样进入滚动窗口（日志 `buffer mqtt message from ...`），不丢消息。
 
@@ -195,9 +195,9 @@ you will only be notified when this condition becomes true (or after the cooldow
 
 #### 4.3.1 判定流程
 
-![阈值规则判定流程](../diagrams/mqtt-rule-flow.png)
+![阈值规则判定流程](diagrams/mqtt-rule-flow.png)
 
-draw.io 源文件：[mqtt-rule-flow.drawio](../diagrams/mqtt-rule-flow.drawio)
+draw.io 源文件：[mqtt-rule-flow.drawio](diagrams/mqtt-rule-flow.drawio)
 
 #### 4.3.2 复合（嵌套）数据的取值写法
 
@@ -360,7 +360,7 @@ Agent 的 JSON 拼装和数值工具大量使用 `rt_snprintf`，其中带 `%f`�
 | klibc 不定义符号（`RT_KLIBC_USING_LIBC_VSNPRINTF=y`）且内核 < 5.2 | 选 `pkgs/rt_vsnprintf_full` |
 | 内核 >= 5.2 且 klibc 不定义符号 | `rt_vsnprintf_full` 自身 `depends on RT_VER_NUM < 0x50200`，选不了；改用 libc 的 vsnprintf |
 
-`resource/kconfig_check/Agent.Kconfig` 是早期版本的离线校验文件，不包含当前包的 STT / LVGL 选项，不要直接替换当前 Kconfig；其中的判定逻辑如下：
+`scripts/kconfig_check/Agent.Kconfig` 是早期版本的离线校验文件，不包含当前包的 STT / LVGL 选项，不要直接替换当前 Kconfig；其中的判定逻辑如下：
 
 ```
 config PKG_AGENT_KLIBC_HAS_VSNPRINTF      hidden: RT_VER_NUM >= 0x40100 && !RT_KLIBC_USING_LIBC_VSNPRINTF
@@ -372,17 +372,17 @@ select PKG_USING_RT_VSNPRINTF_FULL if PKG_AGENT_VSNPRINTF_NEED_PKG
 
 `PKG_AGENT_RT_VERSION_MAJOR` 只在菜单里显示目标版本，不参与判定。`Auto` 是默认选项，也可以强制 `Use KLIB` 或 `Use PKG`：
 
-![vsnprintf 选择流程](../diagrams/vsnprintf-select-flow.png)
+![vsnprintf 选择流程](diagrams/vsnprintf-select-flow.png)
 
-draw.io 源文件：[vsnprintf-select-flow.drawio](../diagrams/vsnprintf-select-flow.drawio)
+draw.io 源文件：[vsnprintf-select-flow.drawio](diagrams/vsnprintf-select-flow.drawio)
 
-校验脚本在 `resource/kconfig_check/` 下，运行前先确认脚本里的 Python 与 kconfiglib 路径适用于本机：
+校验脚本在 `scripts/kconfig_check/` 下，脚本按自身位置定位目录，只用 RT-Thread Env 自带的 python 跑（里面有 kconfiglib）：
 
 ```bash
-python kparse.py Agent.Kconfig          # 语法与 kconfiglib 警告
-python scenarios.py Agent.Kconfig       # 14 组内核/klibc 组合的取值断言
-python inventory.py                     # 现有 .config 的符号是否仍存在
-python audio_check.py                   # 音频驱动的 select 是否生效
+<env-windows>/.venv/Scripts/python kparse.py Agent.Kconfig      # 语法与 kconfiglib 警告
+<env-windows>/.venv/Scripts/python scenarios.py Agent.Kconfig   # 14 组内核/klibc 组合的取值断言
+<env-windows>/.venv/Scripts/python inventory.py                 # 现有 .config 的符号是否仍存在
+<env-windows>/.venv/Scripts/python audio_check.py               # 音频驱动的 select 是否生效
 ```
 
 ---
@@ -495,18 +495,18 @@ payload: {"temp":25}
 
 | 位置 | 改动 |
 |---|---|
-| `include/AgentRuntime.h`（新增） | `agent_get_message_hub()` / `agent_is_running()` / `agent_is_busy()`：供工具层注入消息并做错峰 |
-| `include/utils.h` + `src/utils/message.c` | **公共注入入口 `agent_inject_text()`**：把一段文本作为用户消息交给 agent。原为 MQTT 模块私有的 `mqtt_inject_text()`，现提升为框架公共 API，任何工具/驱动都能复用（MQTT 路由线程仍然调用它，`tool_mqtt_route.c` 只保留本模块自己的注入计数 `s_inject_total` 与错峰时间戳 `s_last_inject_tick`） |
+| `inc/AgentRuntime.h`（新增） | `agent_get_message_hub()` / `agent_is_running()` / `agent_is_busy()`：供工具层注入消息并做错峰 |
+| `inc/utils.h` + `src/utils/message.c` | **公共注入入口 `agent_inject_text()`**：把一段文本作为用户消息交给 agent。原为 MQTT 模块私有的 `mqtt_inject_text()`，现提升为框架公共 API，任何工具/驱动都能复用（MQTT 路由线程仍然调用它，`tool_mqtt_route.c` 只保留本模块自己的注入计数 `s_inject_total` 与错峰时间戳 `s_last_inject_tick`） |
 | `src/AgentLoop.c` | 实现上述访问器；`cleanup_agent` 先摘除 hub 全局引用再销毁（避免注入方访问已释放对象）；输出 mailbox 满时释放消息（避免泄漏）；请求失败自动重试 3 次；工具循环防呆（重复调用跳过、上限 6、强制文本收尾） |
-| `include/tools/tools.h` | `#ifdef PKG_AGENT_TOOL_MQTT_ENABLE` 下包含 `tool_mqtt.h` |
+| `inc/tools/tools.h` | `#ifdef PKG_AGENT_TOOL_MQTT_ENABLE` 下包含 `tool_mqtt.h` |
 | `src/tools/tool_mqtt/tool_mqtt_tools.c` | 七个工具的描述与参数构造函数、描述符表，文件末尾用 `AGENT_TOOL_MODULE_EXPORT(mqtt, mqtt_tools)` 登记；本文件只在 `PKG_AGENT_TOOL_MQTT_ENABLE` 打开时参与编译 |
-| `SConscript` | 启用宏后遍历 `src/tools/tool_mqtt/*.c` 编译，并加入 `include/tools/tool_mqtt` 头文件路径 |
+| `SConscript` | 启用宏后遍历 `src/tools/tool_mqtt/*.c` 编译，并加入 `inc/tools/tool_mqtt` 头文件路径 |
 
 ### 8.1 应用层动态增删订阅（公开 API）
 
 工具内部按「订阅表 + paho 槽位」管理所有订阅，运行期可随时增删，**不需要重启客户端或重连 broker**：
 
-| 函数（`include/tools/tool_mqtt/tool_mqtt.h`） | 说明 |
+| 函数（`inc/tools/tool_mqtt/tool_mqtt.h`） | 说明 |
 |---|---|
 | `rt_err_t mqtt_tool_add_topic(const char *topic, mqtt_deliver_mode_t mode)` | 新增/更新订阅；客户端未启动会自动启动，未连接时先登记、连上自动订阅 |
 | `rt_err_t mqtt_tool_remove_topic(const char *topic)` | 删除订阅（异步：接收线程 ≤200ms 内发出 UNSUBSCRIBE 并释放槽位） |
@@ -516,7 +516,7 @@ payload: {"temp":25}
 | `const char *mqtt_tool_conn_state(void)` | 连接状态字符串：`stopped` / `connecting` / `connected`，应用层可据此做界面指示 |
 | `rt_bool_t mqtt_tool_ensure_connected(char *out, rt_size_t out_size)` | 连接前置检查（发/订前调用）：未启动则自动启动、未连上则等待超时；返回 `RT_FALSE` 时 `out` 内是可直接回显的原因文本 |
 
-> 注入方向（把外部文本交给 agent 分析）不在 MQTT 工具里，而是框架公共 API：`agent_inject_text(const char *text)`（`include/utils.h`，实现 `src/utils/message.c`）。MQTT 接收线程投递订阅消息即调用它，其它工具/驱动可用同一入口。
+> 注入方向（把外部文本交给 agent 分析）不在 MQTT 工具里，而是框架公共 API：`agent_inject_text(const char *text)`（`inc/utils.h`，实现 `src/utils/message.c`）。MQTT 接收线程投递订阅消息即调用它，其它工具/驱动可用同一入口。
 
 ```c
 /* 设备上线后动态关注它自己的话题，离线时移除 */
@@ -587,13 +587,13 @@ else
 | 只订阅成功 1 个话题 | `PKG_PAHOMQTT_SUBSCRIBE_HANDLERS` 被改回 1，改回 4 即可 |
 | **`mbedtls_client_read data error, return -0x4c` → `chat: POST failed, http status=-76` → `Chat request failed, terminating this case`** | `-0x4c` = `MBEDTLS_ERR_NET_RECV_FAILED`，即 HTTPS/TLS 连接在读取响应时被对端或网络重置，与 MQTT 消息内容无关。常见诱因是**请求过于密集**（设备周期性上报 → 每条消息触发一次 LLM 请求，容易被服务端/代理限流重置）。已在两侧缓解：① 注入侧错峰 + 合并（default 1s 间隔、批量 5 条、agent 忙时等待空闲）；② 框架侧 `agent_loop` 失败自动重试 3 次。若仍频繁出现，可调大 `PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS`，或在设备侧降低上报频率/只上报变化量 |
 | **`mqtt_tool start` 后整机卡死（shell 无响应）** | paho 工作线程栈不足：`RT_PKG_MQTT_THREAD_STACK_SIZE` 需 ≥ 8192。栈溢出会破坏堆元数据，导致后续 `rt_malloc` 在大块请求上死循环。已本项目中修复；排查方法见下 |
-| 终端输入较长一句话后出现 `Function[_rt_mutex_take]: scheduler is not available` 断言（CLI 通道） | `CLI_THREAD_STACK_SIZE` 过小（原 1024）：CLI 线程栈上有 512 字节输入缓冲，且每敲一键都要经 `rt_kprintf` 重绘整行，长输入会栈溢出，溢出被内核栈检查捕获后又在调度器上下文中调用 ulog 进而断言。已调整为 4096（`include/channels/CLI.h`） |
+| 终端输入较长一句话后出现 `Function[_rt_mutex_take]: scheduler is not available` 断言（CLI 通道） | `CLI_THREAD_STACK_SIZE` 过小（原 1024）：CLI 线程栈上有 512 字节输入缓冲，且每敲一键都要经 `rt_kprintf` 重绘整行，长输入会栈溢出，溢出被内核栈检查捕获后又在调度器上下文中调用 ulog 进而断言。已调整为 4096（`inc/channels/CLI.h`） |
 
 ### 9.1 卡死问题的定位过程（真实案例）
 
 现象：`mqtt_tool start` 后终端失去响应，概率性复现；`list`/`msh` 全部无响应。
 
-定位手段（QEMU + gdbstub，脚本见 `resource/mqtt_test/`）：
+定位手段（QEMU + gdbstub，脚本见 `scripts/mqtt_test/`）：
 
 ```bash
 # 1) 启动 QEMU 时带 -s（gdbstub），串口走 tcp
@@ -628,7 +628,7 @@ gdb 给出的关键信息：
 | `PKG_AGENT_STREAM_LINE_BUFSZ` 仅 256 字节 | **模型不调用工具**：带 `tool_calls` 的 SSE 报文行实测 310+ 字节，超长整行被静默丢弃，框架认为模型没发起调用，直接把「我准备调用工具」的文本当成最终回答 | 该值提到 1024；同时改为「超长行告警并跳过」而非静默丢弃（`src/chat.c`） |
 | 推理字段名不兼容 | 提供方返回 `reasoning_content`，而 `chat.c` 只认 `reasoning`，导致思考过程全丢（界面只剩空白回复） | 两个字段名都支持（`src/chat.c`） |
 | 工具调用分片字段为 `null` | 流式后续分片形如 `{"index":0,"id":null,"type":null,"function":{"name":"","arguments":"..."}}`，原实现按「字段必须齐全」判断并直接取 `valuestring`，会漏拼接/踩空指针 | 分片容错：`index` 缺失按 0、`id`/`name` 取首个非空分片、`arguments` 分片拼接；最终统一归一化（缺失 `id` 用 `call_<index>` 兜底、空 `arguments` 用 `{}` 兜底），保证下游 `tool_call_id` 与参数始终有效 |
-| CLI 通道线程栈 1024 字节 | 在 CLI 通道下输入较长的一句话后出现 `_rt_mutex_take: scheduler is not available` 断言 | `include/channels/CLI.h` 的 `CLI_THREAD_STACK_SIZE` 改为 4096 |
+| CLI 通道线程栈 1024 字节 | 在 CLI 通道下输入较长的一句话后出现 `_rt_mutex_take: scheduler is not available` 断言 | `inc/channels/CLI.h` 的 `CLI_THREAD_STACK_SIZE` 改为 4096 |
 | lwIP `tcpip_thread` 栈 2048 字节 | 网络流量较大时内核栈检查告警/断言 | `RT_LWIP_TCPTHREAD_STACKSIZE` 提到 4096、`RT_LWIP_ETHTHREAD_STACKSIZE` 提到 2048 |
 
 诊断技巧：
@@ -660,7 +660,7 @@ Summarize the trend above and give the user a short assessment of the recent sit
 - `mqtt_history` 查不到话题时原来只说 `no matching subscription`，现在写明**话题名 + 原因（未订阅/未启动）+ 下一步动作 + 不要再重复调用**（`tool_mqtt_ops.c`）。
 - **CLI 通道会丢弃输出 mailbox 的内容**（`channels/CLI.c` 的 `CLI_run` 收到消息后只 `rt_kprintf("\n")`），所以「请求失败」「工具循环超限」这类模型不会流式输出的兜底文本，在 CLI 下用户根本看不到。现在兜底文本同时走流式打印路径（`agent_notify()`：mailbox + `on_context`），正常回答仍只投 mailbox，避免重复打印。
 
-复现/回归脚本：`resource/mqtt_test/qemu_chat_history_test.ps1`（启动 QEMU → **不启动 MQTT** → 直接问历史），修复前后对比：
+复现/回归脚本：`scripts/mqtt_test/qemu_chat_history_test.ps1`（启动 QEMU → **不启动 MQTT** → 直接问历史），修复前后对比：
 
 | 指标 | 修复前 | 修复后 |
 |---|---|---|
@@ -707,7 +707,7 @@ W/Agent.AgentLoop: repeated tool calls detected, forcing a final answer
 | **`disconnect`（已连接时）** | `disconnect ok: was_connected=1, state=stopped` + `2 subscription(s) kept ...`；paho 日志 `pub_sock recv 11 byte: DISCONNECT` / `MQTT server is disconnected.`；`status` 显示 `started=0 connected=0` |
 | **断开后重连自动重订阅** | `connect` → `connection ok` + 自动 `Subscribe #0 agent/sub OK!` / `Subscribe #1 device/1/data OK!`，随后发布再次成功（订阅意图跨断连保留） |
 | **LLM 调用断开工具** | 对话中要求断开 MQTT 时模型调用 `mqtt_disconnect`，工具返回结果文本（连接状态进入模型上下文） |
-| **Kconfig 判定逻辑** | `kconfiglib` 载入 `resource/kconfig_check/` 的 Kconfig：5.x+klibc → 不 select `rt_vsnprintf_full`；4.x 无 klibc → select；显式选 `USE_KLIB`/`USE_PKG` 时以显式选择为准；51 个符号齐全、0 warning；现有 `.config` 的 49 个 `PKG_AGENT_*` 取值全部保留 |
+| **Kconfig 判定逻辑** | `kconfiglib` 载入 `scripts/kconfig_check/` 的 Kconfig：5.x+klibc → 不 select `rt_vsnprintf_full`；4.x 无 klibc → select；显式选 `USE_KLIB`/`USE_PKG` 时以显式选择为准；51 个符号齐全、0 warning；现有 `.config` 的 49 个 `PKG_AGENT_*` 取值全部保留 |
 | **问「agent/sub 的历史」不再死循环**（`qemu_chat_history_test.ps1`，未启动 MQTT 直接问） | 工具调用轮数 **1**（原 10+）；工具结果完整含 `no history for topic 'agent/sub': ... (client started=0, connected=0) ... Do NOT call mqtt_history again`；模型正确回答「本会话未订阅该话题所以没有历史，是否要我订阅」；脚本 6/6 PASS（详见 §9.3） |
 | **启动前只读查询** | `mqtt_tool status` 在 `started=0` 时即输出订阅表/计数（原为 `warning: mqtt state busy, subscription table unavailable`） |
 | **MQTT 全链路回归**（`qemu_msh_test.ps1`，改动后重跑） | start → 4 话题订阅（含通配符）→ pub → 回调 → recv → sim → unsub → status 全部正常，`free` 无泄漏迹象 |
