@@ -741,7 +741,7 @@ typedef struct agent_runtime_config
 
 `msh_agent_upload_download` 支持 `up` / `upload` 与 `down` / `download` 两组写法，也接受 `-h`、`--help`、`help`。
 
-`msh_agent_tts` 需要 `PKG_AGENT_TTS_ENABLE`。`-f` 只合成不播放，`-o` 改落盘路径（默认取 `PKG_AGENT_TTS_SAVE_PATH`），其余参数用空格拼成待合成文本。播放依赖 `PKG_AGENT_DRIVER_AUDIO`，没打开时只落盘并给出提示。
+`msh_agent_tts` 需要 `PKG_AGENT_TTS_ENABLE`。`-f` 只合成不播放，`-o` 改落盘路径（默认取 `PKG_AGENT_TTS_SAVE_FILE`），其余参数用空格拼成待合成文本。播放依赖 `PKG_AGENT_DRIVER_AUDIO`，没打开时只落盘并给出提示。
 
 ## 11. 已知差异
 

@@ -249,7 +249,7 @@ out:
 /*
  * @brief TTS 命令行入口
  * @usage
- *   msh_agent_tts <文本>            合成到 PKG_AGENT_TTS_SAVE_PATH 并播放
+ *   msh_agent_tts <文本>            合成到 AGENT_TTS_SAVE_PATH 并播放
  *   msh_agent_tts -f <文本>         只合成落盘，不播放（没有音频驱动时用）
  *   msh_agent_tts -o <path> <文本>  指定落盘路径
  * @note  合成过程在当前线程同步等待；播放交给 wavplayer 自己的线程，

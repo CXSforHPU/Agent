@@ -56,7 +56,7 @@ msh_agent_upload_download up <file_path>
 msh_agent_upload_download down <file_id> <save_path>
 ```
 
-文本转语音用 `msh_agent_tts`，合成结果写到 `PKG_AGENT_TTS_SAVE_PATH`（默认 `/tts.wav`）再播放。根目录挂的是只读 romfs 的板子要把这个路径改到 `/sdcard` 之类的可写文件系统：
+文本转语音用 `msh_agent_tts`，合成结果写到 `PKG_AGENT_TTS_SAVE_FILE`（默认 `/tts.wav`）再播放。根目录挂的是只读 romfs 的板子要把这个路径改到 `/sdcard` 之类的可写文件系统：
 
 ```text
 msh_agent_tts 你好，世界        # 合成并播放

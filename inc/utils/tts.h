@@ -7,11 +7,11 @@
 
 /* 合成结果落盘位置，msh_agent_tts 与播报线程共用。必须是可写文件系统：
    根目录挂 romfs 的板子要在 menuconfig 里改到 /sdcard 或 /flash */
-#define AGENT_TTS_SAVE_PATH     PKG_AGENT_TTS_SAVE_PATH
+#define AGENT_TTS_SAVE_PATH     PKG_AGENT_TTS_SAVE_FILE
 /* 响应体按这个大小分块写盘，不整段读进内存。一句长回复的 WAV 有 1~2 MB，
    2 K 的块要跑上千次 read+write 往返，块越大越不容易在中途撞上收包超时 */
 #define AGENT_TTS_IO_BUF_SZ     8192
-/* 乒乓槽位路径缓冲区：在 PKG_AGENT_TTS_SAVE_PATH 的扩展名前插一位序号 */
+/* 乒乓槽位路径缓冲区：在 AGENT_TTS_SAVE_PATH 的扩展名前插一位序号 */
 #define AGENT_TTS_SLOT_PATH_SZ  64
 /* 让服务端重采样到板上采样率，省一半字节 */
 #define AGENT_TTS_SAMPLE_RATE   16000
