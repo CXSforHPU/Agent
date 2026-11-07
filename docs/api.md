@@ -114,6 +114,8 @@ typedef struct MessageHub
 
 头文件：`inc/chat.h` 实现：`src/chat.c`
 
+`chat.c` 只处理 HTTP 与 SSE 行拆分，请求体、鉴权头和事件解析都交给协议模块，位置在 `src/utils/protocol/`，统一入口 `inc/utils/protocol.h`。当前协议决定报文格式，切换接口见 2.3。
+
 ### 2.1 类型
 
 ```c
@@ -147,10 +149,10 @@ typedef struct ChatResponse
 
 解析规则：
 
-- 处理以 `data:` 开头的行，冒号后允许一个空格，支持 LF 和 CRLF 换行；遇到 `[DONE]` 结束。
-- 思考文本优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`。
-- 正文取 `delta.content`。
-- 工具调用按 `index` 合并，`id` 与 `name` 取第一个非空值，`arguments` 逐片拼接。
+- 处理以 `data:` 开头的行，冒号后允许一个空格，支持 LF 和 CRLF 换行。OpenAI 遇到 `[DONE]` 结束，Anthropic 遇到 `message_stop` 结束。
+- OpenAI 的思考文本优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`；Anthropic 取 `delta.thinking`。
+- OpenAI 的正文取 `delta.content`；Anthropic 取 `delta.text_delta.text`。
+- 工具调用按 `index` 合并，`id` 与 `name` 取第一个非空值，`arguments` 逐片拼接。Anthropic 的 `input_json_delta.partial_json` 走同一条拼接路径。
 - 缺失 `id` 的调用用 `call_<index>` 补齐，空参数改为 `{}`，没有函数名的调用丢弃。
 - JSON 或响应字段格式错误、SSE 行过长被丢弃、正文超限截断或流未完整结束时，`complete` 为 `RT_FALSE`。出现工具调用时也为 `RT_FALSE`，即使该调用最后被丢弃。
 
@@ -159,6 +161,22 @@ typedef struct ChatResponse
 #### `void chat_response_free(ChatResponse_t resp)`
 
 释放思考文本、正文、工具调用数组与结构体。`resp` 为 `RT_NULL` 时直接返回。
+
+### 2.3 协议切换
+
+头文件 `inc/utils/protocol.h`，实现在 `src/utils/protocol/`。
+
+| 函数 | 说明 |
+|---|---|
+| `const agent_protocol_ops_t *agent_protocol_get_ops(void)` | 当前协议的操作表。表里有 `build_request`、`add_headers`、`parse_event`、`format_content` 四个函数指针 |
+| `agent_api_protocol_t agent_protocol_current(void)` | 当前协议，取自运行时配置 |
+| `void agent_protocol_switch(agent_api_protocol_t protocol)` | 切换协议，同时改写运行时配置。下次发请求按新协议拼包 |
+
+`agent_api_protocol_t` 有两个值：`AGENT_API_PROTOCOL_OPENAI` 与 `AGENT_API_PROTOCOL_ANTHROPIC`。
+
+消息在上下文里一律存规范格式，也就是 OpenAI 风格。协议模块负责转成自己的报文，解析时转回规范格式，因此两种协议下 `chat()` 的入参、返回结构和工具调用 JSON 完全一致，切换协议不需要改调用方。
+
+Anthropic 报文与规范格式的对应关系见 [framework.md](./framework.md) 3.8。
 
 ## 3. Context：上下文管理器
 
@@ -677,6 +695,7 @@ typedef struct agent_runtime_config
     char api_key[AGENT_CFG_API_KEY_MAX];
     char model_name[AGENT_CFG_MODEL_MAX];
     char api_url[AGENT_CFG_API_URL_MAX];
+    agent_api_protocol_t protocol;
     rt_bool_t is_configured;
 } rt_align(RT_ALIGN_SIZE) agent_runtime_config_t;
 ```
@@ -688,8 +707,12 @@ typedef struct agent_runtime_config
 | `const char *get_dynamic_agent_api_key(void)` | 优先返回运行时值，否则返回 `PKG_AGENT_API_KEY` |
 | `const char *get_dynamic_agent_model_name(void)` | 同上，回退 `PKG_AGENT_MODEL_NAME` |
 | `const char *get_dynamic_agent_api_url(void)` | 同上，回退 `PKG_AGENT_API_URL` |
+| `agent_api_protocol_t get_dynamic_agent_api_protocol(void)` | 当前协议，默认取 `PKG_AGENT_API_PROTOCOL_SEL` 选中的那个 |
+| `void agent_config_set_protocol(agent_api_protocol_t protocol)` | 切换协议 |
 
 三个字符串参数各自最多 127 字节。超过上限的参数会被忽略，其余参数照常更新，接口不返回错误。
+
+`agent_config_set()` 不改协议，协议由 `agent_config_set_protocol()` 或 `agent_protocol_switch()` 单独设置。
 
 ## 9. Prompt：系统提示词
 
@@ -713,6 +736,7 @@ typedef struct agent_runtime_config
 | `msh_agent_upload_download up <file_path>` | utils | 上传文件 |
 | `msh_agent_upload_download down <file_id> <save_path>` | utils | 按文件 ID 下载 |
 | `msh_agent_tts [-f] [-o <path>] <text>` | utils | 合成语音落盘并播放 |
+| `agent_protocol [openai\|anthropic]` | utils | 查看或切换 LLM 协议 |
 | `mqtt_tool connect\|disconnect\|start\|stop\|status\|list\|sub\|unsub\|pub\|recv\|history\|rule\|rules\|sim\|flush` | MQTT 工具 | MQTT 调试命令 |
 
 `msh_agent_upload_download` 支持 `up` / `upload` 与 `down` / `download` 两组写法，也接受 `-h`、`--help`、`help`。

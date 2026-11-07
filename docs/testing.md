@@ -23,7 +23,7 @@
 包内 `SConscript` 只在 `RT_USING_UTEST` 打开时编译 `tests/` 目录：
 
 ```python
-SRC_TEST = os.path.join(CWD, "test")
+SRC_TEST = os.path.join(CWD, "tests")
 if GetDepend(["RT_USING_UTEST"]) and os.path.isdir(SRC_TEST):
     for filename in os.listdir(SRC_TEST):
         ...
@@ -85,6 +85,7 @@ msh /> utest_run -thread agent.device_tools
 | `test_skill.c` | 技能与目录的集成检查 |
 | `test_context.c` | 上下文压缩与 SSE 解析检查 |
 | `test_device.c` | 设备框架工具的集成检查 |
+| `test_anthropic.c` | 协议切换与 Anthropic 报文格式检查 |
 | `test_agent_e2e.c` | 端到端链路检查 |
 
 `SConstruct` 里的关键设置：
@@ -135,9 +136,9 @@ qemu-system-arm -M vexpress-a9 -smp cpus=2 \
 
 串口走 TCP，脚本按字符逐个发命令。QEMU 可执行文件路径写在 `run.py` 的 `QEMU` 常量里，按本机实际位置改。
 
-### 3.5 四个命令
+### 3.5 五条命令
 
-脚本等系统起来后，依次执行这四条 MSH 命令，每条都要等到串口输出对应的结果行：
+脚本等系统起来后，依次执行这五条 MSH 命令，每条都要等到串口输出对应的结果行：
 
 | 命令 | 结果行 | 覆盖内容 |
 |---|---|---|
@@ -145,6 +146,7 @@ qemu-system-arm -M vexpress-a9 -smp cpus=2 \
 | `context_qemu_test` | `CONTEXT_QEMU RESULT checks=<n> failures=<n>` | 上下文压缩、摘要请求与校验、SSE 夹具解析 |
 | `device_qemu_test` | `DEVICE_QEMU RESULT checks=<n> failures=<n>` | 通用层 7 个工具在真实框架上的行为，外加模块表与工具链表的一致性、每个工具都带上非空 description |
 | `agent_e2e_test` | `AGENT_E2E RESULT checks=<n> failures=<n>` | 从 Debug 通道收消息，模型发起工具调用，工具真的读写外设，结果回到模型 |
+| `protocol_qemu_test` | `PROTOCOL_QEMU RESULT checks=<n> failures=<n>` | 协议切换、Anthropic 请求体形态、鉴权头、事件式 SSE 解析、工具调用与工具结果的报文翻译 |
 
 同一条序列里还有包内用例，它也在两轮里各跑一次：
 
@@ -180,12 +182,13 @@ SKILL_QEMU HEAP before=<字节> after=<字节> delta=<差值>
 | `device_results` / `device_heap` | `device_qemu_test` 同上 |
 | `agent_e2e_results` | `agent_e2e_test` 两轮的检查数与失败数 |
 | `agent_e2e_answers` | 端到端测试收到最终回答的次数 |
+| `protocol_results` / `protocol_heap` | `protocol_qemu_test` 两轮的检查数、失败数与堆快照 |
 | `utest` | 包内用例的 `name`、`passed_runs`、`failed_runs`、`assert_failures` |
 | `network_enabled` | 固定为 `false`，QEMU 用了 `-net none` |
 | `disk_snapshot` | 固定为 `true`，SD 卡挂了 `snapshot=on` |
 | `summary_transport` | 固定为 `deterministic SSE fixtures at webclient post/read boundary` |
 
-脚本退出前会自己判一遍，判据分三档：包内用例两轮都 PASSED、0 FAILED、0 断言行；`agent_e2e_test` 两轮都有最终回答，每轮 `checks` 不少于 5；技能、上下文、设备三组每轮 `checks` 不少于 20。四组结果和三个堆快照数组的长度都必须是 2，缺一条就判定失败。所有堆快照的 `delta` 必须为 0。任何一条不满足就抛异常，进程以非 0 退出。
+脚本退出前会自己判一遍，判据分四档：包内用例两轮都 PASSED、0 FAILED、0 断言行；`agent_e2e_test` 两轮都有最终回答，每轮 `checks` 不少于 5；技能、上下文、设备三组每轮 `checks` 不少于 20；协议组每轮 `checks` 不少于 10。四组结果和四个堆快照数组的长度都必须是 2，缺一条就判定失败。所有堆快照的 `delta` 必须为 0。任何一条不满足就抛异常，进程以非 0 退出。
 
 ---
 

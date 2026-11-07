@@ -102,7 +102,7 @@ draw.io 源文件：[tool-registration.drawio](./docs/diagrams/tool-registration
 | 组件 | 文件 | 职责 |
 |---|---|---|
 | AgentLoop | `src/AgentLoop.c` | 初始化、对话主循环、工具调度、清理 |
-| Chat | `src/chat.c` | 组装请求，解析 SSE 思考、正文与工具调用 |
+| Chat | `src/chat.c` | 发请求、拆 SSE 行；报文格式交给 `src/utils/protocol/` 下的协议模块 |
 | MessageHub | `src/MessageHub.c` | 双邮箱消息传递，支持超时接收 |
 | Context | `src/context.c` | 维护 system / user / assistant / tool 消息 |
 | Tool | `src/tool_base.c`、`src/tool_func.c` | 工具链表的注册、查找、执行与清理；模块表在 `src/utils/tool_json.c` |
@@ -118,8 +118,8 @@ draw.io 源文件：[tool-registration.drawio](./docs/diagrams/tool-registration
 
 | 目录 | 内容 |
 |---|---|
-| `inc/` | 对外头文件，与 `src/` 同层级分目录：`channels/`、`tools/`、`utils/`、`driver/audio/` |
-| `src/` | 源码。根目录的 .c 由 `SConscript` 全收，子目录按 Kconfig 开关取舍 |
+| `inc/` | 对外头文件，与 `src/` 同层级分目录：`channels/`、`tools/`、`utils/`、`driver/audio/`；协议统一入口是 `utils/protocol.h` |
+| `src/` | 源码。根目录的 .c 由 `SConscript` 全收，子目录按 Kconfig 开关取舍。`src/utils/protocol/` 是 LLM 协议模块，一个协议一个文件 |
 | `skills/` | 内嵌技能的 Markdown，`embed_skills.py` 在编译期生成 `skill_data.c` |
 | `tests/` | 包内 utest 用例，只在 `RT_USING_UTEST` 打开时编译 |
 | `docs/` | 中文文档。图在 `docs/diagrams/`（draw.io 源文件加导出的 PNG），界面截图在 `docs/pictures/` |
@@ -130,6 +130,21 @@ draw.io 源文件：[tool-registration.drawio](./docs/diagrams/tool-registration
 `scripts/` 放的是给开发者跑的脚本，`src/tools/` 放的是给模型调用的工具，两者不要混淆。
 
 ## 核心机制
+
+### LLM 协议
+
+对话层支持两种报文格式，实现放在 `src/utils/protocol/`，按协议一个文件：
+
+| 协议 | 接口 | 鉴权 | 结束标志 |
+|---|---|---|---|
+| OpenAI | `POST /chat/completions` | `Authorization: Bearer` | `data: [DONE]` |
+| Anthropic | `POST /v1/messages` | `x-api-key` 与 `anthropic-version` | `message_stop` 事件 |
+
+上下文里的消息统一存 OpenAI 风格的规范格式，协议模块负责转成各自的报文，解析时再转回来，所以两种协议下 `chat()` 的入参、返回结构和工具调用 JSON 完全一样。
+
+菜单里的 `PKG_AGENT_API_PROTOCOL_SEL` 决定默认协议，运行中用 MSH 命令 `agent_protocol openai` 或 `agent_protocol anthropic` 切换，改完下一轮请求就按新协议拼包。Anthropic 的地址是 `https://api.anthropic.com/v1/messages`，模型名按 Anthropic 的写法填。
+
+两种协议的报文差异见 [框架文档](./docs/framework.md) 3.8。
 
 ### 工具循环
 
@@ -213,6 +228,9 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 | 选项 | 说明 |
 |---|---|
 | `PKG_AGENT_API_KEY` / `PKG_AGENT_MODEL_NAME` / `PKG_AGENT_API_URL` | 默认 API 配置，可在运行时覆盖 |
+| `PKG_AGENT_API_PROTOCOL_SEL` | 协议选择，OpenAI 或 Anthropic，默认 OpenAI；运行中可用 `agent_protocol` 命令切换 |
+| `PKG_AGENT_ANTHROPIC_VERSION` | Anthropic 的 `anthropic-version` 请求头，默认 `2023-06-01` |
+| `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096 |
 | `PKG_AGENT_COMMUNICATION_CHANNEL_SEL` | 通道选择，默认 CLI |
 | `PKG_AGENT_MULTIMODAL_ENABLE` | 多模态总开关，默认关闭 |
 | `PKG_AGENT_UPLOAD_URL` / `PKG_AGENT_DOWNLOAD_URL` | 文件服务器地址 |

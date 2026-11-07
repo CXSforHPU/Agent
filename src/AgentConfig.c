@@ -1,10 +1,17 @@
 #include "AgentConfig.h"
 
+#ifdef PKG_AGENT_API_PROTOCOL_ANTHROPIC
+#define AGENT_CONFIG_DEFAULT_PROTOCOL   AGENT_API_PROTOCOL_ANTHROPIC
+#else
+#define AGENT_CONFIG_DEFAULT_PROTOCOL   AGENT_API_PROTOCOL_OPENAI
+#endif
+
 static agent_runtime_config_t g_agent_runtime_config =
 {
     .api_key = PKG_AGENT_API_KEY,
     .model_name = PKG_AGENT_MODEL_NAME,
     .api_url = PKG_AGENT_API_URL,
+    .protocol = AGENT_CONFIG_DEFAULT_PROTOCOL,
     .is_configured = RT_TRUE
 };
 
@@ -57,6 +64,31 @@ const char *get_dynamic_agent_api_url(void)
         return cfg->api_url;
     }
     return PKG_AGENT_API_URL;
+}
+
+/*
+ * @brief 获取当前使用的协议
+ * @return 协议枚举
+ */
+agent_api_protocol_t get_dynamic_agent_api_protocol(void)
+{
+    const agent_runtime_config_t *cfg = agent_config_get();
+
+    if (cfg && cfg->is_configured)
+    {
+        return cfg->protocol;
+    }
+    return AGENT_CONFIG_DEFAULT_PROTOCOL;
+}
+
+/*
+ * @brief 切换当前使用的协议
+ * @param protocol 协议枚举
+ */
+void agent_config_set_protocol(agent_api_protocol_t protocol)
+{
+    g_agent_runtime_config.protocol = protocol;
+    g_agent_runtime_config.is_configured = RT_TRUE;
 }
 
 /*

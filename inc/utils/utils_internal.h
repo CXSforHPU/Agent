@@ -10,6 +10,7 @@
  *   message.c     流式打印与文本注入
  *   format.c      Messages 转 API content
  *   tool_json.c   工具定义 JSON 拼装
+ *   protocol/     LLM 协议模块，按 OpenAI 与 Anthropic 分文件，统一入口 utils/protocol.h
  *   file_op.c     文件上传下载线程，需要 PKG_AGENT_MULTIMODAL_ENABLE
  *   stt.c         本地语音转写，需要 PKG_AGENT_STT_ENABLE
  *   tts.c         文本转语音与回复播报，需要 PKG_AGENT_TTS_ENABLE
@@ -25,6 +26,7 @@
 #include "utils/message.h"
 #include "utils/format.h"
 #include "utils/tool_json.h"
+#include "utils/protocol.h"
 
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
 #include "utils/file_op.h"

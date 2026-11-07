@@ -39,7 +39,7 @@ AgentAudio 由应用直接调用，不参与对话主循环。
 | 顶层调度 | `AgentLoop` | 初始化与清理、对话主循环、工具调度、重复调用保护 |
 | 核心 | `MessageHub` | 基于 RT-Thread 邮箱的组件间消息传递 |
 | 核心 | `Context` | 对话历史的追加、清空、滚动摘要压缩 |
-| 核心 | `Chat` | LLM API 通信与 SSE 解析 |
+| 核心 | `Chat` | LLM API 通信与 SSE 行拆分，报文格式按协议模块分发 |
 | 核心 | `Tool` | 工具注册、查找、执行、结果回填 |
 | 通道 | `CLI / WebNet / Debug / LVGL` | 外部交互界面，通过 `AgentChannelOps` 接入 |
 | 基础 | `AgentConfig / Utils / Prompt` | 运行时配置、多模态与文本注入、系统提示词 |
@@ -121,19 +121,21 @@ assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容�
 
 文件：`src/chat.c`、`inc/chat.h`
 
-- 请求体包含 `model`、`messages`、`max_tokens`、`stream: true`，使用 Bearer 认证。只在工具参数非空时加入 `tools`。
+`chat.c` 只管 HTTP 与 SSE 行拆分，报文格式交给 `src/utils/protocol/` 下的协议模块。当前协议由 `agent_protocol_get_ops()` 给出：OpenAI 走 `protocol_openai.c`，Anthropic 走 `protocol_anthropic.c`，切换见 3.8。
+
+- 请求体、鉴权头、SSE 事件解析都由协议模块实现，`chat.c` 不区分协议。
 - `max_tokens` 由调用方指定：普通对话为 32 × 1024，上下文摘要请求为 512。
 - webclient 超时为 30 s。
-- 解析 `data:` 开头的 SSE 行，冒号后允许一个空格，支持 LF 和 CRLF 换行；遇到 `[DONE]` 结束。
-- 思考内容优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`。
-- 正文取 `delta.content`。
+- 解析 `data:` 开头的 SSE 行，冒号后允许一个空格，支持 LF 和 CRLF 换行。OpenAI 遇到 `[DONE]` 结束，Anthropic 遇到 `message_stop` 结束。
+- OpenAI 的思考内容优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`；Anthropic 取 `delta.thinking`。
+- OpenAI 的正文取 `delta.content`；Anthropic 取 `delta.text_delta.text`。
 - 工具调用按 `index` 合并。`id`、`name` 取第一个非空值，`arguments` 逐片追加，超过 `PKG_AGENT_MAX_TOOL_ARG_LEN` 后丢弃后续分片并打印告警。
 - 单行超过 `PKG_AGENT_STREAM_LINE_BUFSZ` 时整行丢弃，并提示调大该选项。
 - JSON 解析失败时重置行缓冲，继续处理后续数据。
 - 响应结束后归一化工具调用：缺失 `id` 用 `call_<index>`，空参数改为 `{}`，没有函数名的调用丢弃。
 - 返回 `ChatResponse_t`，使用后必须调用 `chat_response_free()`。
 
-`ChatResponse.complete` 只表示自然文本完整结束，要求同时收到 `[DONE]` 和 `finish_reason: "stop"`，正文没有丢弃或截断，且没有工具调用。JSON 或响应字段格式错误、超长 SSE 行、正文超限或流未完整结束，都会使它为假。工具调用即使在归一化时被丢弃，也不能算完整文本响应。
+`ChatResponse.complete` 只表示自然文本完整结束，要求流正常收尾（OpenAI 的 `[DONE]` 加 `finish_reason: "stop"`，Anthropic 的 `message_stop` 加 `stop_reason: "end_turn"`），正文没有丢弃或截断，且没有工具调用。JSON 或响应字段格式错误、超长 SSE 行、正文超限或流未完整结束，都会使它为假。工具调用即使在归一化时被丢弃，也不能算完整文本响应。
 
 普通对话仍按原方式返回和处理部分响应，目前只有上下文摘要调用方检查 `complete`。它不是工具执行成功标志，非空响应指针也不保证正文完整。
 
@@ -213,9 +215,32 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `inc/uti
 | `src/utils/message.c` | 流式打印 `print_reasoning()`、`print_tool_call()`、`print_context()` |
 | `src/utils/format.c` | `format_text()`、`create_content_array()`、`to_content()` |
 | `src/utils/tool_json.c` | `create_tool_item()`、`create_param_obj()`、`create_property()`，以及工具模块表和 `agent_tool_register_modules()` |
+| `src/utils/protocol/` | LLM 协议模块，统一入口 `inc/utils/protocol.h`，见下 |
 | `src/utils/file_op.c` | 文件操作线程与 `msh_agent_upload_download` |
 | `src/utils/stt.c` | 本地语音转写，见 3.9 |
 | `src/utils/tts.c` | 文本转语音，见 3.10 |
+
+协议目录按协议分文件：
+
+| 文件 | 内容 |
+|---|---|
+| `src/utils/protocol/protocol.c` | 协议分发、运行时切换、流状态累积与工具调用归一化 |
+| `src/utils/protocol/protocol_openai.c` | OpenAI 请求体、Bearer 头、delta 式 SSE 解析 |
+| `src/utils/protocol/protocol_anthropic.c` | Anthropic 请求体、`x-api-key` 头、事件式 SSE 解析 |
+
+上下文里的消息一律存规范格式，也就是 OpenAI 风格：`role` 加 `content`，`content` 是字符串或 `[{type, ...}]` 数组，工具调用放在 `tool_calls` 里。各协议模块负责把规范格式转成自己的报文，解析时再转回规范格式，工具调用在两种协议下都是同一套 `id`、`type`、`function.name`、`function.arguments`。
+
+Anthropic 的报文差异由 `protocol_anthropic.c` 处理：
+
+- `system` 消息提到请求体顶层的 `system` 字段。
+- `user` 消息的 `content` 变成块数组，图片块用 `{"type":"image","source":{"type":"url",...}}`。音视频没有对应块，换成一句说明文本。
+- `assistant` 消息里的工具调用变成 `tool_use` 块，`arguments` 字符串解析成对象放进 `input`。
+- `tool` 消息变成 `user` 消息里的 `tool_result` 块。连续的工具结果合并进同一条 `user` 消息，Anthropic 不接受连续同角色消息。
+- 工具定义的 `parameters` 改名成 `input_schema`，`name` 与 `description` 放在顶层。
+- `max_tokens` 取调用值与 `PKG_AGENT_ANTHROPIC_MAX_TOKENS` 的较小值。模型对输出上限有硬限制，超了直接被拒。
+- 鉴权头是 `x-api-key` 与 `anthropic-version`，没有 `Authorization`。
+
+切换协议用 `agent_protocol_switch()`，它同时改写运行时配置，下次发请求就按新协议拼包。菜单里的 `PKG_AGENT_API_PROTOCOL_SEL` 只决定默认值。
 
 `file_op`、`stt`、`tts` 三个模块各带一个开关，分别是 `PKG_AGENT_MULTIMODAL_ENABLE`、`PKG_AGENT_STT_ENABLE`、`PKG_AGENT_TTS_ENABLE`。同名 .c 与 .h 用同一个宏整文件包住，`utils_internal.h` 也按这组宏决定是否导入。两个语音开关在 Kconfig 里位于多模态菜单之下，不开多模态就没有这两个宏。其余三个模块没有开关，始终编译。
 
@@ -431,6 +456,9 @@ sequenceDiagram
 | 宏 | 说明 |
 |---|---|
 | `PKG_AGENT_API_KEY` / `PKG_AGENT_API_URL` / `PKG_AGENT_MODEL_NAME` | 默认 API 配置 |
+| `PKG_AGENT_API_PROTOCOL_SEL` | 协议选择，OpenAI 或 Anthropic，默认 OpenAI；只决定默认值，运行时可用 `agent_protocol_switch()` 切换 |
+| `PKG_AGENT_ANTHROPIC_VERSION` | Anthropic 的 `anthropic-version` 请求头，默认 `2023-06-01` |
+| `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096 |
 | `PKG_AGENT_RESP_BUFSZ` | HTTP 响应接收缓冲，默认 2048 |
 | `PKG_AGENT_WEB_SOCKET_BUFSZ` | webclient 会话缓冲，默认 2048 |
 | `PKG_AGENT_MAX_REASONING_LEN` | 思考文本上限，默认 2048 |
@@ -483,6 +511,7 @@ MQTT 选项较多，见 [tool_mqtt.md](./tool_mqtt.md) 的配置章节。常用�
 - 通道：`CLI.c`、`AgentWebChannel.c`、`AgentDebugChannel.c`
 - 工具目录
 - MQTT 目录
+- 协议目录 `src/utils/protocol/`
 - 技能：`skills/SConscript` 在 `PKG_USING_AGENT` 打开时生成 `skill_data.c`
 - 包内 utest 用例：`tests/` 目录，只在 `RT_USING_UTEST` 打开时编译
 - 音频驱动（启用 `PKG_AGENT_DRIVER_AUDIO` 时）

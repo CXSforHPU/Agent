@@ -30,6 +30,9 @@ SRC_TOOL_DEVICE = os.path.join(SRC_TOOLS, "tool_device")
 
 SRC_UTILS = os.path.join(SRC_ROOT, "utils")
 
+# LLM 协议模块目录
+SRC_PROTOCOL = os.path.join(SRC_UTILS, "protocol")
+
 SRC_DRIVER_AUDIO = os.path.join(SRC_ROOT, "driver", "audio")
 INC_DRIVER_AUDIO = os.path.join(INC_ROOT, "driver", "audio")
 
@@ -55,6 +58,12 @@ if GetDepend(["PKG_USING_AGENT"]):
 # 按模块拆成多个 c 文件，各自的 Kconfig 开关写在文件里，这里统一全收
 for filename in os.listdir(SRC_UTILS):
     file_fullpath = os.path.join(SRC_UTILS, filename)
+    if filename.endswith(".c") and os.path.isfile(file_fullpath):
+        src.append(file_fullpath)
+
+# LLM 协议模块：OpenAI 与 Anthropic 各一个文件，统一入口 utils/protocol.h
+for filename in os.listdir(SRC_PROTOCOL):
+    file_fullpath = os.path.join(SRC_PROTOCOL, filename)
     if filename.endswith(".c") and os.path.isfile(file_fullpath):
         src.append(file_fullpath)
 
