@@ -457,8 +457,8 @@ sequenceDiagram
 |---|---|
 | `PKG_AGENT_API_KEY` / `PKG_AGENT_API_URL` / `PKG_AGENT_MODEL_NAME` | 默认 API 配置 |
 | `PKG_AGENT_API_PROTOCOL_SEL` | 协议选择，OpenAI 或 Anthropic，默认 OpenAI；只决定默认值，运行时可用 `agent_protocol_switch()` 切换 |
-| `PKG_AGENT_ANTHROPIC_VERSION` | Anthropic 的 `anthropic-version` 请求头，默认 `2023-06-01` |
-| `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096 |
+| `PKG_AGENT_ANTHROPIC_VERSION` | Anthropic 的 `anthropic-version` 请求头，默认 `2023-06-01`；仅在菜单选中 Anthropic 时显示 |
+| `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096；仅在菜单选中 Anthropic 时显示 |
 | `PKG_AGENT_RESP_BUFSZ` | HTTP 响应接收缓冲，默认 2048 |
 | `PKG_AGENT_WEB_SOCKET_BUFSZ` | webclient 会话缓冲，默认 2048 |
 | `PKG_AGENT_MAX_REASONING_LEN` | 思考文本上限，默认 2048 |

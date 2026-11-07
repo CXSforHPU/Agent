@@ -229,8 +229,8 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 |---|---|
 | `PKG_AGENT_API_KEY` / `PKG_AGENT_MODEL_NAME` / `PKG_AGENT_API_URL` | 默认 API 配置，可在运行时覆盖 |
 | `PKG_AGENT_API_PROTOCOL_SEL` | 协议选择，OpenAI 或 Anthropic，默认 OpenAI；运行中可用 `agent_protocol` 命令切换 |
-| `PKG_AGENT_ANTHROPIC_VERSION` | Anthropic 的 `anthropic-version` 请求头，默认 `2023-06-01` |
-| `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096 |
+| `PKG_AGENT_ANTHROPIC_VERSION` | Anthropic 的 `anthropic-version` 请求头，默认 `2023-06-01`；仅在菜单选中 Anthropic 时显示 |
+| `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096；仅在菜单选中 Anthropic 时显示 |
 | `PKG_AGENT_COMMUNICATION_CHANNEL_SEL` | 通道选择，默认 CLI |
 | `PKG_AGENT_MULTIMODAL_ENABLE` | 多模态总开关，默认关闭 |
 | `PKG_AGENT_UPLOAD_URL` / `PKG_AGENT_DOWNLOAD_URL` | 文件服务器地址 |
