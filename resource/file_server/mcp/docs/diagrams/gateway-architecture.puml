@@ -1,0 +1,89 @@
+@startuml
+title MCP 网关架构
+
+skinparam shadowing false
+skinparam defaultFontSize 14
+skinparam rectangle {
+  BorderColor #666666
+  FontColor #1a1a1a
+}
+skinparam package {
+  BorderColor #6c8ebf
+  BackgroundColor #dae8fc
+}
+skinparam component {
+  BackgroundColor #ffffff
+  BorderColor #999999
+}
+skinparam database {
+  BackgroundColor #ffe6cc
+  BorderColor #d79b00
+}
+skinparam arrow {
+  Color #666666
+}
+
+left to right direction
+
+package "设备端" as device {
+  component "RT-Thread 设备端\nmcp_client.c" as dev
+  component "握手\ninitialize\nnotifications/initialized\n再取 tools/list" as hs
+  component "回包渲染\n文字直接拼\n媒体渲染成地址" as render
+}
+
+package "MCP 网关　mcp_gateway.py（组装根）" as gw {
+  component "传输层\ngateway/transport.py\nHTTP 端点 /mcp\nJSON-RPC 2.0，会话 ID 回带" as http
+  component "用例层\ngateway/service.py\n方法分发、找工具、装回包" as svc
+  component "工具表\ngateway/registry.py\n注册、编对外名字、按名字找" as reg
+  component "裁剪层\ngateway/shaping.py\n文字按字节截断\n板端缓冲 32 KB" as clip
+  component "执行层\ngateway/runtime.py\n后台线程跑 asyncio" as loop
+  database "文件服务器\n图片与音频落盘\n回包只留地址" as fs
+}
+
+package "配置层" as cfg {
+  component "config.py\n命令行和环境变量只解析一次" as conf
+}
+
+package "工具层　tools/" as tools {
+  component "Tool 基类\ntools/base.py\n所有工具都是它的子类" as tool
+  component "上下文\ntools/context.py\n文件服务器和配置" as ctx
+  component "内置文件工具\ntools/file" as pfile
+  component "Windows-MCP\ntools/command" as pwin
+  component "ODR 服务器\ntools/odr" as podr
+  package "tools/user_tools" as puserpkg {
+    component "用户工具" as puser
+    component "联网搜索\nweb_search_tool.py" as pweb
+  }
+}
+
+database "本机磁盘\n文件工具的根目录" as disk
+database "搜索服务\nSearXNG、Bing、Brave 或通用 JSON 接口" as search
+database "MCP 服务器进程\nstdio 传输" as servers
+database "ODR 注册表\nWindows 11 的设备代理注册表" as odr
+
+dev -[#666666]-> http : POST /mcp
+dev -[#999999]-> hs : 握手
+hs -[#999999]-> render : 调用
+
+http -[#666666]-> svc
+svc -[#666666]-> reg : 找工具
+svc -[#666666]-> loop : 执行
+svc -[#666666]-> clip : 裁回包
+clip -[#666666]-> fs : 媒体落盘
+
+conf -[#666666]-> svc : 配置
+
+loop -[#666666]-> tool : execute
+tool -[#666666]-> ctx : 取上下文
+tool -[#666666]-> pfile
+tool -[#666666]-> puser
+tool -[#666666]-> pweb
+tool -[#666666]-> pwin
+tool -[#666666]-> podr
+
+pfile -[#666666]-> disk
+pweb -[#666666]-> search
+pwin -[#666666]-> servers
+podr -[#666666]-> odr
+
+@enduml

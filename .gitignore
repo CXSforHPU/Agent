@@ -10,6 +10,8 @@
 resource/file_server/.venv/
 resource/file_server/upload_files/
 resource/file_server/file_db.sqlite
+# MCP 网关的进程号文件，deploy.bat 启动网关时写
+resource/file_server/mcp_gateway.pid
 
 # file_server 自带的测试目录：忽略全部内容，只保留 *.py
 resource/file_server/test/*

@@ -1,5 +1,5 @@
 @echo off
-rem Deploy the file server and start it.
+rem Deploy the file server and the MCP gateway, then start both.
 rem   deploy.bat                     environment + start
 rem   deploy.bat --tts               also fetch the GPT-SoVITS pieces
 rem   deploy.bat --tts --check       deploy only, do not start the server
@@ -10,6 +10,8 @@ rem   deploy.bat --host 127.0.0.1    bind another address (default 0.0.0.0)
 rem   deploy.bat --speaker NAME      voice used when a request omits "speaker"
 rem   deploy.bat --autoload          warm the TTS model while the server boots
 rem   deploy.bat --cpu               force the CPU torch build
+rem   deploy.bat --no-mcp            start the file server only
+rem   deploy.bat --mcp-port 8765     MCP gateway port (default 8765)
 rem
 rem GitHub downloads go through gh-proxy by default, because a direct connection
 rem to the FFmpeg release is usually cut here (curl exits with 35). Use --no-mirror
@@ -26,6 +28,8 @@ set "BACKEND=auto"
 set "PORTARG="
 set "HOSTARG="
 set "SPEAKER="
+set "MCP=1"
+set "MCP_PORT=8765"
 set "PY=%~dp0.venv\Scripts\python.exe"
 
 :parse
@@ -37,9 +41,14 @@ if /i "%~1"=="--print" (set "PRINT=1" & shift & goto parse)
 if /i "%~1"=="--autoload" (set "AUTOLOAD=1" & shift & goto parse)
 if /i "%~1"=="--mirror" (set "MIRROR=1" & shift & goto parse)
 if /i "%~1"=="--no-mirror" (set "MIRROR=0" & shift & goto parse)
+if /i "%~1"=="--no-mcp" (set "MCP=0" & shift & goto parse)
 if /i "%~1"=="--cpu" (set "BACKEND=cpu" & shift & goto parse)
 if /i "%~1"=="--cu126" (set "BACKEND=cu126" & shift & goto parse)
 if /i "%~1"=="--cu130" (set "BACKEND=cu130" & shift & goto parse)
+if /i "%~1"=="--mcp-port" (
+    if "%~2"=="" (echo --mcp-port needs a value 1>&2 & exit /b 2)
+    set "MCP_PORT=%~2" & shift & shift & goto parse
+)
 if /i "%~1"=="--port" (
     if "%~2"=="" (echo --port needs a value 1>&2 & exit /b 2)
     set "PORTARG=%~2" & shift & shift & goto parse
@@ -117,10 +126,59 @@ if "%PORT%"=="" set "PORT=8000"
 if "%HOST%"=="" set "HOST=0.0.0.0"
 if not "%SPEAKER%"=="" set "TTS_SPEAKER=%SPEAKER%"
 
+rem Step 4: start the MCP gateway in the background. The device talks
+rem to this one; the file server only stores the pictures and the audio.
+if "%MCP%"=="0" goto start_file_server
+call "%~dp0mcp\setup_windows_mcp.bat"
+if errorlevel 1 (
+    echo [mcp] Windows-MCP is not ready, the gateway runs without the desktop tools
+    set "MCPHEAD="
+    set "MCPTAIL="
+    goto launch_mcp
+)
+set "MCPHEAD=--windows-mcp"
+set "MCPTAIL=--windows-mcp-cmd %MCP_CMD%"
+
+:launch_mcp
+set "PIDFILE=%~dp0mcp_gateway.pid"
+rem A cmd redirect to nul cannot open its target on this box, so the stale pid
+rem file goes away through the venv python.
+"%PY%" -c "import os,sys; p=sys.argv[1]; os.path.exists(p) and os.remove(p)" "%PIDFILE%"
+start "" /b cmd /c ""%PY%" -u "%~dp0mcp\mcp_gateway.py" --host 0.0.0.0 --port %MCP_PORT% --root "%USERPROFILE%" --file-server "http://127.0.0.1:%PORT%" --pid-file "%PIDFILE%" %MCPHEAD% %MCPTAIL% >> "%~dp0mcp_gateway.log" 2>&1"
+rem The gateway writes the pid file once it listens. A cmd redirect to nul
+rem cannot open its target on this box, so wait with the venv python.
+set /a GW_WAIT=0
+:wait_mcp
+set "GW_PID="
+if exist "%PIDFILE%" for /f "usebackq delims=" %%p in ("%PIDFILE%") do set "GW_PID=%%p"
+if defined GW_PID goto got_mcp
+set /a GW_WAIT+=1
+if %GW_WAIT% GEQ 60 goto no_mcp
+"%PY%" -c "import time; time.sleep(0.5)"
+goto wait_mcp
+
+:got_mcp
+echo ==^> the MCP gateway is up on port %MCP_PORT%, pid !GW_PID!, log %~dp0mcp_gateway.log
+echo ==^> device side: PKG_AGENT_MCP_SERVER_URL=http://PC-IP:%MCP_PORT%/mcp
+goto start_file_server
+
+:no_mcp
+echo the MCP gateway did not start, see %~dp0mcp_gateway.log
+
+:start_file_server
 cd /d "%~dp0"
 echo ==^> starting on %HOST%:%PORT%
 "%PY%" main.py
-exit /b %ERRORLEVEL%
+set "SRV_CODE=%ERRORLEVEL%"
+rem The file server is down, so the gateway goes down with it.
+if defined GW_PID call :stop_mcp
+exit /b %SRV_CODE%
+
+rem taskkill /T cannot walk the tree on this box, so PowerShell does it. The
+rem gateway spawns the MCP server, and that child has to go down as well.
+:stop_mcp
+powershell -NoProfile -Command "$all = Get-CimInstance Win32_Process; function Stop-Tree($id) { foreach ($p in $all | Where-Object { $_.ParentProcessId -eq $id }) { Stop-Tree $p.ProcessId; Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue } }; Stop-Tree !GW_PID!; Stop-Process -Id !GW_PID! -Force -ErrorAction SilentlyContinue"
+exit /b 0
 
 rem Build the venv. uv cannot resolve hardware, so the choice happens here:
 rem compute capability decides which dependency group gets synced. cu126 wheels
@@ -175,4 +233,5 @@ exit /b 0
 echo usage: deploy.bat [--tts] [--check] [--start-only] [--print] [--port N] [--host ADDR]
 echo                   [--speaker NAME]
 echo                   [--autoload] [--cpu^|--cu126^|--cu130] [--mirror^|--no-mirror]
+echo                   [--no-mcp] [--mcp-port N]
 exit /b 0

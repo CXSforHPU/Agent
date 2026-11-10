@@ -1,0 +1,46 @@
+@startuml
+title 联网搜索工具的调用过程
+
+skinparam shadowing false
+skinparam defaultFontSize 14
+skinparam sequence {
+  LifeLineBorderColor #666666
+  LifeLineBackgroundColor #ffffff
+  ParticipantBorderColor #666666
+  ParticipantBackgroundColor #ffffff
+}
+skinparam sequenceMessage {
+  Color #666666
+}
+
+participant "模型" as model
+participant "板端 MCP 客户端\nmcp_client.c" as client
+participant "网关\nmcp_gateway.py" as gw
+participant "web_search 工具\ntools/user_tools/web_search_tool.py" as tool
+participant "搜索服务\nSearXNG / Bing / Brave / 通用 JSON" as svc
+
+model -> client : 调用 mcp_web_search\nquery、count
+client -> gw : POST /mcp\ntools/call
+gw -> tool : execute("web_search", arguments)
+
+alt query 为空
+  tool --> gw : isError\n没有查询词
+else 搜索服务地址没配
+  tool --> gw : isError\n没有配置搜索服务地址
+else 请求失败
+  tool -> svc : 发出搜索请求
+  svc --> tool : 网络错误或超时
+  tool --> gw : isError\nweb_search 请求失败
+else 正常
+  tool -> svc : 发出搜索请求
+  svc --> tool : JSON 回包
+  tool -> tool : 找出第一个带链接的列表\n取标题、地址、摘要
+  tool --> gw : JSON 文本\nquery、count、results
+end
+
+gw -> gw : 裁剪层裁回包\n文字按字节截断
+gw --> client : tools/call 结果
+client -> client : 拼成一段文本交回模型
+client --> model : 搜索结果
+
+@enduml

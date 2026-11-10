@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy the file server and start it.
+# Deploy the file server and the MCP gateway, then start both.
 #   bash deploy.sh                   # environment + start
 #   bash deploy.sh --tts             # also fetch the GPT-SoVITS pieces
 #   bash deploy.sh --tts --check     # deploy only, do not start the server
@@ -11,6 +11,8 @@
 #   bash deploy.sh --speaker NAME    # default voice for /tts requests
 #   bash deploy.sh --mirror          # route github.com downloads through gh-proxy
 #   bash deploy.sh --cpu             # force the CPU torch build
+#   bash deploy.sh --no-mcp          # start the file server only
+#   bash deploy.sh --mcp-port 8765   # MCP gateway port (default 8765)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -24,9 +26,11 @@ mirror=false
 backend=""
 port=""
 host=""
+mcp=true
+mcp_port=8765
 
 usage() {
-    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -39,6 +43,8 @@ while [[ $# -gt 0 ]]; do
         --speaker) speaker="${2:-}"; [[ -n "$speaker" ]] || { echo "--speaker needs a value" >&2; exit 2; }; shift 2 ;;
         --mirror) mirror=true; shift ;;
         --cpu | --cu126 | --cu130) backend="${1#--}"; shift ;;
+        --no-mcp) mcp=false; shift ;;
+        --mcp-port) mcp_port="${2:-}"; [[ -n "$mcp_port" ]] || { echo "--mcp-port needs a value" >&2; exit 2; }; shift 2 ;;
         --port) port="${2:-}"; [[ -n "$port" ]] || { echo "--port needs a value" >&2; exit 2; }; shift 2 ;;
         --host) host="${2:-}"; [[ -n "$host" ]] || { echo "--host needs a value" >&2; exit 2; }; shift 2 ;;
         -h | --help) usage; exit 0 ;;
@@ -183,11 +189,24 @@ if [[ "$deploy_only" == true ]]; then
     exit 0
 fi
 
-# Step 3: start the server.
+# Step 3: the MCP gateway. The device talks to this one; the file server only
+# stores the pictures and the audio that come back from the tools.
 [[ -n "$port" ]] && export PORT="$port"
 [[ -n "$host" ]] && export HOST="$host"
 [[ "$autoload" == true ]] && export TTS_AUTOLOAD=1
 [[ -n "$speaker" ]] && export TTS_SPEAKER="$speaker"
 
+if [[ "$mcp" == true ]]; then
+    echo "==> starting the MCP gateway on port $mcp_port"
+    "$python" mcp/mcp_gateway.py --host 0.0.0.0 --port "$mcp_port" \
+        --root "$HOME" --file-server "http://127.0.0.1:${PORT:-8000}" \
+        >> mcp_gateway.log 2>&1 &
+    mcp_pid=$!
+    # The file server runs in the foreground, so the gateway has to go down with it.
+    # The gateway spawns the MCP server as a child, so the children go down first.
+    trap 'for child in $(pgrep -P "$mcp_pid" 2>/dev/null); do kill "$child" 2>/dev/null || true; done; kill "$mcp_pid" 2>/dev/null || true' EXIT
+fi
+
+# Step 4: start the file server.
 echo "==> starting on ${HOST:-0.0.0.0}:${PORT:-8000}"
-exec "$python" main.py
+"$python" main.py

@@ -44,6 +44,8 @@ deploy.bat --tts          # Windows cmd
 | `--cpu`、`--cu126`、`--cu130` | 指定 torch 后端，默认按显卡探测 |
 | `--mirror` | GitHub 下载走 gh-proxy，`deploy.bat` 默认开，`deploy.sh` 默认关 |
 | `--no-mirror` | 只有 `deploy.bat` 有，关掉代理直连 github.com |
+| `--no-mcp` | 只起文件服务器，不起 MCP 网关 |
+| `--mcp-port N` | MCP 网关的监听端口，默认 `8765` |
 
 脚本取 `nvidia-smi --query-gpu=compute_cap`，按结果同步 `pyproject.toml` 里的依赖组：
 
@@ -136,6 +138,18 @@ uv run --no-sync main.py
 
 - `file_db.sqlite`：文件元信息。
 - `upload_files/`：上传的文件。
+
+### MCP 网关
+
+deploy 脚本默认还会起一个 MCP 网关，端口 `8765`。板端填这个地址：
+
+```text
+PKG_AGENT_MCP_SERVER_URL=http://PC-IP:8765/mcp
+```
+
+网关把 PC 上的工具收成一个 MCP 端点：Windows-MCP 的桌面操作、网关自带的文件工具，还有 `mcp/tools/user_tools/` 里的用户工具。工具回包里的图片和音频由网关存到文件服务器，回给板端的只是一句带下载地址的说明，板端的 32 KB 缓冲才装得下。
+
+网关的代码在 `mcp/` 目录，细节见 `mcp/README.md`。只想要文件服务器时加 `--no-mcp`，换端口用 `--mcp-port 8766`。
 
 ## 4. 接口
 
