@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="drawio-skill" version="21.0.0" type="device">
+  <diagram name="AgentFsm" id="agent-fsm-1">
+    <mxGraphModel dx="1422" dy="762"
+                   grid="1" gridSize="10"
+                   guides="1" tooltips="1" connect="1"
+                   arrows="1" fold="1"
+                   page="1" pageScale="1"
+                   pageWidth="1340" pageHeight="700"
+                   math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="bg" value=""
+                style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=none;"
+                vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="1260" height="620" as="geometry" />
+        </mxCell>
+
+        <mxCell id="title" value="Agent 工具调用状态机（FSM）"
+                style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=22;fontStyle=1;fontColor=#333333;"
+                vertex="1" parent="1">
+          <mxGeometry x="80" y="60" width="600" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="subtitle" value="八个节点，每个节点返回下一个节点，就是状态图里的一条边。状态机跑在 AgentLoop 里，输出由 AgentLoop 通过 AgentFsmOps 注入。"
+                style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontColor=#666666;"
+                vertex="1" parent="1">
+          <mxGeometry x="80" y="100" width="1000" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="notes" value="护栏（GUARD）&#xa;&#xa;轮次上限：最多 6 轮&#xa;重复动作：同参数再调就跳过&#xa;无效轮次：同一工具超过 3 次&#xa;连续两轮无效：强制收尾&#xa;&#xa;蓝=决策校验&#xa;绿=执行观察&#xa;橙=护栏收尾"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;align=left;verticalAlign=top;spacingLeft=12;spacingTop=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="1080" y="200" width="200" height="190" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-init" value="INIT&#xa;初始化"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="80" y="210" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-think" value="THINK&#xa;决策&#xa;无工具调用就收尾"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="280" y="210" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-valid" value="VALIDATE&#xa;校验&#xa;非法或重复就跳过"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="480" y="210" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-act" value="ACT&#xa;执行"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="680" y="210" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-obs" value="OBSERVE&#xa;观察&#xa;结果写回上下文"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="880" y="210" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-guard" value="GUARD&#xa;护栏"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="880" y="440" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-finish" value="FINISH&#xa;收尾"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="680" y="440" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n-done" value="DONE&#xa;结束"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="480" y="440" width="160" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-init-think" value=""
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="n-init" target="n-think">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-think-valid" value="有 tool_calls"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="n-think" target="n-valid">
+          <mxGeometry x="0" y="-44" relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-valid-act" value="执行"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="n-valid" target="n-act">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-act-obs" value="工具结果"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="n-act" target="n-obs">
+          <mxGeometry x="0" y="-40" relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-obs-valid" value="下一个 tool_call"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#82b366;fontSize=12;"
+                edge="1" parent="1" source="n-obs" target="n-valid">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="960" y="160" />
+              <mxPoint x="560" y="160" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-obs-guard" value="本轮工具调用结束"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="n-obs" target="n-guard">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-guard-think" value="继续下一轮"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#82b366;fontSize=12;"
+                edge="1" parent="1" source="n-guard" target="n-think">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="960" y="590" />
+              <mxPoint x="250" y="590" />
+              <mxPoint x="250" y="245" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-guard-finish" value="轮次上限或连续无效"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#d79b00;fontSize=12;"
+                edge="1" parent="1" source="n-guard" target="n-finish">
+          <mxGeometry x="0" y="-48" relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-finish-done" value=""
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="n-finish" target="n-done">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

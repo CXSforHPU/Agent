@@ -5,6 +5,7 @@
 #include "utils.h"
 #include "AgentChannels.h"
 #include "AgentRuntime.h"
+#include "AgentFsm.h"
 
 #define LOG_TAG "Agent.AgentLoop"
 #define LOG_LVL LOG_LVL_INFO
@@ -25,94 +26,6 @@ static rt_thread_t g_file_op_thread = RT_NULL;
 
 static void cleanup_agent(void);
 static rt_sem_t g_cleanup_sem = RT_NULL;
-
-/* ==========================================================================
- * 工具循环防呆：重复调用检测
- *   模型有时会反复调用同一个工具（参数相同或只改 max 之类的无关参数），
- *   如果工具返回空结果就会无限重试。这里记录最近几次调用签名，重复的直接跳过
- *   执行并把「结果不会变」告诉模型；连续整轮重复则强制生成文本回答。
- * ========================================================================== */
-#define AGENT_CALL_SIG_LEN   192
-#define AGENT_CALL_SIG_KEEP  6
-
-static char g_call_sig[AGENT_CALL_SIG_KEEP][AGENT_CALL_SIG_LEN];
-static int g_call_sig_count = 0;
-
-static void agent_call_sig_reset(void)
-{
-    g_call_sig_count = 0;
-}
-
-static rt_bool_t agent_call_sig_seen(const char *sig)
-{
-    int i;
-
-    for (i = 0; i < g_call_sig_count; i++)
-    {
-        if (rt_strcmp(g_call_sig[i], sig) == 0)
-        {
-            return RT_TRUE;
-        }
-    }
-    return RT_FALSE;
-}
-
-static void agent_call_sig_add(const char *sig)
-{
-    if (g_call_sig_count < AGENT_CALL_SIG_KEEP)
-    {
-        rt_strncpy(g_call_sig[g_call_sig_count], sig, AGENT_CALL_SIG_LEN - 1);
-        g_call_sig[g_call_sig_count][AGENT_CALL_SIG_LEN - 1] = '\0';
-        g_call_sig_count++;
-        return;
-    }
-
-    /* 满了就整体前移，丢弃最旧的一条 */
-    rt_memmove(g_call_sig[0], g_call_sig[1], (AGENT_CALL_SIG_KEEP - 1) * AGENT_CALL_SIG_LEN);
-    rt_strncpy(g_call_sig[AGENT_CALL_SIG_KEEP - 1], sig, AGENT_CALL_SIG_LEN - 1);
-    g_call_sig[AGENT_CALL_SIG_KEEP - 1][AGENT_CALL_SIG_LEN - 1] = '\0';
-}
-
-/*
- * 同一轮对话里同一个工具被反复调用（参数在变，例如 max=8 → max=10）时，
- * 精确签名比对抓不住。这里再按「工具名」计数，超过上限就视为无效重复，
- * 触发和重复调用一样的收尾逻辑，避免模型换个参数无限试下去。
- */
-#define AGENT_TOOL_NAME_LEN  32
-#define AGENT_TOOL_HITS_MAX  3
-
-static char g_tool_hits_name[AGENT_CALL_SIG_KEEP][AGENT_TOOL_NAME_LEN];
-static int g_tool_hits_count[AGENT_CALL_SIG_KEEP];
-static int g_tool_hits_used = 0;
-
-static void agent_tool_hits_reset(void)
-{
-    g_tool_hits_used = 0;
-    rt_memset(g_tool_hits_count, 0, sizeof(g_tool_hits_count));
-}
-
-/* 记录一次调用并返回该工具在本轮对话中已被调用的次数（含本次） */
-static int agent_tool_hit(const char *name)
-{
-    int i;
-
-    for (i = 0; i < g_tool_hits_used; i++)
-    {
-        if (rt_strcmp(g_tool_hits_name[i], name) == 0)
-        {
-            return ++g_tool_hits_count[i];
-        }
-    }
-
-    if (g_tool_hits_used < AGENT_CALL_SIG_KEEP)
-    {
-        rt_strncpy(g_tool_hits_name[g_tool_hits_used], name, AGENT_TOOL_NAME_LEN - 1);
-        g_tool_hits_name[g_tool_hits_used][AGENT_TOOL_NAME_LEN - 1] = '\0';
-        g_tool_hits_count[g_tool_hits_used] = 1;
-        g_tool_hits_used++;
-    }
-    return 1;
-}
 
 /*
  * @brief 向输出通道投递一段纯文本（工具循环兜底、空回答兜底用）
@@ -160,17 +73,18 @@ static void agent_notify(const char *text, void (*on_context)(const char *text))
 
 /*
  * @brief 把一次 LLM 回复作为最终回答输出（无 tool_calls 或强制收尾时使用）
- * @param resp       LLM 回复
+ * @param context   上下文管理器
+ * @param resp      LLM 回复
  * @param on_context 正文打印回调（流式路径，通道可见）
  */
-static void agent_emit_answer(ChatResponse_t resp, void (*on_context)(const char *text))
+static void agent_emit_answer(Context_t context, ChatResponse_t resp, void (*on_context)(const char *text))
 {
     if (resp == RT_NULL)
     {
         return;
     }
 
-    g_context->append_assistant_message(g_context, resp);
+    context->append_assistant_message(context, resp);
 
     if (resp->context == RT_NULL || resp->context[0] == '\0')
     {
@@ -261,274 +175,38 @@ static void init_agent(void)
 }
 
 /*
- * @brief 为一个未执行的工具调用补写失败结果
- * @note  assistant.tool_calls 中的每个 id 都必须有对应的 tool 消息，
- *        未知工具/参数非法等跳过执行的情况也要回一条，否则下一轮请求会被 API 以 400 拒绝
- */
-static void agent_append_tool_error(Context_t context, const char *tool_call_id, const char *text)
-{
-    Messages_t messages;
-
-    if (context == RT_NULL || tool_call_id == RT_NULL)
-    {
-        return;
-    }
-
-    messages = messages_create(1);
-    if (messages == RT_NULL)
-    {
-        return;
-    }
-    if (messages_append(messages, TYPE_TEXT, text) == RT_EOK)
-    {
-        context->append_tool_message(context, tool_call_id, messages);
-    }
-    messages_destroy(messages);
-}
-
-/*
- * @brief Agent 工具调用循环（最大 loop_max 轮）
- * @param g_context     上下文管理器
+ * @brief Agent 工具调用循环（状态机驱动，最大 loop_max 轮）
+ * @note  这里只组装全局状态并启动状态机，节点与边的流转在 AgentFsm.c 里
+ * @param context       上下文管理器
  * @param tools         工具定义 JSON 数组
  * @param on_reasoning  思考过程回调
  * @param on_tool_call  工具调用回调
  * @param on_context    回复内容回调
  */
-static void agent_loop(Context_t g_context,
+static const AgentFsmOps g_fsm_ops = {
+    .emit_answer = agent_emit_answer,
+    .notify = agent_notify,
+};
+
+static void agent_loop(Context_t context,
                        cJSON *tools,
                        void (*on_reasoning)(const char *text),
                        void (*on_tool_call)(const char *text),
                        void (*on_context)(const char *text))
 {
-    const int loop_max = 6;
-    const int chat_retry_max = 3;
-    int loop_cnt = 0;
-    int attempt = 0;
-    int dup_rounds = 0;
-    rt_bool_t answered = RT_FALSE;
-    ChatResponse_t resp = RT_NULL;
+    AgentFsm_t fsm;
 
-    agent_call_sig_reset();
-    agent_tool_hits_reset();
+    rt_memset(&fsm, 0, sizeof(fsm));
+    fsm.context = context;
+    fsm.tools = tools;
+    fsm.ops = &g_fsm_ops;
+    fsm.on_reasoning = on_reasoning;
+    fsm.on_tool_call = on_tool_call;
+    fsm.on_context = on_context;
+    fsm.loop_max = AGENT_LOOP_MAX;
+    fsm.chat_retry_max = AGENT_CHAT_RETRY_MAX;
 
-    while (loop_cnt < loop_max)
-    {
-        loop_cnt++;
-
-        /* 请求失败重试：TLS/网络抖动（如 mbedtls NET_RECV_FAILED、对端重置）不应直接
-           丢弃整轮对话；已流式输出的部分内容在重试时可能重复打印，属可接受的代价 */
-        for (attempt = 1; attempt <= chat_retry_max; attempt++)
-        {
-            resp = chat(g_context->message, tools, 32 * 1024, on_reasoning, on_tool_call, on_context);
-            if (resp != RT_NULL)
-            {
-                break;
-            }
-            if (attempt < chat_retry_max)
-            {
-                LOG_W("Chat request failed (attempt %d/%d), retry in %d ms",
-                      attempt, chat_retry_max, 1000 * attempt);
-                rt_thread_mdelay(1000 * attempt);
-            }
-        }
-
-        if (resp == RT_NULL)
-        {
-            LOG_E("Chat request failed after %d attempts, terminating this case", chat_retry_max);
-            agent_notify("(LLM request failed after retries, please try again)", on_context);
-            answered = RT_TRUE;
-            break;
-        }
-
-        /* 无 tool_calls：最终回答 */
-        if (cJSON_GetArraySize(resp->tool_call) == 0)
-        {
-            agent_emit_answer(resp, on_context);
-            chat_response_free(resp);
-            resp = RT_NULL;
-            answered = RT_TRUE;
-            break;
-        }
-
-        /* 有 tool_calls：先保存带 tool_calls 的 assistant 消息，再执行工具。
-           顺序不能反：tool 消息必须能对应到前一条 assistant 消息里的 tool_calls */
-        g_context->append_assistant_message(g_context, resp);
-
-        /* 执行所有 tool_calls */
-        int tool_count = cJSON_GetArraySize(resp->tool_call);
-        int dup_hits = 0;
-        int over_hits = 0;
-        LOG_I("\nDetected %d tool invocation(s)\n", tool_count);
-        for (int t = 0; t < tool_count; t++)
-        {
-            cJSON *tc_item = cJSON_GetArrayItem(resp->tool_call, t);
-            if (!tc_item) continue;
-
-            cJSON *id_node = cJSON_GetObjectItem(tc_item, "id");
-            /* id 缺失/非字符串时兜底，保证 append_tool_message 的 tool_call_id 有效 */
-            const char *id_str = (id_node && cJSON_IsString(id_node)) ? id_node->valuestring : "call_0";
-
-            cJSON *tc_func = cJSON_GetObjectItemCaseSensitive(tc_item, "function");
-            if (!tc_func || !cJSON_IsObject(tc_func))
-            {
-                LOG_I("Tool call %d missing function field, skip\n", t);
-                agent_append_tool_error(g_context, id_str, "Tool call is missing the function field.");
-                continue;
-            }
-
-            cJSON *name_node = cJSON_GetObjectItemCaseSensitive(tc_func, "name");
-            cJSON *args_node = cJSON_GetObjectItemCaseSensitive(tc_func, "arguments");
-            if (!name_node || !cJSON_IsString(name_node) || !args_node || !cJSON_IsString(args_node))
-            {
-                LOG_I("Tool call %d invalid name/arguments, skip\n", t);
-                agent_append_tool_error(g_context, id_str, "Tool call has an invalid function name or arguments.");
-                continue;
-            }
-
-            const char *func_name = name_node->valuestring;
-            const char *args_str = args_node->valuestring;
-
-            AgentToolNode_t tool_node = search_agent_tool_node(tc_item);
-            if (!tool_node)
-            {
-                char err_buf[96];
-
-                rt_snprintf(err_buf, sizeof(err_buf), "Unknown tool: %s", func_name);
-                LOG_W("%s\n", err_buf);
-                agent_append_tool_error(g_context, id_str, err_buf);
-                continue;
-            }
-
-            /*
-             * 重复调用检测：同一轮对话里已经用完全相同的参数调用过同一个工具，
-             * 结果不会变化。此时不再执行，直接把「结果不变、请直接回答」喂回模型，
-             * 否则一旦工具返回内容为空，模型会无限重试同一个调用。
-             */
-            char sig[AGENT_CALL_SIG_LEN];
-            rt_snprintf(sig, sizeof(sig), "%s|%s", func_name, args_str);
-            if (agent_call_sig_seen(sig))
-            {
-                LOG_W("duplicated tool call skipped: %s(%s)", func_name, args_str);
-                dup_hits++;
-
-                Messages_t dup_messages = messages_create(1);
-                if (dup_messages != RT_NULL)
-                {
-                    if (messages_append(dup_messages, TYPE_TEXT,
-                                        "This exact tool call was already executed in this "
-                                        "conversation and its result is unchanged (see the "
-                                        "previous tool result). Do not call it again - answer "
-                                        "the user with the information you already have.") != RT_EOK)
-                    {
-                        messages_destroy(dup_messages);
-                        dup_messages = RT_NULL;
-                    }
-                }
-                if (dup_messages != RT_NULL)
-                {
-                    /* append_tool_message 内部是拷贝（见 context.c 的 to_content），
-                       这里必须自行释放，否则每次重复调用都会泄漏一个消息列表 */
-                    g_context->append_tool_message(g_context, id_str, dup_messages);
-                    messages_destroy(dup_messages);
-                }
-                continue;
-            }
-            agent_call_sig_add(sig);
-
-            /* 同一工具被反复调用（哪怕参数在变）：超过上限就计入无效轮次 */
-            if (agent_tool_hit(func_name) > AGENT_TOOL_HITS_MAX)
-            {
-                LOG_W("tool %s called too many times in this case, treating as unproductive",
-                      func_name);
-                over_hits++;
-            }
-
-            cJSON *args_json = cJSON_Parse(args_str);
-            if (!args_json)
-            {
-                LOG_I("Tool %s parse arguments failed, skip execution\n", func_name);
-                agent_append_tool_error(g_context, id_str, "Tool arguments are not valid JSON.");
-                continue;
-            }
-
-            tool_node->execute_func(args_json, tool_node);
-
-            Messages_t tool_ret_messages = tool_node->ret.messages;
-            /* 工具参数校验失败时 ret.messages 可能为 NULL */
-            if (tool_ret_messages == RT_NULL)
-            {
-                LOG_I("Tool %s returned no result\n", func_name);
-                agent_append_tool_error(g_context, id_str,
-                                        "Tool execution failed (invalid or missing arguments).");
-                cJSON_Delete(args_json);
-                continue;
-            }
-            for (int i = 0; i < tool_ret_messages->current_size; i++)
-            {
-                LOG_I("[Local Tool %s Execution Result] type %s, result %s\n", func_name,
-                      get_agent_content_type(messages_get_type_idx(tool_ret_messages, i)),
-                      messages_get_content_idx(tool_ret_messages, i));
-            }
-
-            g_context->append_tool_message(g_context, id_str, tool_ret_messages);
-
-            cJSON_Delete(args_json);
-        }
-
-        /*
-         * 整轮都是重复调用（或同一工具反复调用到了上限）：说明模型不认可已有结果。
-         * 连续两轮如此就强制它用文本回答，避免「一直卡在工具调用」而不给用户任何回复。
-         */
-        if (tool_count > 0 && (dup_hits + over_hits) >= tool_count)
-        {
-            dup_rounds++;
-            if (dup_rounds >= 2)
-            {
-                LOG_W("repeated tool calls detected, forcing a final answer");
-                chat_response_free(resp);
-                resp = RT_NULL;
-                break;
-            }
-        }
-        else
-        {
-            dup_rounds = 0;
-        }
-
-        chat_response_free(resp);
-        resp = RT_NULL;
-    }
-
-    if (loop_cnt >= loop_max)
-    {
-        LOG_E("Maximum tool loop count %d reached, forcing a final answer\n", loop_max);
-        chat_response_free(resp);
-        resp = RT_NULL;
-    }
-
-    /*
-     * 收尾：仍然没有给用户任何回答时（达到轮次上限、或检测到重复调用而跳出），
-     * 最后一次不带工具询问模型，逼出一段纯文本回答；失败就给一句明确的提示，
-     * 保证这一轮对话不会「既没有回答也没有结束」。
-     * 注意必须用 answered 判断：正常出回答的路径 resp 也是 NULL，
-     * 只按 resp==NULL 判断会再问一次、重复输出一遍回答。
-     */
-    if (!answered)
-    {
-        resp = chat(g_context->message, RT_NULL, 32 * 1024, on_reasoning, RT_NULL, on_context);
-        if (resp != RT_NULL)
-        {
-            agent_emit_answer(resp, on_context);
-            chat_response_free(resp);
-            resp = RT_NULL;
-        }
-        else
-        {
-            LOG_E("forced final answer failed");
-            agent_notify("(stopped after too many tool calls without a usable result - "
-                         "please restate your question)", on_context);
-        }
-    }
+    agent_fsm_run(&fsm);
 }
 
 /*
