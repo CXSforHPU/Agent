@@ -7,8 +7,12 @@
 #include "context.h"
 #include "tool_base.h"
 
-/* 一次请求最多跑几轮工具循环 */
+/* 一次请求最多跑几轮工具循环，值由 Kconfig 的 PKG_AGENT_TOOL_LOOP_MAX 决定 */
+#ifdef PKG_AGENT_TOOL_LOOP_MAX
+#define AGENT_LOOP_MAX        PKG_AGENT_TOOL_LOOP_MAX
+#else
 #define AGENT_LOOP_MAX        6
+#endif
 /* 一次 LLM 请求最多重试几次 */
 #define AGENT_CHAT_RETRY_MAX  3
 /* 单次请求的 token 上限 */
