@@ -1,3 +1,7 @@
+/*
+ * 比较工具：比较两个数的大小
+ * 只做数值运算，不访问任何外设。
+ */
 #include "tool_compare.h"
 
 /*
@@ -7,29 +11,23 @@
  */
 void tool_compare(cJSON *args_obj, AgentToolNode_t node)
 {
-    /* 1. 参数校验 */
-    if (!args_obj || !node)
+    if (node == RT_NULL)
     {
-        if (node)
-        {
-            if (node->ret.messages)
-            {
-                messages_destroy(node->ret.messages);
-                node->ret.messages = RT_NULL;
-            }
-            node->ret.ret = RT_ERROR;
-        }
         return;
     }
 
-    /* 2. 释放旧消息 */
     if (node->ret.messages)
     {
         messages_destroy(node->ret.messages);
         node->ret.messages = RT_NULL;
     }
 
-    /* 3. 解析参数 */
+    if (args_obj == RT_NULL)
+    {
+        node->ret.ret = RT_ERROR;
+        return;
+    }
+
     cJSON *a_json = cJSON_GetObjectItemCaseSensitive(args_obj, "a");
     cJSON *b_json = cJSON_GetObjectItemCaseSensitive(args_obj, "b");
 
@@ -39,7 +37,6 @@ void tool_compare(cJSON *args_obj, AgentToolNode_t node)
         return;
     }
 
-    /* 4. 执行比较 */
     double a = a_json->valuedouble;
     double b = b_json->valuedouble;
     char ret_buffer[64] = {0};
@@ -57,17 +54,25 @@ void tool_compare(cJSON *args_obj, AgentToolNode_t node)
         rt_snprintf(ret_buffer, sizeof(ret_buffer), "%f is equal to %f", a, b);
     }
 
-    /* 5. 创建消息 */
     node->ret.messages = messages_create(1);
     messages_append(node->ret.messages, TYPE_TEXT, ret_buffer);
     node->ret.ret = (node->ret.messages) ? RT_EOK : RT_ERROR;
 }
 
+/*
+ * @brief 填 compare 工具的描述
+ * @param func 描述 JSON 对象
+ */
 static void compare_desc(cJSON *func)
 {
     tool_desc(func, "Compare the size of two numbers");
 }
 
+/*
+ * @brief 填 compare 工具的参数表
+ * @param props   属性 JSON 对象
+ * @param required 必填项数组
+ */
 static void compare_params(cJSON *props, cJSON *required)
 {
     create_property(props, "a", "number", "Number A to compare");

@@ -1,6 +1,15 @@
+/*
+ * 技能工具：列出内置技能目录，或按名字读取某个技能的完整说明
+ * 只读技能说明文本，不执行技能里的动作。
+ */
 #include "tool_skill.h"
 #include "skill.h"
 
+/*
+ * @brief 技能工具：列出技能目录或读取指定技能说明
+ * @param args_obj 参数 JSON 对象 {name?: string}
+ * @param node     工具链表节点（用于回填结果）
+ */
 void tool_skill(cJSON *args_obj, AgentToolNode_t node)
 {
     cJSON *name;
@@ -59,6 +68,10 @@ void tool_skill(cJSON *args_obj, AgentToolNode_t node)
     node->ret.ret = result;
 }
 
+/*
+ * @brief 填 skill 工具的描述
+ * @param func 描述 JSON 对象
+ */
 static void skill_desc(cJSON *func)
 {
     tool_desc(func, "Discover and load built-in task instructions.");
@@ -69,6 +82,11 @@ static void skill_desc(cJSON *func)
     tool_desc_more(func, "Loading a skill only reads instructions; it does not execute actions.");
 }
 
+/*
+ * @brief 填 skill 工具的参数表
+ * @param props   属性 JSON 对象
+ * @param required 必填项数组
+ */
 static void skill_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string",

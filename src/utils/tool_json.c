@@ -1,3 +1,7 @@
+/*
+ * 工具模块公共设施：工具项/参数 JSON 构造、描述拼装、模块注册表
+ * 约束：模块表是静态数据，工具链表每次进入 agent 时重建，不持有堆内存。
+ */
 #include "utils/utils_internal.h"
 #include "tool_base.h"
 
@@ -72,6 +76,11 @@ void create_property(cJSON *props_obj, const char *name, const char *type, const
 #define TOOL_NOTE_READ_ONLY    "Read-only."
 #define TOOL_NOTE_STATE_CHANGE "State-changing: call only after the user authorized this peripheral."
 
+/*
+ * @brief 写入工具描述文本（已存在则覆盖）
+ * @param func 工具项里的 function 子对象
+ * @param text 描述文本
+ */
 static void tool_desc_set(cJSON *func, const char *text)
 {
     cJSON *item = cJSON_GetObjectItemCaseSensitive(func, "description");
@@ -142,11 +151,19 @@ void tool_desc_more(cJSON *func, const char *text)
     rt_free(buffer);
 }
 
+/*
+ * @brief 给工具追加「只读」说明
+ * @param func 工具项里的 function 子对象
+ */
 void tool_desc_read_only(cJSON *func)
 {
     tool_desc_more(func, TOOL_NOTE_READ_ONLY);
 }
 
+/*
+ * @brief 给工具追加「会改状态」说明
+ * @param func 工具项里的 function 子对象
+ */
 void tool_desc_state_changing(cJSON *func)
 {
     tool_desc_more(func, TOOL_NOTE_STATE_CHANGE);
@@ -178,17 +195,31 @@ rt_err_t agent_tool_module_add(const struct agent_tool_module_def *module)
     return RT_EOK;
 }
 
+/*
+ * @brief 按序号取已登记的工具模块
+ * @param index 模块序号
+ * @return 模块描述符，越界返回 RT_NULL
+ */
 static const struct agent_tool_module_def *module_get(int index)
 {
     if (index < 0 || index >= module_count) return RT_NULL;
     return module_table[index];
 }
 
+/*
+ * @brief 取已登记的工具模块数量
+ * @return 模块数量
+ */
 int agent_tool_module_count(void)
 {
     return module_count;
 }
 
+/*
+ * @brief 取指定序号的工具模块名
+ * @param index 模块序号
+ * @return 模块名，越界返回 RT_NULL
+ */
 const char *agent_tool_module_name(int index)
 {
     const struct agent_tool_module_def *module = module_get(index);
@@ -196,6 +227,11 @@ const char *agent_tool_module_name(int index)
     return module ? module->module : RT_NULL;
 }
 
+/*
+ * @brief 取指定序号的工具模块包含的工具数
+ * @param index 模块序号
+ * @return 工具数，越界返回 0
+ */
 int agent_tool_module_tools(int index)
 {
     const struct agent_tool_module_def *module = module_get(index);
@@ -203,6 +239,12 @@ int agent_tool_module_tools(int index)
     return module ? module->tool_count : 0;
 }
 
+/*
+ * @brief 取指定模块里第 tool 个工具的名字
+ * @param module_index 模块序号
+ * @param tool         模块内的工具序号
+ * @return 工具名，越界返回 RT_NULL
+ */
 const char *agent_tool_module_tool_name(int module_index, int tool)
 {
     const struct agent_tool_module_def *module = module_get(module_index);
@@ -211,7 +253,11 @@ const char *agent_tool_module_tool_name(int module_index, int tool)
     return module->tools[tool].name;
 }
 
-/* 参数缺省时给一个空对象，保证请求体里的 parameters 字段始终合法 */
+/*
+ * @brief 按模块的描述回调生成参数对象
+ * @param params 模块的参数表回调（可为 NULL）
+ * @return 参数 cJSON 对象，分配失败返回 RT_NULL
+ */
 static cJSON *tool_params_obj(void (*params)(cJSON *props, cJSON *required))
 {
     cJSON *props = cJSON_CreateObject();
