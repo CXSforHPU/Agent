@@ -36,7 +36,8 @@ AgentAudio 由应用直接调用，不参与对话主循环。
 
 | 层 | 组件 | 职责 |
 |---|---|---|
-| 顶层调度 | `AgentLoop` | 初始化与清理、对话主循环、工具调度、重复调用保护 |
+| 顶层调度 | `AgentLoop` | 初始化与清理、对话主循环、组装全局状态并启动状态机 |
+| 顶层调度 | `AgentFsm` | 工具调用状态机：决策、校验、执行、观察、护栏、收尾 |
 | 核心 | `MessageHub` | 基于 RT-Thread 邮箱的组件间消息传递 |
 | 核心 | `Context` | 对话历史的追加、清空、滚动摘要压缩 |
 | 核心 | `Chat` | LLM API 通信与 SSE 行拆分，报文格式按协议模块分发 |
@@ -60,18 +61,37 @@ AgentAudio 由应用直接调用，不参与对话主循环。
 - 一次请求结束后调用 `compress_context(g_context, PKG_AGENT_MESSAGE_TRIM)`。排除 system 和已有摘要后的消息数超过阈值时，尝试压缩旧历史，保留策略见 3.3。
 - 处理期间 `g_agent_busy` 为真，摘要请求期间也保持为真。`agent_is_busy()` 在此期间返回 `RT_TRUE`，等待新消息时返回 `RT_FALSE`。MQTT 注入等外部模块可据此错峰。
 
+`agent_loop` 只做两件事：组装全局状态（`AgentFsm_t`），把状态机跑完。工具循环的流转规则在 `src/AgentFsm.c`，每个节点做完本状态的事就返回下一个节点，也就是状态图里的一条边。
+
+| 节点 | 做什么 | 下一个节点 |
+|---|---|---|
+| `INIT` | 清零轮次、重复签名缓存与工具计数 | `THINK` |
+| `THINK` | 调 `chat()`，失败最多重试 3 次，间隔 1 s、2 s | `FINISH` 或 `VALIDATE` |
+| `VALIDATE` | 校验工具调用的格式、参数与工具名，判定是执行、跳过还是记错误 | `ACT` 或 `OBSERVE` |
+| `ACT` | 把动作交给工具执行，读取返回值 | `OBSERVE` |
+| `OBSERVE` | 把结果或错误写成 `role=tool` 消息写回上下文 | `VALIDATE` 或 `GUARD` |
+| `GUARD` | 判轮次上限与连续无效轮数 | `THINK` 或 `FINISH` |
+| `FINISH` | 输出最终回答，或再发一次不带工具的请求 | `DONE` |
+| `DONE` | 结束 | 无 |
+
+![Agent 工具调用状态机](diagrams/agent-fsm.png)
+
+draw.io 源文件：[agent-fsm.drawio](diagrams/agent-fsm.drawio)
+
 `agent_loop` 的规则：
 
-- 工具循环最多 6 轮，`loop_max = 6` 写死在代码里，不是 Kconfig 选项。
-- 每轮调用 `chat()`。请求失败最多尝试 3 次，退避间隔为 1 s、2 s。
-- 没有 `tool_calls` 时，本轮回答即为最终回答。
-- 有 `tool_calls` 时，先追加带 `tool_calls` 的 assistant 消息，再逐个执行工具，把结果写成 `role=tool` 消息。
-- 同一工具、同一参数再次出现时跳过执行，回一条“结果未变化，请直接回答”的 tool 消息。
-- 同一次用户请求中，同一工具调用超过 3 次时仍会执行，但计为无效调用。
-- 连续两轮全部是重复或无效调用时，跳出循环，强制生成文本回答。
-- 重复签名缓存与工具计数在 `agent_loop` 开始时清零，不跨用户请求累计。
-- 达到 6 轮上限时，再发一次不带工具的请求，要求模型给出最终回答。
-- 工具不存在、参数不是合法 JSON、参数校验失败时，补一条 tool 错误消息，保证每个 `tool_call_id` 都有结果。
+- 工具循环最多 6 轮，`AGENT_LOOP_MAX` 定义在 `inc/AgentFsm.h` 里，不是 Kconfig 选项。
+- 每轮由 `THINK` 节点调一次 `chat()`。请求失败最多尝试 3 次，退避间隔为 1 s、2 s。
+- `THINK` 判定没有 `tool_calls` 时，本轮回答即为最终回答，转 `FINISH`。
+- 有 `tool_calls` 时，先追加带 `tool_calls` 的 assistant 消息，再由 `VALIDATE` 逐个校验、`ACT` 执行、`OBSERVE` 写回。
+- `VALIDATE` 发现同一工具、同一参数再次出现时跳过执行，回一条“结果未变化，请直接回答”的 tool 消息。
+- `VALIDATE` 发现同一工具调用超过 3 次时仍会执行，但计为无效调用。
+- `GUARD` 发现连续两轮全部是重复或无效调用时，跳出循环，强制生成文本回答。
+- 重复签名缓存与工具计数在 `INIT` 节点清零，不跨用户请求累计。
+- `GUARD` 判定达到 6 轮上限时转 `FINISH`，`FINISH` 再发一次不带工具的请求，要求模型给出最终回答。
+- 工具不存在、参数不是合法 JSON、参数校验失败时，`OBSERVE` 补一条 tool 错误消息，保证每个 `tool_call_id` 都有结果。
+
+状态机不碰邮箱和 TTS，这两件事由 `AgentLoop.c` 通过 `AgentFsmOps` 注入：`emit_answer` 输出最终回答，`notify` 投递兜底提示。
 
 兜底文本通过 `agent_notify()` 同时写入输出邮箱和流式打印路径。CLI 通道只打印流式内容，这样用户能看到“工具循环超限”“请求失败”等提示。
 
@@ -122,6 +142,19 @@ assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容�
 文件：`src/chat.c`、`inc/chat.h`
 
 `chat.c` 只管 HTTP 与 SSE 行拆分，报文格式交给 `src/utils/protocol/` 下的协议模块。当前协议由 `agent_protocol_get_ops()` 给出：OpenAI 走 `protocol_openai.c`，Anthropic 走 `protocol_anthropic.c`，切换见 3.8。
+
+请求地址填在 `PKG_AGENT_API_URL`。两种协议地址不同，板子直接发 HTTP，路径要写全：
+
+| 协议 | `PKG_AGENT_API_URL` 填什么 |
+|---|---|
+| OpenAI | `https://api.deepseek.com/chat/completions` |
+| Anthropic | `https://api.deepseek.com/anthropic/v1/messages` |
+
+Anthropic SDK 的 base_url 是 `https://api.deepseek.com/anthropic`，那不是请求端点。SDK 会在后面补上 `/v1/messages`，板子没有 SDK 这一层。少写这段路径，服务端返回 404。
+
+![LLM 协议选择与报文转换](diagrams/llm-protocol.png)
+
+draw.io 源文件：[llm-protocol.drawio](diagrams/llm-protocol.drawio)
 
 - 请求体、鉴权头、SSE 事件解析都由协议模块实现，`chat.c` 不区分协议。
 - `max_tokens` 由调用方指定：普通对话为 32 × 1024，上下文摘要请求为 512。
@@ -219,6 +252,7 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `inc/uti
 | `src/utils/file_op.c` | 文件操作线程与 `msh_agent_upload_download` |
 | `src/utils/stt.c` | 本地语音转写，见 3.9 |
 | `src/utils/tts.c` | 文本转语音，见 3.10 |
+| `src/utils/webclient_util.c` | webclient 超时设置，见 3.8 |
 
 协议目录按协议分文件：
 
@@ -242,9 +276,18 @@ Anthropic 的报文差异由 `protocol_anthropic.c` 处理：
 
 切换协议用 `agent_protocol_switch()`，它同时改写运行时配置，下次发请求就按新协议拼包。菜单里的 `PKG_AGENT_API_PROTOCOL_SEL` 只决定默认值。
 
+`agent_protocol_switch()` 不改请求地址。切成 Anthropic 之后，还要把 `PKG_AGENT_API_URL` 换成 `https://api.deepseek.com/anthropic/v1/messages`。地址填 `https://api.deepseek.com/anthropic` 会拿到 404，那只是 SDK 的 base_url。
+
 `file_op`、`stt`、`tts` 三个模块各带一个开关，分别是 `PKG_AGENT_MULTIMODAL_ENABLE`、`PKG_AGENT_STT_ENABLE`、`PKG_AGENT_TTS_ENABLE`。同名 .c 与 .h 用同一个宏整文件包住，`utils_internal.h` 也按这组宏决定是否导入。两个语音开关在 Kconfig 里位于多模态菜单之下，不开多模态就没有这两个宏。其余三个模块没有开关，始终编译。
 
 可调常量放在模块头里，用 `AGENT_` 前缀，例如 `AGENT_TTS_IO_BUF_SZ`、`AGENT_FILE_OP_TIMEOUT_MS`。.c 里不再写 `#define`，改缓冲大小或超时只动头文件。能在 menuconfig 里改的参数不放这里，它们保留 `PKG_AGENT_` 前缀，由 `rtconfig.h` 提供。
+
+webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webclient_util.c` 的 `agent_webclient_set_timeout()`：
+
+- 超时设在 `session->socket` 上，连接建立前调用会被丢掉，那时 socket 还是 -1；`connect()` 之后又会用写死的 6 秒覆盖一次。所以它只能在连接成功之后调用，socket 没连上时这个函数直接返回。
+- 毫秒换算成秒时算的是 `rt_tick_from_millisecond(ms) / 1000`，分母写死成 1000，等于假设 `RT_TICK_PER_SECOND` 是 1000。本工程是 100，请求的毫秒数被截掉 10 倍，15000 毫秒实际只设成 1 秒。封装按 `RT_TICK_PER_SECOND` 换算回去，15000 毫秒就是 15 秒。
+
+聊天、MCP、TTS、STT、文件上传下载五条链路都用这个封装。MCP 客户端和聊天请求分两段发：先连上并发请求头，设好超时，再发请求体。远端工具和模型服务端算得慢，这段等待必须算在超时里。
 
 日志按模块分路，每个 .c 的 `LOG_TAG` 写成 `Agent.utils.<模块名>`，ulog 输出能直接定位到模块，例如 `I/Agent.utils.tts: [tts] /tts.wav saved, 111404 bytes`。`tool_json.c` 不打日志，没有 `LOG_TAG`。
 
@@ -343,35 +386,42 @@ sequenceDiagram
     participant CH as 通道
     participant MB as MessageHub
     participant ML as main_loop
+    participant FSM as AgentFsm
     participant LLM as LLM API
     participant TL as 本地工具
 
     CH->>MB: put_message(输入邮箱)
     MB-->>ML: get_message
     ML->>ML: 追加 user 消息
+    ML->>FSM: agent_fsm_run()，进入 INIT
 
     loop 最多 6 轮
-        Note over ML,LLM: 请求失败最多重试 3 次，间隔 1 s、2 s
-        ML->>LLM: chat()，流式请求
-        LLM-->>ML: reasoning / content / tool_calls
+        Note over FSM,LLM: THINK 节点请求失败最多重试 3 次，间隔 1 s、2 s
+        FSM->>LLM: chat()，流式请求
+        LLM-->>FSM: reasoning / content / tool_calls
 
         alt 请求失败
-            ML->>MB: 输出失败提示
+            FSM->>MB: 输出失败提示
+            FSM->>FSM: 转 FINISH
         else 无 tool_calls
-            ML->>MB: 输出最终回答
-            Note over ML: 结束循环
+            FSM->>MB: 输出最终回答
+            Note over FSM: 转 FINISH，结束循环
         else 有 tool_calls
-            ML->>ML: 追加 assistant(tool_calls)
-            ML->>TL: 逐个执行工具
-            TL-->>ML: Messages_t
-            ML->>ML: 追加 tool 消息
+            FSM->>FSM: 追加 assistant(tool_calls)
+            loop 每个 tool_call
+                FSM->>FSM: VALIDATE 校验格式、参数与工具名
+                FSM->>TL: ACT 执行工具
+                TL-->>FSM: Messages_t
+                FSM->>FSM: OBSERVE 追加 tool 消息
+            end
+            FSM->>FSM: GUARD 判轮次上限与连续无效轮数
         end
     end
 
     opt 达到 6 轮或连续两轮无效调用
-        ML->>LLM: chat(tools=NULL) 收尾
-        LLM-->>ML: 纯文本回答
-        ML->>MB: 输出最终回答
+        FSM->>LLM: chat(tools=NULL) 收尾
+        LLM-->>FSM: 纯文本回答
+        FSM->>MB: 输出最终回答
     end
 
     MB-->>CH: get_message_timeout
@@ -468,6 +518,13 @@ sequenceDiagram
 | `PKG_AGENT_MESSAGE_TRIM` | 上下文压缩触发阈值，默认 6；排除 system 和摘要后，消息数严格大于此值才尝试压缩 |
 
 沿用 `PKG_AGENT_MESSAGE_TRIM` 配置名，帮助说明已改为摘要压缩语义。它不再表示固定保留条数，最近消息的保留范围见 3.3。
+
+`PKG_AGENT_API_URL` 按协议填不同的地址：
+
+| 协议 | 地址 |
+|---|---|
+| OpenAI | `https://api.deepseek.com/chat/completions` |
+| Anthropic | `https://api.deepseek.com/anthropic/v1/messages` |
 
 ### 多模态与语音
 

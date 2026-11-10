@@ -9,7 +9,7 @@
 ```text
 LLM 返回 tool_calls（函数名 + 参数 JSON）
         ↓
-agent_loop 按 function.name 查找工具节点
+VALIDATE 节点按 function.name 查找工具节点
         ↓
 校验参数 JSON，调用 tool_xxx(args, node)
         ↓
@@ -352,7 +352,7 @@ AGENT_TOOL_MODULE_EXPORT(word_count, word_count_tools)
 2. 每次执行前释放 `node->ret.messages`，节点会被复用。
 3. 用 `cJSON_GetObjectItemCaseSensitive` 取字段，用 `cJSON_IsXxx` 校验类型。
 4. 结果写入 `node->ret.messages`，文本使用 `TYPE_TEXT`。
-5. 不要保存 `args_obj` 指针。`agent_loop` 在调用返回后会执行 `cJSON_Delete`。
+5. 不要保存 `args_obj` 指针。状态机的 `OBSERVE` 节点在调用返回后会执行 `cJSON_Delete`。
 6. 失败时可以把错误原因作为文本结果返回，也可以让 `messages` 保持 `RT_NULL`。后者会由框架补一条通用错误消息。
 
 `node->ret.ret` 是工具侧的返回值约定，当前主循环不读取它。框架判断失败的依据是 `node->ret.messages == RT_NULL`。
@@ -463,7 +463,7 @@ AGENT_TOOL_MODULE_EXPORT(pwm, pwm_tools)
 框架对工具循环有四层限制：
 
 - 同一次用户请求中，同一工具、同一参数再次出现时，不再执行。框架会返回一条“结果未变化，请直接回答”的 tool 消息。最近 6 条调用签名会被记住。
-- 同一次用户请求中，同一工具调用超过 3 次时仍会执行，但计为无效调用。两组计数在每次 `agent_loop` 开始时清零。
+- 同一次用户请求中，同一工具调用超过 3 次时仍会执行，但计为无效调用。两组计数在状态机的 `INIT` 节点清零。
 - 连续两轮全部是重复或无效调用时，跳出工具循环，强制模型用文本回答。
 - 工具循环最多 6 轮。达到上限后，再发一次不带工具的请求，要求模型给出最终回答。
 

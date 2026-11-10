@@ -16,6 +16,7 @@
 10. [MSH 命令](#10-msh-命令)
 11. [已知差异](#11-已知差异)
 12. [Skill：技能模块](#12-skill技能模块)
+13. [AgentFsm：工具调用状态机](#13-agentfsm工具调用状态机)
 
 设备框架工具的完整说明见 [tool_device.md](./tool_device.md)，验证方法见 [testing.md](./testing.md)。
 
@@ -116,6 +117,15 @@ typedef struct MessageHub
 
 `chat.c` 只处理 HTTP 与 SSE 行拆分，请求体、鉴权头和事件解析都交给协议模块，位置在 `src/utils/protocol/`，统一入口 `inc/utils/protocol.h`。当前协议决定报文格式，切换接口见 2.3。
 
+请求地址填在 `PKG_AGENT_API_URL`。两种协议的地址不一样，板子直接发 HTTP，路径要写全：
+
+| 协议 | `PKG_AGENT_API_URL` 填什么 |
+|---|---|
+| OpenAI | `https://api.deepseek.com/chat/completions` |
+| Anthropic | `https://api.deepseek.com/anthropic/v1/messages` |
+
+Anthropic SDK 的 base_url 是 `https://api.deepseek.com/anthropic`，那不是请求端点。SDK 会在后面补上 `/v1/messages`，板子没有 SDK 这一层。少写这段路径，服务端返回 404。
+
 ### 2.1 类型
 
 ```c
@@ -173,6 +183,8 @@ typedef struct ChatResponse
 | `void agent_protocol_switch(agent_api_protocol_t protocol)` | 切换协议，同时改写运行时配置。下次发请求按新协议拼包 |
 
 `agent_api_protocol_t` 有两个值：`AGENT_API_PROTOCOL_OPENAI` 与 `AGENT_API_PROTOCOL_ANTHROPIC`。
+
+`agent_protocol_switch()` 只改报文格式，不改请求地址。切成 Anthropic 之后，`PKG_AGENT_API_URL` 还得换成 `https://api.deepseek.com/anthropic/v1/messages`，否则请求会打到 OpenAI 的路径上。
 
 消息在上下文里一律存规范格式，也就是 OpenAI 风格。协议模块负责转成自己的报文，解析时转回规范格式，因此两种协议下 `chat()` 的入参、返回结构和工具调用 JSON 完全一致，切换协议不需要改调用方。
 
@@ -439,6 +451,21 @@ if (agent_inject_text("topic: device/1/data\npayload: {\"temp\":42}") != RT_EOK)
 
 需要错峰时先判断 `agent_is_busy()`。
 
+### 4.9 MCP 客户端接口
+
+头文件：`inc/tools/tool_mcp/mcp_client.h`，仅在 `PKG_AGENT_TOOL_MCP_ENABLE` 打开时编译。
+
+| 函数 | 说明 |
+|---|---|
+| `rt_err_t mcp_client_connect(void)` | 连接服务端并完成 `initialize`、`notifications/initialized`、`tools/list` 握手，已连接时直接返回 `RT_EOK` |
+| `cJSON *mcp_client_tools(void)` | 远端工具表，`tools/list` 返回的数组，由客户端持有，未连接返回 `RT_NULL` |
+| `rt_err_t mcp_client_call(const char *name, cJSON *arguments, char **out_text)` | 调用一个远端工具，`name` 用远端原名，不带 `mcp_` 前缀 |
+| `void mcp_client_disconnect(void)` | 清掉会话 ID 和远端工具表，不发 HTTP 请求 |
+
+`mcp_client_call` 的 `arguments` 只读，函数内部自行拷贝。`out_text` 是 `rt_malloc` 出来的
+文本，调用方负责 `rt_free`。服务端报错或 `isError` 为真时返回 `-RT_ERROR`，`out_text` 里
+是失败原因。模块整体说明见 [tool_mcp.md](./tool_mcp.md)。
+
 ## 5. Channels：交互通道
 
 头文件：`inc/channels/*` 实现：`src/channels/*`
@@ -656,6 +683,18 @@ typedef struct
 
 文件操作线程名为 `fileop_wk`，栈大小由 `PKG_AGENT_FILE_OP_THREAD_SIZE` 配置，优先级 9。
 
+### 6.6 webclient 超时设置
+
+头文件：`inc/utils/webclient_util.h` 实现：`src/utils/webclient_util.c`
+
+| 函数 | 说明 |
+|---|---|
+| `void agent_webclient_set_timeout(struct webclient_session *session, int millisecond)` | 把会话的收发超时设成指定毫秒数。socket 没连上时直接返回，什么都不做 |
+
+包内五条链路都用它：聊天、MCP 客户端、TTS、STT、文件上传下载。调用点都在连接成功
+之后，因为 webclient v2.2.0 的超时只能设在已经连上的 socket 上。细节见
+[framework.md 的 3.8 节](./framework.md)。
+
 `utils.h` 的声明与实际符号存在差异，见第 11 节。
 
 ## 7. AgentAudio：音频驱动
@@ -788,3 +827,60 @@ struct agent_skill
 技能文件放在 `skills/` 目录，文件名去掉 `.md` 就是技能名。`skills/SConscript` 调用 `skills/embed_skills.py`，在构建时生成 `skill_data.c`，里面是 `agent_skill_table[]`、`agent_skill_table_count` 和 `agent_skill_catalog` 三份数据。技能目录由 menuconfig 选项 `PKG_AGENT_SKILL_DIR` 决定，默认 `skills`；SCons 参数 `agent_skill_dir` 可以只改这一次构建。
 
 目录会注入系统提示词，见第 3 节 `build_system_prompt`。上下文被压缩后摘要里只留技能名，要继续用某个技能，先重新调用 `skill` 加载。
+
+## 13. AgentFsm：工具调用状态机
+
+头文件：`inc/AgentFsm.h` 实现：`src/AgentFsm.c`
+
+这个模块只被 `src/AgentLoop.c` 调用。状态机不碰邮箱和 TTS，输出由 `AgentFsmOps` 注入。节点与边的流转见 [framework.md](./framework.md) 3.1。
+
+### 13.1 宏
+
+| 宏 | 值 | 说明 |
+|---|---|---|
+| `AGENT_LOOP_MAX` | 6 | 一次请求最多跑几轮工具循环 |
+| `AGENT_CHAT_RETRY_MAX` | 3 | 一次 LLM 请求最多重试几次 |
+| `AGENT_CHAT_MAX_TOKENS` | 32 × 1024 | 单次请求的 token 上限 |
+
+### 13.2 类型
+
+```c
+typedef enum AgentFsmState
+{
+    AGENT_FSM_INIT = 0,     /* 初始化：清轨迹与护栏计数 */
+    AGENT_FSM_THINK,        /* LLM 决策器：请求模型 */
+    AGENT_FSM_VALIDATE,     /* 校验动作格式与参数 */
+    AGENT_FSM_ACT,          /* 工具路由器：执行工具 */
+    AGENT_FSM_OBSERVE,      /* 观察记录器：结果写回轨迹 */
+    AGENT_FSM_GUARD,        /* 护栏：轮次上限与重复动作 */
+    AGENT_FSM_FINISH,       /* 收尾：输出最终回答 */
+    AGENT_FSM_DONE,         /* 结束 */
+    AGENT_FSM_STATE_MAX
+} AgentFsmState_t;
+
+typedef enum AgentFsmAction
+{
+    AGENT_FSM_ACTION_NONE = 0,
+    AGENT_FSM_ACTION_ERROR,      /* 参数或工具非法，记一条错误观察 */
+    AGENT_FSM_ACTION_DUPLICATE,  /* 重复调用，记一条「结果未变」观察 */
+    AGENT_FSM_ACTION_EXECUTE     /* 正常执行 */
+} AgentFsmAction_t;
+
+typedef struct AgentFsmOps
+{
+    void (*emit_answer)(Context_t context, ChatResponse_t resp, void (*on_context)(const char *text));
+    void (*notify)(const char *text, void (*on_context)(const char *text));
+} AgentFsmOps, *AgentFsmOps_t;
+```
+
+`AgentFsm_t` 是全局状态，字段分四组：依赖（`context`、`tools`、`ops`、三个流式回调）、轮次与终止（`loop_max`、`chat_retry_max`、`loop_cnt`、`attempt`、`dup_rounds`、`answered`、`resp`）、工具调用进度（`tool_count`、`tool_index`、`dup_hits`、`over_hits`）、当前动作（`action_kind`、`action_id`、`action_name`、`action_error`、`action_error_buf`、`action_args`、`action_tool`、`action_messages`）。
+
+### 13.3 接口
+
+| 函数 | 说明 |
+|---|---|
+| `void agent_fsm_run(AgentFsm_t *fsm)` | 从 `INIT` 开始跑完状态机，直到 `DONE` |
+
+调用前要先填好 `AgentFsm_t` 的依赖字段。`resp` 由状态机自己管理：每轮请求后由 `GUARD` 释放，收尾时由 `FINISH` 释放，调用方不用管。
+
+每次状态迁移都会打一行日志 `I/Agent.Fsm: [fsm] <当前节点> -> <下一个节点>`，便于在串口上回溯一轮对话的流转。

@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="drawio-skill" version="21.0.0" type="device">
+  <diagram name="LlmProtocol" id="llm-protocol-1">
+    <mxGraphModel dx="1422" dy="762"
+                   grid="1" gridSize="10"
+                   guides="1" tooltips="1" connect="1"
+                   arrows="1" fold="1"
+                   page="1" pageScale="1"
+                   pageWidth="1400" pageHeight="800"
+                   math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="bg" value=""
+                style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=none;"
+                vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="1320" height="720" as="geometry" />
+        </mxCell>
+
+        <mxCell id="title" value="LLM 协议选择与报文转换"
+                style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=22;fontStyle=1;fontColor=#333333;"
+                vertex="1" parent="1">
+          <mxGeometry x="80" y="60" width="700" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="subtitle" value="chat() 只拆 SSE 行，请求体、鉴权头和事件解析都交给协议模块。协议模块负责在规范格式与各家报文之间来回转换。"
+                style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontColor=#666666;"
+                vertex="1" parent="1">
+          <mxGeometry x="80" y="100" width="1100" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="canon" value="chat() 入参&#xa;规范格式（OpenAI 风格）&#xa;role + content&#xa;tool_calls 放工具调用"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="80" y="220" width="240" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dispatch" value="agent_protocol_get_ops()&#xa;agent_protocol_current()&#xa;读运行时配置&#xa;决定用哪个协议"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="220" width="240" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cmd" value="MSH 命令&#xa;agent_protocol openai | anthropic"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="430" width="240" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="openai" value="protocol_openai.c&#xa;POST /chat/completions&#xa;鉴权 Authorization: Bearer&#xa;结束标志 data: [DONE]"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="680" y="160" width="320" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="anthropic" value="protocol_anthropic.c&#xa;POST /v1/messages&#xa;鉴权 x-api-key + anthropic-version&#xa;结束标志 message_stop"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="680" y="360" width="320" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="url-openai" value="PKG_AGENT_API_URL&#xa;https://api.deepseek.com&#xa;/chat/completions"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="1060" y="160" width="260" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="url-anthropic" value="PKG_AGENT_API_URL&#xa;https://api.deepseek.com&#xa;/anthropic/v1/messages"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="1060" y="360" width="260" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note1" value="切换协议只改报文格式&#xa;agent_protocol_switch() 不改请求地址&#xa;换协议要同时改 PKG_AGENT_API_URL&#xa;少写 /v1/messages 会拿到 404"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;align=left;verticalAlign=top;spacingLeft=12;spacingTop=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="80" y="560" width="560" height="160" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note2" value="响应都转回规范格式&#xa;chat() 的入参、返回结构和工具调用 JSON&#xa;在两种协议下完全一样&#xa;切换协议不需要改调用方"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;align=left;verticalAlign=top;spacingLeft=12;spacingTop=10;"
+                vertex="1" parent="1">
+          <mxGeometry x="680" y="560" width="640" height="160" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-canon-dispatch" value=""
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="canon" target="dispatch">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-dispatch-openai" value="OpenAI"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.35;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="dispatch" target="openai">
+          <mxGeometry x="0" y="-20" relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-dispatch-anthropic" value="Anthropic"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.65;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="dispatch" target="anthropic">
+          <mxGeometry x="0" y="20" relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-cmd-dispatch" value="切换"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#999999;fontSize=12;"
+                edge="1" parent="1" source="cmd" target="dispatch">
+          <mxGeometry x="0" y="-14" relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="e-openai-url" value="POST"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="openai" target="url-openai">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-anthropic-url" value="POST"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="anthropic" target="url-anthropic">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

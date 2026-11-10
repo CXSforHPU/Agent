@@ -401,7 +401,7 @@ draw.io 源文件：[vsnprintf-select-flow.drawio](diagrams/vsnprintf-select-flo
 | 阈值告警语义 | 边沿触发 + 冷却：越界首次告警、持续越界不重复、回落复位、冷却到期可再告警；原因写进注入文本的 `forward reason` 字段 |
 | 按需总结 | 例行数据不丢：每话题保留最近 `HISTORY_DEPTH`(默认 8) 条原始报文，`mqtt_history` **只读**汇总「最近消息 + 数值 min/max/avg/last + 收发计数」，`mqtt_receive` 则取出并消费缓冲；`mqtt_tool status` 另给出每话题 `last payload`、`suppressed` 计数与规则状态 |
 | 动态增删订阅 | 运行期可随时增删话题（LLM 工具 `mqtt_subscribe` / MSH `mqtt_tool sub|unsub` / 应用层 API `mqtt_tool_add_topic`、`mqtt_tool_remove_topic`）：已连接时立即发 SUBSCRIBE/UNSUBSCRIBE，未连接时先登记、连接后自动订阅；删除后 paho 槽位被释放并可被后续订阅复用 |
-| 请求失败重试 | `agent_loop` 对失败请求自动重试 3 次（间隔 1s/2s），因此 TLS 抖动（`mbedtls NET_RECV_FAILED`）不再直接丢弃整轮对话；已流式输出的部分内容在重试时可能重复打印 |
+| 请求失败重试 | 状态机的 `THINK` 节点对失败请求自动重试 3 次（间隔 1s/2s），因此 TLS 抖动（`mbedtls NET_RECV_FAILED`）不再直接丢弃整轮对话；已流式输出的部分内容在重试时可能重复打印 |
 | agent 未运行 | 收到的消息不注入，改存 poll 缓冲（日志 `agent not running, buffer mqtt message`），agent 启动后可用 `mqtt_receive` 取回 |
 | 输入 mailbox 满 | 注入失败时消息回落到 poll 缓冲，不会泄漏内存（`AgentLoop` 对 `put_message` 失败也会自行释放） |
 | 长度限制 | 发布长度 = `min(MAX_PUB_LEN, buf_size, pipe_buf) - sizeof(MQTTMessage) - topic - 1`，超出直接返回错误而不截断 |
@@ -497,7 +497,8 @@ payload: {"temp":25}
 |---|---|
 | `inc/AgentRuntime.h`（新增） | `agent_get_message_hub()` / `agent_is_running()` / `agent_is_busy()`：供工具层注入消息并做错峰 |
 | `inc/utils.h` + `src/utils/message.c` | **公共注入入口 `agent_inject_text()`**：把一段文本作为用户消息交给 agent。原为 MQTT 模块私有的 `mqtt_inject_text()`，现提升为框架公共 API，任何工具/驱动都能复用（MQTT 路由线程仍然调用它，`tool_mqtt_route.c` 只保留本模块自己的注入计数 `s_inject_total` 与错峰时间戳 `s_last_inject_tick`） |
-| `src/AgentLoop.c` | 实现上述访问器；`cleanup_agent` 先摘除 hub 全局引用再销毁（避免注入方访问已释放对象）；输出 mailbox 满时释放消息（避免泄漏）；请求失败自动重试 3 次；工具循环防呆（重复调用跳过、上限 6、强制文本收尾） |
+| `src/AgentLoop.c` | 实现上述访问器；`cleanup_agent` 先摘除 hub 全局引用再销毁（避免注入方访问已释放对象）；输出 mailbox 满时释放消息（避免泄漏） |
+| `src/AgentFsm.c` | 工具调用状态机：请求失败自动重试 3 次；工具循环防呆（重复调用跳过、上限 6、强制文本收尾） |
 | `inc/tools/tools.h` | `#ifdef PKG_AGENT_TOOL_MQTT_ENABLE` 下包含 `tool_mqtt.h` |
 | `src/tools/tool_mqtt/tool_mqtt_tools.c` | 七个工具的描述与参数构造函数、描述符表，文件末尾用 `AGENT_TOOL_MODULE_EXPORT(mqtt, mqtt_tools)` 登记；本文件只在 `PKG_AGENT_TOOL_MQTT_ENABLE` 打开时参与编译 |
 | `SConscript` | 启用宏后遍历 `src/tools/tool_mqtt/*.c` 编译，并加入 `inc/tools/tool_mqtt` 头文件路径 |
@@ -585,7 +586,7 @@ else
 | 想临时每条都看 | `mqtt_tool sub <topic> auto`（或让 agent 用 `mqtt_subscribe mode=auto`），验证完改回 `filter` |
 | 消息被截断 | payload 超过 `PAYLOAD_MAX_LEN`（256），`mqtt_receive` 会标注 `(truncated)` |
 | 只订阅成功 1 个话题 | `PKG_PAHOMQTT_SUBSCRIBE_HANDLERS` 被改回 1，改回 4 即可 |
-| **`mbedtls_client_read data error, return -0x4c` → `chat: POST failed, http status=-76` → `Chat request failed, terminating this case`** | `-0x4c` = `MBEDTLS_ERR_NET_RECV_FAILED`，即 HTTPS/TLS 连接在读取响应时被对端或网络重置，与 MQTT 消息内容无关。常见诱因是**请求过于密集**（设备周期性上报 → 每条消息触发一次 LLM 请求，容易被服务端/代理限流重置）。已在两侧缓解：① 注入侧错峰 + 合并（default 1s 间隔、批量 5 条、agent 忙时等待空闲）；② 框架侧 `agent_loop` 失败自动重试 3 次。若仍频繁出现，可调大 `PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS`，或在设备侧降低上报频率/只上报变化量 |
+| **`mbedtls_client_read data error, return -0x4c` → `chat: POST failed, http status=-76` → `Chat request failed, terminating this case`** | `-0x4c` = `MBEDTLS_ERR_NET_RECV_FAILED`，即 HTTPS/TLS 连接在读取响应时被对端或网络重置，与 MQTT 消息内容无关。常见诱因是**请求过于密集**（设备周期性上报 → 每条消息触发一次 LLM 请求，容易被服务端/代理限流重置）。已在两侧缓解：① 注入侧错峰 + 合并（default 1s 间隔、批量 5 条、agent 忙时等待空闲）；② 框架侧状态机 `THINK` 节点失败自动重试 3 次。若仍频繁出现，可调大 `PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS`，或在设备侧降低上报频率/只上报变化量 |
 | **`mqtt_tool start` 后整机卡死（shell 无响应）** | paho 工作线程栈不足：`RT_PKG_MQTT_THREAD_STACK_SIZE` 需 ≥ 8192。栈溢出会破坏堆元数据，导致后续 `rt_malloc` 在大块请求上死循环。已本项目中修复；排查方法见下 |
 | 终端输入较长一句话后出现 `Function[_rt_mutex_take]: scheduler is not available` 断言（CLI 通道） | `CLI_THREAD_STACK_SIZE` 过小（原 1024）：CLI 线程栈上有 512 字节输入缓冲，且每敲一键都要经 `rt_kprintf` 重绘整行，长输入会栈溢出，溢出被内核栈检查捕获后又在调度器上下文中调用 ulog 进而断言。已调整为 4096（`inc/channels/CLI.h`） |
 
@@ -673,9 +674,9 @@ Summarize the trend above and give the user a short assessment of the recent sit
 防呆逻辑的真实现场证据（修复过程中抓到的一次运行，模型连续三次用完全相同的参数调用 `mqtt_history`）：
 
 ```
-W/Agent.AgentLoop: duplicated tool call skipped: mqtt_history({"topic": "agent/sub"})
-W/Agent.AgentLoop: duplicated tool call skipped: mqtt_history({"topic": "agent/sub"})
-W/Agent.AgentLoop: repeated tool calls detected, forcing a final answer
+W/Agent.Fsm: duplicated tool call skipped: mqtt_history({"topic": "agent/sub"})
+W/Agent.Fsm: duplicated tool call skipped: mqtt_history({"topic": "agent/sub"})
+W/Agent.Fsm: repeated tool calls detected, forcing a final answer
 ```
 
 之后模型输出了正常回答、本轮结束。另外脚本用「要求模型不停重试、不许回答」的对抗性提问验证过一次：模型直接拒绝该请求并反问用户（0 次工具调用），这条路已经很难再触发死循环。**按工具名计数（同一工具 >3 次即视为无效轮次）这条分支目前只有代码审查、未被运行现场触发**，如需更强验证，可以写一个返回固定 `tool_calls` 的假 endpoint 来构造。
@@ -697,7 +698,7 @@ W/Agent.AgentLoop: repeated tool calls detected, forcing a final answer
 | `poll` 模式 + `mqtt_receive` | 缓冲/过滤/计数正确（`buffered=` / `rx_total=` / `dropped=`） |
 | **filter 门控**（9 条消息：3 例行 + 3 越界 + 1 提问 + 2 恢复/再越界） | 结果 `rx=9 suppressed=6`：3 条例行全部本地拦截不调用 LLM；`hum=35` 首次越界放行；`hum=36/37` 冷却内不重复打扰；提问报文放行；回落复位后冷却到期 `hum=41` 再次放行 |
 | **对话式建规则** | 用自然语言要求「盯着湿度超过 30 就提醒」时，模型自行调用 `mqtt_rule`：`[Local Tool mqtt_rule Execution Result] rule set: topic=agent/sub value=hum > 30` |
-| **请求失败自动重试** | 实测同一次对话中出现 `mbedtls ... -0x4c` → `W/Agent.AgentLoop: Chat request failed (attempt 1/3), retry in 1000 ms` → 重试后成功完成工具调用（不再 `terminating this case`） |
+| **请求失败自动重试** | 实测同一次对话中出现 `mbedtls ... -0x4c` → `W/Agent.Fsm: Chat request failed (attempt 1/3), retry in 1000 ms` → 重试后成功完成工具调用（不再 `terminating this case`） |
 | **近期汇总可读原始 payload** | `mqtt_tool sim agent/sub {"hum":41}` 等 4 条（全部被 filter 拦截，`forwarded=0 filtered=4`）后 `mqtt_tool history` 输出：逐条 `Ns ago: {"hum":47}` + `numeric summary: hum: n=4 min=38 max=47 avg=42.5 last=47`，只读、可重复读取 |
 | **动态增删订阅（运行期）** | `sub device/1/data poll` → `Subscribe #1 ... OK!`；`sub device/+/temp filter` → `Subscribe #2 ... OK!`；`unsub device/+/temp` → `Unsubscribe #2 ... OK!`；再 `sub device/2/data` 复用回 `Subscribe #2 ... OK!`（证明槽位被正确释放） |
 | 退订 | 日志 `Unsubscribe #2 device/+/data OK!`（真实 UNSUBSCRIBE 报文） |

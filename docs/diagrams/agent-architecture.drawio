@@ -111,7 +111,7 @@
                 vertex="1" parent="1">
           <mxGeometry x="427" y="250" width="95" height="35" as="geometry" />
         </mxCell>
-        <mxCell id="core-tool" value="工具调度"
+        <mxCell id="core-tool" value="状态机流转"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
                 vertex="1" parent="1">
           <mxGeometry x="217" y="295" width="95" height="35" as="geometry" />
