@@ -273,8 +273,8 @@ static void cgi_get_config_handler(struct webnet_session *session)
                             safe_string(get_dynamic_agent_api_key()));
     cJSON_AddStringToObject(json, "modelName",
                             safe_string(get_dynamic_agent_model_name()));
-    cJSON_AddStringToObject(json, "apiUrl",
-                            safe_string(get_dynamic_agent_api_url()));
+    cJSON_AddStringToObject(json, "baseUrl",
+                            safe_string(get_dynamic_agent_base_url()));
 
     if (send_json_object(session, 200, "OK", json) != RT_EOK)
     {
@@ -295,10 +295,10 @@ static void cgi_config_handler(struct webnet_session *session)
     cJSON *item;
     const char *api_key;
     const char *model_name;
-    const char *api_url;
+    const char *base_url;
     char *api_key_copy = RT_NULL;
     char *model_name_copy = RT_NULL;
-    char *api_url_copy = RT_NULL;
+    char *base_url_copy = RT_NULL;
 
     if (session == RT_NULL || session->request == RT_NULL)
     {
@@ -331,7 +331,7 @@ static void cgi_config_handler(struct webnet_session *session)
 
     api_key = safe_string(get_dynamic_agent_api_key());
     model_name = safe_string(get_dynamic_agent_model_name());
-    api_url = safe_string(get_dynamic_agent_api_url());
+    base_url = safe_string(get_dynamic_agent_base_url());
 
     item = cJSON_GetObjectItem(request_json, "apiKey");
     if (item != RT_NULL)
@@ -361,7 +361,7 @@ static void cgi_config_handler(struct webnet_session *session)
         model_name = cJSON_GetStringValue(item);
     }
 
-    item = cJSON_GetObjectItem(request_json, "apiUrl");
+    item = cJSON_GetObjectItem(request_json, "baseUrl");
     if (item != RT_NULL)
     {
         if (!cJSON_IsString(item) ||
@@ -369,10 +369,10 @@ static void cgi_config_handler(struct webnet_session *session)
             cJSON_GetStringValue(item)[0] == '\0')
         {
             send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                             "error", "apiUrl must be a non-empty string");
+                             "error", "baseUrl must be a non-empty string");
             goto cleanup;
         }
-        api_url = cJSON_GetStringValue(item);
+        base_url = cJSON_GetStringValue(item);
     }
 
     if (api_key[0] == '\0')
@@ -384,17 +384,17 @@ static void cgi_config_handler(struct webnet_session *session)
 
     api_key_copy = rt_strdup(api_key);
     model_name_copy = rt_strdup(model_name);
-    api_url_copy = rt_strdup(api_url);
+    base_url_copy = rt_strdup(base_url);
     if (api_key_copy == RT_NULL ||
         model_name_copy == RT_NULL ||
-        api_url_copy == RT_NULL)
+        base_url_copy == RT_NULL)
     {
         send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
                          "error", "Insufficient memory for configuration");
         goto cleanup;
     }
 
-    agent_config_set(api_key_copy, model_name_copy, api_url_copy);
+    agent_config_set(api_key_copy, model_name_copy, base_url_copy);
 
     if (context != RT_NULL)
     {
@@ -410,14 +410,14 @@ static void cgi_config_handler(struct webnet_session *session)
 
     LOG_I("LLM configuration updated: MODEL=%s, URL=%s",
           safe_string(get_dynamic_agent_model_name()),
-          safe_string(get_dynamic_agent_api_url()));
+          safe_string(get_dynamic_agent_base_url()));
 
     send_simple_json(session, 200, "OK", RT_TRUE,
                      "message", "Configuration updated successfully");
 
 cleanup:
-    if (api_url_copy != RT_NULL)
-        rt_free(api_url_copy);
+    if (base_url_copy != RT_NULL)
+        rt_free(base_url_copy);
     if (model_name_copy != RT_NULL)
         rt_free(model_name_copy);
     if (api_key_copy != RT_NULL)
@@ -609,7 +609,7 @@ static void show_llm_config(void)
     LOG_I("API Key: %s", api_key != RT_NULL && api_key[0] != '\0'
                          ? "SET" : "NOT SET");
     LOG_I("Model Name: %s", safe_string(get_dynamic_agent_model_name()));
-    LOG_I("API URL: %s", safe_string(get_dynamic_agent_api_url()));
+    LOG_I("Base URL: %s", safe_string(get_dynamic_agent_base_url()));
     LOG_I("Message Hub: %s", message_hub != RT_NULL ? "READY" : "NULL");
     LOG_I("Context: %s", context != RT_NULL ? "READY" : "NULL");
     LOG_I("================================");

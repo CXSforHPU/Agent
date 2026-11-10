@@ -5,7 +5,7 @@
 
 #define AGENT_CFG_API_KEY_MAX     128
 #define AGENT_CFG_MODEL_MAX       128
-#define AGENT_CFG_API_URL_MAX     128
+#define AGENT_CFG_BASE_URL_MAX    128
 
 /* LLM 服务协议 */
 typedef enum
@@ -18,7 +18,7 @@ typedef struct agent_runtime_config
 {
     char api_key[AGENT_CFG_API_KEY_MAX];
     char model_name[AGENT_CFG_MODEL_MAX];
-    char api_url[AGENT_CFG_API_URL_MAX];
+    char base_url[AGENT_CFG_BASE_URL_MAX];
     agent_api_protocol_t protocol;
     rt_bool_t is_configured;
 } rt_align(RT_ALIGN_SIZE) agent_runtime_config_t;
@@ -33,9 +33,9 @@ agent_runtime_config_t *agent_config_get(void);
  * @brief  写入运行时配置
  * @param  api_key    接口密钥
  * @param  model_name 模型名
- * @param  api_url    请求端点，完整 URL 含路径
+ * @param  base_url   服务根地址，不含路径
  */
-void agent_config_set(const char *api_key, const char *model_name, const char *api_url);
+void agent_config_set(const char *api_key, const char *model_name, const char *base_url);
 
 /*
  * @brief  取当前接口密钥
@@ -50,10 +50,19 @@ const char *get_dynamic_agent_api_key(void);
 const char *get_dynamic_agent_model_name(void);
 
 /*
- * @brief  取当前请求端点
- * @return URL 字符串，运行时未配置时返回 Kconfig 里的默认值
+ * @brief  取当前协议的服务根地址
+ * @return base URL 字符串，运行时未配置时返回当前协议在 Kconfig 里的默认值
  */
-const char *get_dynamic_agent_api_url(void);
+const char *get_dynamic_agent_base_url(void);
+
+/*
+ * @brief  拼出当前协议的完整请求地址
+ * @note   在 base URL 后面接上协议路径：OpenAI 接 /chat/completions，
+ *         Anthropic 接 /v1/messages。返回值指向函数内部的静态缓冲，
+ *         同一时刻只能被一个请求线程使用。
+ * @return 完整请求地址
+ */
+const char *get_dynamic_agent_request_url(void);
 
 /*
  * @brief  取当前协议

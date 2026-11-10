@@ -107,7 +107,7 @@ ChatResponse_t chat(
      * 设在已经连上的 socket 上，连之前设会被丢掉，实际用的还是它写死的
      * 6 秒；模型的响应慢的时候 6 秒不够用。
      */
-    resp_status = webclient_post(webSession, get_dynamic_agent_api_url(), RT_NULL, 0);
+    resp_status = webclient_post(webSession, get_dynamic_agent_request_url(), RT_NULL, 0);
     if (resp_status < 0)
     {
         LOG_E("chat: POST connect failed, status=%d\n", resp_status);
