@@ -49,7 +49,15 @@
    超时只是兜底（例如 wavplayer 卡在坏文件上），超时就强制停掉旧播放 */
 #define AGENT_TTS_PLAY_WAIT_MS    60000
 
+/*
+ * @brief  启动回复播报线程
+ */
 void agent_tts_speak_init(void);
+
+/*
+ * @brief  把一段文本排进播报队列
+ * @param  text 要播报的文本
+ */
 void agent_tts_speak(const char *text);
 
 #endif // PKG_AGENT_TTS_AUTO_PLAY

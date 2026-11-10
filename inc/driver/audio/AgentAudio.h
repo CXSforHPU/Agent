@@ -32,17 +32,56 @@ extern const char* agent_audio_option[];
 #define REC_CHANNELS        2
 #define REC_SAMPLE_BITS     16
 
-/* 播放接口，wavplay内部自带线程，调用不会阻塞 */
+/*
+ * @brief  播放一个 WAV 文件
+ * @param  path 文件路径
+ * @return RT_EOK 成功，负值为错误码
+ */
 int agent_driver_audio_play(const char* path);
-/* 阻塞等到当前这条播完；timeout_ms 内没播完返回 -RT_ETIMEOUT */
+
+/*
+ * @brief  阻塞等当前这条播完
+ * @param  timeout_ms 等待毫秒数
+ * @return RT_EOK 播完，-RT_ETIMEOUT 超时
+ */
 int agent_driver_audio_play_wait(rt_int32_t timeout_ms);
+
+/*
+ * @brief  停止播放
+ * @return RT_EOK 成功，负值为错误码
+ */
 int agent_driver_audio_stop(void);
+
+/*
+ * @brief  暂停播放
+ * @return RT_EOK 成功，负值为错误码
+ */
 int agent_driver_audio_pause(void);
+
+/*
+ * @brief  恢复播放
+ * @return RT_EOK 成功，负值为错误码
+ */
 int agent_driver_audio_resume(void);
+
+/*
+ * @brief  设置音量
+ * @param  vol 音量值，取值范围由驱动决定
+ * @return RT_EOK 成功，负值为错误码
+ */
 int agent_driver_audio_set_volume(int vol);
 
-/* 录音：内部新开线程执行，不阻塞调用者线程 */
+/*
+ * @brief  开始录音
+ * @param  path 录音文件路径
+ * @return RT_EOK 成功，负值为错误码
+ */
 int agent_driver_audio_record(const char* path);
+
+/*
+ * @brief  停止录音
+ * @return RT_EOK 成功，负值为错误码
+ */
 int agent_driver_audio_record_stop(void);
 
 #endif /*__AGENT_AUDIO_H__*/

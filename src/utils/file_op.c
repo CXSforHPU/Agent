@@ -101,7 +101,7 @@ static int agent_post_file_stream(const char *URI, const char *filename,
     /* webclient_set_timeout() 作用在 session->socket 上，必须在 connect
        成功之后调用；之前放在 post 前时 socket 还是 -1，设置不生效，实际仍是
        webclient 默认的 6s 收发超时，大文件或慢响应会中途超时。 */
-    webclient_set_timeout(session, AGENT_FILE_OP_TIMEOUT_MS);
+    agent_webclient_set_timeout(session, AGENT_FILE_OP_TIMEOUT_MS);
 
     /* 1. 发送 multipart 头部 */
     wlen = rt_snprintf((char *)io_buf, AGENT_FILE_OP_IO_BUF_SZ,
@@ -134,7 +134,6 @@ static int agent_post_file_stream(const char *URI, const char *filename,
     }
 
     /* 处理响应 */
-    extern int webclient_handle_response(struct webclient_session *session);
     if (webclient_handle_response(session) != 200)
     {
         rc = -WEBCLIENT_ERROR;

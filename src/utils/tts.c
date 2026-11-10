@@ -28,8 +28,6 @@ static struct webclient_session *tts_post(const char *text, rt_bool_t stream)
     rt_off_t body_len;
     int resp_code;
 
-    extern int webclient_handle_response(struct webclient_session *session);
-
     root = cJSON_CreateObject();
     if (root == RT_NULL) return RT_NULL;
     cJSON_AddStringToObject(root, "text", text);
@@ -62,7 +60,7 @@ static struct webclient_session *tts_post(const char *text, rt_bool_t stream)
         LOG_W("[tts] post connect fail");
         goto fail;
     }
-    webclient_set_timeout(session, AGENT_TTS_TIMEOUT_MS);
+    agent_webclient_set_timeout(session, AGENT_TTS_TIMEOUT_MS);
     if (webclient_write(session, body, (size_t)body_len) != (int)body_len)
     {
         LOG_W("[tts] send body fail");
@@ -449,6 +447,10 @@ static void tts_play_stream(const char *text)
     webclient_close(session);
 }
 
+/*
+ * @brief  播报线程入口，从队列取文本逐条合成并播放
+ * @param  arg 未使用
+ */
 static void tts_speak_work_thread(void *arg)
 {
     char *text = RT_NULL;

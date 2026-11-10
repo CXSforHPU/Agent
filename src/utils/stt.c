@@ -78,7 +78,7 @@ const char *agent_stt_transcribe(const char *path)
 
     /* 首次识别要加载 whisper 模型，可能耗时数十秒；socket 已连上后再把
        收发超时放宽到 120s（见 agent_post_file_stream 中的说明）。 */
-    webclient_set_timeout(session, AGENT_STT_TIMEOUT_MS);
+    agent_webclient_set_timeout(session, AGENT_STT_TIMEOUT_MS);
 
     /* prefix */
     wlen = rt_snprintf((char *)io_buf, AGENT_STT_IO_BUF_SZ,
@@ -97,7 +97,6 @@ const char *agent_stt_transcribe(const char *path)
     wlen = rt_snprintf((char *)io_buf, AGENT_STT_IO_BUF_SZ, "\r\n--%s--\r\n", boundary);
     if (webclient_write(session, io_buf, wlen) != wlen) { rc = -1; goto out; }
 
-    extern int webclient_handle_response(struct webclient_session *session);
     resp_code = webclient_handle_response(session);
     if (resp_code != 200)
     {
