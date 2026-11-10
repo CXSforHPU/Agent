@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="drawio-skill" version="21.0.0" type="device">
+  <diagram name="MCP Gateway" id="mcp-gateway-1">
+    <mxGraphModel dx="1422" dy="762"
+                   grid="1" gridSize="10"
+                   guides="1" tooltips="1" connect="1"
+                   arrows="1" fold="1"
+                   page="1" pageScale="1"
+                   pageWidth="1400" pageHeight="1000"
+                   math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="background" value=""
+                style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=none;"
+                vertex="1" parent="1">
+          <mxGeometry x="40" y="40" width="1320" height="900" as="geometry" />
+        </mxCell>
+
+        <mxCell id="summary" value="网关分成传输、用例、工具表、执行、裁剪五层，依赖向里指，工具层不碰网关&#xa;板端只配一个地址：PKG_AGENT_MCP_SERVER_URL&#xa;所有工具都继承 Tool，execute 是协程，阻塞的活儿丢到线程里跑"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=16;align=left;verticalAlign=middle;spacingLeft=16;"
+                vertex="1" parent="1">
+          <mxGeometry x="70" y="60" width="1260" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h-device" value="设备端"
+                style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1a1a1a;"
+                vertex="1" parent="1">
+          <mxGeometry x="70" y="170" width="180" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h-config" value="配置层"
+                style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1a1a1a;"
+                vertex="1" parent="1">
+          <mxGeometry x="300" y="170" width="190" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h-gateway" value="MCP 网关　mcp_gateway.py"
+                style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1a1a1a;"
+                vertex="1" parent="1">
+          <mxGeometry x="540" y="170" width="230" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h-tools" value="工具层　tools/"
+                style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1a1a1a;"
+                vertex="1" parent="1">
+          <mxGeometry x="820" y="170" width="220" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="h-external" value="外部依赖"
+                style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=15;fontStyle=1;fontColor=#1a1a1a;"
+                vertex="1" parent="1">
+          <mxGeometry x="1090" y="170" width="240" height="30" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-device" value="RT-Thread 设备端&#xa;mcp_client.c"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="70" y="220" width="180" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-handshake" value="握手&#xa;initialize&#xa;notifications/initialized&#xa;再取 tools/list"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="70" y="370" width="180" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="a-render" value="回包渲染&#xa;文字直接拼&#xa;媒体渲染成地址"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="70" y="550" width="180" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c-cli" value="命令行参数&#xa;--host、--port、--root&#xa;优先级最高"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="300" y="380" width="190" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c-env" value="环境变量&#xa;MCP_WEB_SEARCH_URL 等&#xa;优先级次之"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="300" y="530" width="190" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c-set" value="Settings&#xa;config.py 的配置对象&#xa;注册时交给工具"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="300" y="680" width="190" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="b-http" value="传输层&#xa;gateway/transport.py&#xa;HTTP 端点 /mcp&#xa;会话 ID 回带"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="540" y="220" width="230" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="b-svc" value="用例层&#xa;gateway/service.py&#xa;方法分发、找工具、装回包"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="540" y="320" width="230" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="b-reg" value="工具表&#xa;gateway/registry.py&#xa;注册、编对外名字、按名字找"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="540" y="420" width="230" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="b-loop" value="执行层&#xa;gateway/runtime.py&#xa;后台线程跑 asyncio"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="540" y="520" width="230" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="b-clip" value="裁剪层&#xa;gateway/shaping.py&#xa;文字按字节截断&#xa;板端缓冲 32 KB"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="540" y="620" width="230" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="b-fs" value="文件服务器&#xa;图片与音频落盘&#xa;回包只留地址"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="540" y="720" width="230" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t-base" value="Tool 基类&#xa;tools/base.py&#xa;所有工具都是它的子类"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="820" y="220" width="220" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t-ctx" value="上下文&#xa;tools/context.py&#xa;文件服务器和配置"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="820" y="320" width="220" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t-file" value="内置文件工具&#xa;tools/file"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="820" y="420" width="220" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t-user" value="用户工具&#xa;tools/user_tools"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="820" y="520" width="220" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t-web" value="联网搜索&#xa;web_search_tool.py"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;fontStyle=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="820" y="620" width="220" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t-win" value="Windows-MCP&#xa;tools/command"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="820" y="720" width="220" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="t-odr" value="ODR 服务器&#xa;tools/odr"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="820" y="820" width="220" height="85" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-disk" value="本机磁盘&#xa;文件工具的根目录"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="1090" y="220" width="240" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-search" value="搜索服务&#xa;SearXNG、Bing、Brave 或通用 JSON 接口"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="1090" y="370" width="240" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-servers" value="MCP 服务器进程&#xa;stdio 传输"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="1090" y="520" width="240" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-odr" value="ODR 注册表&#xa;Windows 11 的设备代理注册表"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="1090" y="670" width="240" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-device-http" value="POST /mcp"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="a-device" target="b-http">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-device-handshake" value="握手"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#999999;fontSize=12;"
+                edge="1" parent="1" source="a-device" target="a-handshake">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-handshake-render" value="调用"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#999999;fontSize=12;"
+                edge="1" parent="1" source="a-handshake" target="a-render">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-config-svc" value="配置"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="c-set" target="b-svc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-http-svc"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="b-http" target="b-svc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-svc-reg" value="找工具"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="b-svc" target="b-reg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-reg-loop" value="执行"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="b-reg" target="b-loop">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-loop-clip" value="裁回包"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="b-loop" target="b-clip">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-clip-fs" value="媒体落盘"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="b-clip" target="b-fs">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-loop-tool" value="execute"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.75;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=12;"
+                edge="1" parent="1" source="b-loop" target="t-base">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-ctx-tool" value="上下文"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;strokeColor=#999999;fontSize=12;"
+                edge="1" parent="1" source="t-ctx" target="t-base">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-file-disk"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="t-file" target="e-disk">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-web-search"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="t-web" target="e-search">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-win-servers"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="t-win" target="e-servers">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-odr-registry"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="t-odr" target="e-odr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -28,6 +28,9 @@ INC_TOOL_MQTT = os.path.join(INC_TOOLS, "tool_mqtt")
 
 SRC_TOOL_DEVICE = os.path.join(SRC_TOOLS, "tool_device")
 
+SRC_TOOL_MCP = os.path.join(SRC_TOOLS, "tool_mcp")
+INC_TOOL_MCP = os.path.join(INC_TOOLS, "tool_mcp")
+
 SRC_UTILS = os.path.join(SRC_ROOT, "utils")
 
 # LLM 协议模块目录
@@ -95,6 +98,14 @@ if GetDepend(["PKG_AGENT_TOOL_MQTT_ENABLE"]):
         if filename.endswith(".c") and os.path.isfile(file_fullpath):
             src.append(file_fullpath)
     CPPPATH.append(INC_TOOL_MQTT)
+
+# MCP客户端工具（连接远端 MCP 服务端，把远端工具注册进 agent 工具表）
+if GetDepend(["PKG_AGENT_TOOL_MCP_ENABLE"]):
+    for filename in os.listdir(SRC_TOOL_MCP):
+        file_fullpath = os.path.join(SRC_TOOL_MCP, filename)
+        if filename.endswith(".c") and os.path.isfile(file_fullpath):
+            src.append(file_fullpath)
+    CPPPATH.append(INC_TOOL_MCP)
 
 # 设备框架工具（总开关收整个目录，每类设备的 PKG_AGENT_TOOL_DEVICE_XXX 开关写在文件里，
 # 关掉即整文件不参与编译，模块自注册宏也就不会执行）

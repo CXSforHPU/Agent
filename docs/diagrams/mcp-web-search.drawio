@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="drawio-skill" version="21.0.0" type="device">
+  <diagram name="Web Search Flow" id="web-search-flow-1">
+    <mxGraphModel dx="1422" dy="762"
+                   grid="1" gridSize="10"
+                   guides="1" tooltips="1" connect="1"
+                   arrows="1" fold="1"
+                   page="1" pageScale="1"
+                   pageWidth="1200" pageHeight="1050"
+                   math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="background" value=""
+                style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=none;"
+                vertex="1" parent="1">
+          <mxGeometry x="30" y="30" width="1140" height="940" as="geometry" />
+        </mxCell>
+
+        <mxCell id="header" value="模型问一句，网关在主机侧搜索，回包只留标题、地址和摘要"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=16;align=left;verticalAlign=middle;spacingLeft=16;"
+                vertex="1" parent="1">
+          <mxGeometry x="60" y="60" width="1080" height="56" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n1" value="模型调用 mcp_web_search&#xa;参数是 query 和 count"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="130" width="340" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n2" value="板端 MCP 客户端&#xa;POST /mcp，方法 tools/call"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="230" width="340" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n3" value="用例层按工具名找到 web_search&#xa;工具表里只有 Tool 一种对象&#xa;代码在 tools/user_tools/web_search_tool.py"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="325" width="340" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n4" value="校验参数与地址&#xa;query 不能空，搜索服务地址要配过"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="430" width="340" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="d1" value="条件齐不齐"
+                style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="430" y="540" width="240" height="100" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n5" value="按对接方式发请求&#xa;searxng、bing、brave 走 GET，其余走 POST&#xa;请求丢到线程里，不占事件循环"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="690" width="340" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n6" value="解出标题、地址和摘要&#xa;取第一个带链接的列表，摘要清到 400 字符"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="790" width="340" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="n7" value="裁剪层裁回包，板端拼成一段文本交回模型"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="380" y="890" width="340" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="f1" value="按失败返回&#xa;isError 为真，原因写在文字里"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="60" y="550" width="240" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="svc" value="搜索服务&#xa;SearXNG、Bing、Brave 或通用 JSON 接口"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="800" y="690" width="320" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-n1-n2"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="n1" target="n2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-n2-n3"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="n2" target="n3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-n3-n4"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="n3" target="n4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-n4-d1"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="n4" target="d1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-d1-n5" value="是"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=13;"
+                edge="1" parent="1" source="d1" target="n5">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-d1-f1" value="否"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=13;"
+                edge="1" parent="1" source="d1" target="f1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-f1-n7" value="失败原因也交给模型"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=13;"
+                edge="1" parent="1" source="f1" target="n7">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="180" y="920" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edge-n5-svc" value="请求"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=13;"
+                edge="1" parent="1" source="n5" target="svc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edge-svc-n6" value="JSON 回包"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;strokeColor=#666666;fontSize=13;"
+                edge="1" parent="1" source="svc" target="n6">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="960" y="820" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edge-n6-n7"
+                style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#666666;"
+                edge="1" parent="1" source="n6" target="n7">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
