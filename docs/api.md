@@ -838,7 +838,7 @@ struct agent_skill
 
 | 宏 | 值 | 说明 |
 |---|---|---|
-| `AGENT_LOOP_MAX` | 6 | 一次请求最多跑几轮工具循环 |
+| `AGENT_LOOP_MAX` | `PKG_AGENT_TOOL_LOOP_MAX`，默认 6 | 一次请求最多跑几轮工具循环，取值范围 1～32 |
 | `AGENT_CHAT_RETRY_MAX` | 3 | 一次 LLM 请求最多重试几次 |
 | `AGENT_CHAT_MAX_TOKENS` | 32 × 1024 | 单次请求的 token 上限 |
 

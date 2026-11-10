@@ -7,7 +7,7 @@
 ## 功能
 
 - 流式对话：解析 SSE 响应，分别处理思考过程、回答正文与工具调用。
-- 工具调用：内置 `add`、`mul`、`compare` 三个示例工具、设备框架工具与 7 个 MQTT 工具，工具循环最多 6 轮。设备框架工具分通用层（7 个）与 8 个设备类模块（22 个），按 Kconfig 取舍。
+- 工具调用：内置 `add`、`mul`、`compare` 三个示例工具、设备框架工具与 7 个 MQTT 工具，工具循环轮数由 Kconfig 选项 `PKG_AGENT_TOOL_LOOP_MAX` 决定，默认 6 轮。设备框架工具分通用层（7 个）与 8 个设备类模块（22 个），按 Kconfig 取舍。
 - 设备框架工具：通用层 7 个工具统一走 `rt_device_*`，屏蔽具体驱动。GPIO、PWM、ADC、DAC、I2C、SPI、传感器、LED 八类各一个 `.c`，封装本类的专用 API。
 - 技能模块：`skills/*.md` 在构建时编进固件，目录注入系统提示词，模型按需加载正文。
 - 上下文管理：历史超过阈值时用滚动摘要压缩，压缩失败保留原始历史。
@@ -227,7 +227,7 @@ draw.io 源文件：[llm-protocol.drawio](./docs/diagrams/llm-protocol.drawio)
 
 工具循环由状态机驱动，节点与边的对应关系见 [框架文档](./docs/framework.md) 3.1。每轮由 `THINK` 节点向模型发一次请求。模型返回 `tool_calls` 时，框架先追加带 `tool_calls` 的 assistant 消息，再逐个校验并执行工具，把结果以 `role=tool` 消息写回上下文，然后进入下一轮。
 
-- 最多 6 轮工具调用。达到上限后，再发一次不带工具的请求，要求模型给出最终回答。
+- 最多跑几轮工具调用由 Kconfig 选项 `PKG_AGENT_TOOL_LOOP_MAX` 决定，默认 6，取值范围 1～32。达到上限后，再发一次不带工具的请求，要求模型给出最终回答。
 - 请求失败最多尝试 3 次，间隔依次为 1 s、2 s。
 - 同一工具、同一参数重复调用时，不再执行，直接返回“结果未变化，请直接回答”的 tool 消息。
 - 同一次用户请求中，同一工具调用超过 3 次时仍会执行，但计为无效轮次。连续两轮全部是无效调用时，强制模型用文本回答。
@@ -328,6 +328,7 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 | `PKG_AGENT_STT_ENABLE` / `PKG_AGENT_STT_URL` | 本地语音转写开关与接口地址 |
 | `PKG_AGENT_DRIVER_AUDIO` | 音频驱动，独立于多模态 |
 | `PKG_AGENT_TOOL_MQTT_ENABLE` | MQTT 工具开关 |
+| `PKG_AGENT_TOOL_LOOP_MAX` | 一次请求最多跑几轮工具调用，默认 6，取值范围 1～32 |
 | `PKG_AGENT_TOOL_DEVICE` 与 `PKG_AGENT_TOOL_DEVICE_*` | 设备框架工具总开关与八个类模块开关 |
 | `PKG_AGENT_TOOL_MCP_ENABLE` | MCP 客户端开关，默认关闭 |
 | `PKG_AGENT_MCP_SERVER_URL` | MCP 服务端地址，默认 `http://192.168.1.100:8765/mcp` |
@@ -377,7 +378,7 @@ python -B build/skill_qemu/run_llm_live.py
 | 看不到思考过程 | 提供方使用 `reasoning_content` 字段 | 框架同时识别 `reasoning_content` 和 `reasoning` |
 | 工具参数不完整 | 流式分片的 `id` / `name` 为 `null` | 框架按 `index` 合并，缺失 `id` 时用 `call_<index>` 兜底 |
 | 日志出现 `-0x4c` 或 `http status=-76` | TLS 连接被对端或网络重置 | 请求会自动重试 3 次；同时降低上报频率，或调大 MQTT 注入间隔 |
-| 模型反复调用同一个工具 | 工具结果为空，或模型不认可结果 | 重复调用会被跳过；连续两轮无效调用或达到 6 轮时强制文本回答 |
+| 模型反复调用同一个工具 | 工具结果为空，或模型不认可结果 | 重复调用会被跳过；连续两轮无效调用或达到 `PKG_AGENT_TOOL_LOOP_MAX` 轮时强制文本回答 |
 | CLI 看不到兜底提示 | 兜底文本只投递输出邮箱时，CLI 不显示 | 兜底文本由 `agent_notify()` 同时走流式打印；仍看不到就检查通道是否实现了 `on_context` |
 | 未启动 MQTT 时查询报 `mqtt state busy` | 状态锁只在客户端启动时创建，未启动就取不到 | 锁为幂等懒创建，未启动也能读订阅表和历史 |
 | STT 转写失败 | 地址错误、服务未启动、模型未下载 | 检查 `PKG_AGENT_STT_URL`，确认文件服务器 `/stt` 可用 |

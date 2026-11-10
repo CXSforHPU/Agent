@@ -30,7 +30,7 @@
           <mxGeometry x="80" y="100" width="1000" height="30" as="geometry" />
         </mxCell>
 
-        <mxCell id="notes" value="护栏（GUARD）&#xa;&#xa;轮次上限：最多 6 轮&#xa;重复动作：同参数再调就跳过&#xa;无效轮次：同一工具超过 3 次&#xa;连续两轮无效：强制收尾&#xa;&#xa;蓝=决策校验&#xa;绿=执行观察&#xa;橙=护栏收尾"
+        <mxCell id="notes" value="护栏（GUARD）&#xa;&#xa;轮次上限：Kconfig 可配，默认 6 轮&#xa;重复动作：同参数再调就跳过&#xa;无效轮次：同一工具超过 3 次&#xa;连续两轮无效：强制收尾&#xa;&#xa;蓝=决策校验&#xa;绿=执行观察&#xa;橙=护栏收尾"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;align=left;verticalAlign=top;spacingLeft=12;spacingTop=10;"
                 vertex="1" parent="1">
           <mxGeometry x="1080" y="200" width="200" height="190" as="geometry" />

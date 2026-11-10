@@ -80,7 +80,7 @@ draw.io 源文件：[agent-fsm.drawio](diagrams/agent-fsm.drawio)
 
 `agent_loop` 的规则：
 
-- 工具循环最多 6 轮，`AGENT_LOOP_MAX` 定义在 `inc/AgentFsm.h` 里，不是 Kconfig 选项。
+- 工具循环最多跑几轮由 Kconfig 的 `PKG_AGENT_TOOL_LOOP_MAX` 决定，默认 6，取值范围 1～32。`inc/AgentFsm.h` 里的 `AGENT_LOOP_MAX` 读取这个宏。
 - 每轮由 `THINK` 节点调一次 `chat()`。请求失败最多尝试 3 次，退避间隔为 1 s、2 s。
 - `THINK` 判定没有 `tool_calls` 时，本轮回答即为最终回答，转 `FINISH`。
 - 有 `tool_calls` 时，先追加带 `tool_calls` 的 assistant 消息，再由 `VALIDATE` 逐个校验、`ACT` 执行、`OBSERVE` 写回。
@@ -88,7 +88,7 @@ draw.io 源文件：[agent-fsm.drawio](diagrams/agent-fsm.drawio)
 - `VALIDATE` 发现同一工具调用超过 3 次时仍会执行，但计为无效调用。
 - `GUARD` 发现连续两轮全部是重复或无效调用时，跳出循环，强制生成文本回答。
 - 重复签名缓存与工具计数在 `INIT` 节点清零，不跨用户请求累计。
-- `GUARD` 判定达到 6 轮上限时转 `FINISH`，`FINISH` 再发一次不带工具的请求，要求模型给出最终回答。
+- `GUARD` 判定达到轮次上限时转 `FINISH`，`FINISH` 再发一次不带工具的请求，要求模型给出最终回答。
 - 工具不存在、参数不是合法 JSON、参数校验失败时，`OBSERVE` 补一条 tool 错误消息，保证每个 `tool_call_id` 都有结果。
 
 状态机不碰邮箱和 TTS，这两件事由 `AgentLoop.c` 通过 `AgentFsmOps` 注入：`emit_answer` 输出最终回答，`notify` 投递兜底提示。
@@ -395,7 +395,7 @@ sequenceDiagram
     ML->>ML: 追加 user 消息
     ML->>FSM: agent_fsm_run()，进入 INIT
 
-    loop 最多 6 轮
+    loop 最多 PKG_AGENT_TOOL_LOOP_MAX 轮（默认 6）
         Note over FSM,LLM: THINK 节点请求失败最多重试 3 次，间隔 1 s、2 s
         FSM->>LLM: chat()，流式请求
         LLM-->>FSM: reasoning / content / tool_calls
@@ -418,7 +418,7 @@ sequenceDiagram
         end
     end
 
-    opt 达到 6 轮或连续两轮无效调用
+    opt 达到轮次上限或连续两轮无效调用
         FSM->>LLM: chat(tools=NULL) 收尾
         LLM-->>FSM: 纯文本回答
         FSM->>MB: 输出最终回答
@@ -516,6 +516,7 @@ sequenceDiagram
 | `PKG_AGENT_STREAM_LINE_BUFSZ` | SSE 单行缓冲，默认 1024 |
 | `PKG_AGENT_MAX_TOOL_ARG_LEN` | 工具参数上限，默认 1024 |
 | `PKG_AGENT_MESSAGE_TRIM` | 上下文压缩触发阈值，默认 6；排除 system 和摘要后，消息数严格大于此值才尝试压缩 |
+| `PKG_AGENT_TOOL_LOOP_MAX` | 一次请求最多跑几轮工具调用，默认 6，取值范围 1～32 |
 
 沿用 `PKG_AGENT_MESSAGE_TRIM` 配置名，帮助说明已改为摘要压缩语义。它不再表示固定保留条数，最近消息的保留范围见 3.3。
 
