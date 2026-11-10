@@ -1,9 +1,6 @@
 /*
- * MQTT 工具 - MSH 调试命令（mqtt_tool ...）
- * 命令行入口：启动/停止、订阅、发布、规则、收取、模拟报文。
- *
- * 说明：本模块由原 tool_mqtt.c 拆分而来，模块间共享的状态与接口
- *       统一声明在 tool_mqtt_internal.h（对外接口见 tool_mqtt.h）。
+ * MQTT 工具 - MSH 调试命令：mqtt_tool <start|stop|status|list|sub|unsub|pub|recv|sim|flush>
+ * 约束：MSH 线程栈只有 4KB，命令结果缓冲一律堆分配。
  */
 #include "tool_mqtt_internal.h"
 
@@ -22,9 +19,9 @@
 
 /*
  * @brief 分段打印长文本
+ * @param text 待打印文本
  * @note  rt_kprintf 内部使用共享缓冲 rt_log_buf[RT_CONSOLEBUF_SIZE]，
  *        超过该长度会被静默截断；历史/状态等长输出必须按行分段打印
- * @param text 待打印文本
  */
 static void mqtt_tool_print(const char *text)
 {
@@ -68,6 +65,9 @@ static void mqtt_tool_print(const char *text)
     }
 }
 
+/*
+ * @brief 打印 mqtt_tool 命令的用法说明
+ */
 static void mqtt_tool_usage(void)
 {
     rt_kprintf("Usage:\n");
@@ -131,11 +131,11 @@ static void mqtt_tool_simulate(const char *topic, const char *payload)
 
 /*
  * @brief MSH 命令入口
- * @note  结果缓冲一律堆分配：MSH 线程栈仅 FINSH_THREAD_STACK_SIZE（默认 4KB），
- *        在命令处理函数里放几百字节局部数组会栈溢出并破坏堆内存
  * @param argc 参数个数
  * @param argv 参数列表
  * @return 0 成功，-1 失败
+ * @note  结果缓冲一律堆分配：MSH 线程栈仅 FINSH_THREAD_STACK_SIZE（默认 4KB），
+ *        在命令处理函数里放几百字节局部数组会栈溢出并破坏堆内存
  */
 static int mqtt_tool(int argc, char **argv)
 {
@@ -148,7 +148,6 @@ static int mqtt_tool(int argc, char **argv)
         return -1;
     }
 
-    /* status/sub/unsub/pub 用中等缓冲；recv 用大缓冲；history 用超大缓冲 */
     {
         rt_size_t need = MQTT_TOOL_RESULT_MID;
         if (rt_strcmp(argv[1], "recv") == 0)

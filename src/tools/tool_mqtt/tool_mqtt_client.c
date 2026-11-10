@@ -1,9 +1,6 @@
 /*
- * MQTT 工具 - 连接与订阅生命周期（订阅表同步、启动/停止、订阅生效确认）
- * 负责把订阅意图落实到 paho 槽位、管理客户端与接收线程的启动/停止。
- *
- * 说明：本模块由原 tool_mqtt.c 拆分而来，模块间共享的状态与接口
- *       统一声明在 tool_mqtt_internal.h（对外接口见 tool_mqtt.h）。
+ * MQTT 工具 - 连接与订阅生命周期：订阅表同步、启动/停止、订阅生效确认
+ * 约束：paho 的 subscribe/unsubscribe 会阻塞在 socket 收发上，必须在状态锁外调用。
  */
 #include "tool_mqtt_internal.h"
 
@@ -330,7 +327,6 @@ rt_err_t mqtt_tool_start(void)
         return RT_ERROR;
     }
 
-    /* 5. 启动接收线程 */
     if (s_rx_exit_sem == RT_NULL)
     {
         s_rx_exit_sem = rt_sem_create("mqtt_exit", 0, RT_IPC_FLAG_FIFO);
@@ -450,7 +446,7 @@ rt_bool_t mqtt_tool_ensure_connected(char *out, rt_size_t out_size)
 {
     rt_size_t used = 0;
 
-    /* 1. 未启动：先启动（内部会建队列/接收线程并启动 paho 工作线程） */
+    /* 未启动：先启动（内部会建队列/接收线程并启动 paho 工作线程） */
     if (!s_started)
     {
         if (mqtt_tool_start() != RT_EOK)
@@ -461,14 +457,14 @@ rt_bool_t mqtt_tool_ensure_connected(char *out, rt_size_t out_size)
         buf_append(out, out_size, &used, "client started, connecting to %s ...\n", MQTT_SERVER_URI);
     }
 
-    /* 2. 已连接：直接返回 */
+    /* 已连接：直接返回 */
     if (s_client.isconnected)
     {
         buf_append(out, out_size, &used, "connection ok: broker=%s (already connected)", MQTT_SERVER_URI);
         return RT_TRUE;
     }
 
-    /* 3. 未连接：等待（paho 工作线程在后台每 5s 自动重连） */
+    /* 未连接：等待（paho 工作线程在后台每 5s 自动重连） */
     if (mqtt_wait_connected(PKG_AGENT_TOOL_MQTT_CONNECT_WAIT_MS))
     {
         buf_append(out, out_size, &used, "connection ok: broker=%s", MQTT_SERVER_URI);
@@ -539,10 +535,10 @@ rt_err_t mqtt_tool_add_topic(const char *topic, mqtt_deliver_mode_t mode)
 
 /*
  * @brief 动态删除一个订阅话题
- * @note  异步生效：这里只清除订阅意图，实际的 UNSUBSCRIBE 报文与槽位释放
- *        由接收线程在下一个同步周期（<=200ms）完成
  * @param topic 话题过滤器
  * @return RT_EOK 成功，RT_ERROR 失败（未订阅 / 状态锁忙）
+ * @note  异步生效：这里只清除订阅意图，实际的 UNSUBSCRIBE 报文与槽位释放
+ *        由接收线程在下一个同步周期（<=200ms）完成
  */
 rt_err_t mqtt_tool_remove_topic(const char *topic)
 {

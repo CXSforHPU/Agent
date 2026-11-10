@@ -1,9 +1,6 @@
 /*
- * MQTT 工具 - 业务操作（发布/订阅/退订/列表/收取），工具与 MSH 共用
+ * MQTT 工具 - 业务操作：发布/订阅/退订/列表/收取，工具与 MSH 共用
  * 纯业务动作，不含 LLM 工具封装与命令行解析，便于被两侧复用与测试。
- *
- * 说明：本模块由原 tool_mqtt.c 拆分而来，模块间共享的状态与接口
- *       统一声明在 tool_mqtt_internal.h（对外接口见 tool_mqtt.h）。
  */
 #include "tool_mqtt_internal.h"
 
@@ -84,19 +81,15 @@ rt_err_t mqtt_do_connect(rt_int32_t timeout_ms, char *out, rt_size_t out_size)
         return RT_ERROR;
     }
 
-    if (mqtt_tool_ensure_connected(out, out_size))
-    {
-        return RT_EOK;
-    }
-    return RT_ERROR;
+    return (mqtt_tool_ensure_connected(out, out_size)) ? RT_EOK : RT_ERROR;
 }
 
 /*
  * @brief 断开连接并释放工作线程/接收线程/队列
- * @note  订阅意图（want）保留，下次连接时会自动重新订阅
  * @param out      结果文本
  * @param out_size 结果缓冲大小
  * @return RT_EOK 成功
+ * @note  订阅意图（want）保留，下次连接时会自动重新订阅
  */
 rt_err_t mqtt_do_disconnect(char *out, rt_size_t out_size)
 {
@@ -132,6 +125,9 @@ rt_err_t mqtt_do_disconnect(char *out, rt_size_t out_size)
 static RT_DEFINE_SPINLOCK(s_pub_slot_lock);
 static rt_tick_t s_pub_next_tick;
 
+/*
+ * @brief 发布前预留一个时间槽，避免连续发布挤在同一个 pipe 读取窗口
+ */
 static void mqtt_pub_wait_slot(void)
 {
     rt_tick_t now, slot;
@@ -419,6 +415,14 @@ void mqtt_do_list(char *out, rt_size_t out_size)
     lock_give();
 }
 
+/*
+ * @brief 取出轮询缓冲中的消息（供 poll 模式与手动排查使用）
+ * @param max          最多取出条数
+ * @param topic_filter 话题过滤（NULL/空表示不过滤，支持通配）
+ * @param out          结果文本
+ * @param out_size     结果缓冲大小
+ * @return 实际取出条数
+ */
 int mqtt_do_receive(int max, const char *topic_filter, char *out, rt_size_t out_size)
 {
     rt_size_t used = 0;
@@ -515,10 +519,10 @@ typedef struct
 
 /*
  * @brief 把一条 payload 里的数值字段累加到统计表
- * @note  对象型 payload 按字段分别统计；整条为数值时按 "payload" 统计
  * @param payload 报文内容
  * @param stats   统计表
  * @param count   统计表已用条目数
+ * @note  对象型 payload 按字段分别统计；整条为数值时按 "payload" 统计
  */
 static void hist_accumulate(const char *payload, mqtt_hist_stat_t *stats, int *count)
 {
@@ -720,6 +724,11 @@ int mqtt_do_history(const char *topic_filter, int max, char *out, rt_size_t out_
 
 /*
  * @brief 应用层发布接口：语义与 mqtt_do_publish 一致
+ * @param topic     目标话题（NULL 使用默认发布话题）
+ * @param payload   消息内容
+ * @param out       结果文本
+ * @param out_size  结果缓冲大小
+ * @return RT_EOK 成功，RT_ERROR 失败
  * @note  发布/订阅前会先确保 client 已启动并连上 broker
  */
 rt_err_t mqtt_tool_publish(const char *topic, const char *payload,
@@ -728,7 +737,11 @@ rt_err_t mqtt_tool_publish(const char *topic, const char *payload,
     return mqtt_do_publish(topic, payload, out, out_size);
 }
 
-/* 时间戳、单位等字段不是测量值，泛化取值时跳过 */
+/*
+ * @brief 判断字段名是否属于元数据（时间戳/单位等非测量值）
+ * @param key 字段名
+ * @return RT_TRUE 是元数据，取值时跳过
+ */
 static rt_bool_t payload_meta_key(const char *key)
 {
     static const char *skip[] = {"ts", "time", "timestamp", "id", "unit", "type"};
@@ -741,9 +754,14 @@ static rt_bool_t payload_meta_key(const char *key)
     return RT_FALSE;
 }
 
-/* 成员本身是数值最好，否则下一层：simu 这类把测量值写成
-   {"values":{"temperature":25.3}}，只看顶层会一条都取不出来。
-   depth 限死，避免对端发来深嵌套 JSON 把 MQTT 线程的栈吃穿。 */
+/*
+ * @brief 在 JSON 节点里递归找第一个数值字段
+ * @param node  当前节点
+ * @param out   输出数值
+ * @param depth 剩余递归深度
+ * @return RT_TRUE 找到数值
+ * @note  depth 限死，避免对端发来深嵌套 JSON 把 MQTT 线程的栈吃穿
+ */
 static rt_bool_t json_number_deep(cJSON *node, double *out, int depth)
 {
     cJSON *child;
@@ -762,7 +780,12 @@ static rt_bool_t json_number_deep(cJSON *node, double *out, int depth)
     return RT_FALSE;
 }
 
-/* 取 val/value，否则取对象里第一个非元数据数值字段 */
+/*
+ * @brief 从 JSON 报文里取测量值：优先 val/value，其次首个非元数据数值字段
+ * @param p   报文文本
+ * @param out 输出数值
+ * @return RT_TRUE 取到数值
+ */
 static rt_bool_t payload_value_from_json(const char *p, double *out)
 {
     static const char *preferred[] = {"val", "value"};
@@ -798,7 +821,12 @@ static rt_bool_t payload_value_from_json(const char *p, double *out)
     return ok;
 }
 
-/* 解析测量值：val/value、首个非元数据数值字段，非 JSON 时把整条 payload 当数值 */
+/*
+ * @brief 解析测量值：JSON 取值失败时把整条 payload 当数值
+ * @param payload 报文内容
+ * @param out     输出数值
+ * @return RT_TRUE 取到数值
+ */
 static rt_bool_t parse_payload_value(const char *payload, double *out)
 {
     const char *p;
@@ -825,6 +853,10 @@ static rt_bool_t parse_payload_value(const char *payload, double *out)
 
 /*
  * @brief 读取已订阅话题（精确匹配）的最新一条消息数值，只读、不消费历史
+ * @param topic_filter 话题过滤器（NULL/空表示全部订阅）
+ * @param buf          输出缓冲
+ * @param size         缓冲大小
+ * @return RT_TRUE 取到消息
  * @note  历史为环形缓冲，最新一条在 (hist_head + hist_count - 1) % DEPTH
  */
 rt_bool_t mqtt_tool_topic_payload(const char *topic_filter,
@@ -874,6 +906,13 @@ rt_bool_t mqtt_tool_topic_payload(const char *topic_filter,
     return found;
 }
 
+/*
+ * @brief 读取已订阅话题最新一条消息的数值与时间戳，只读、不消费历史
+ * @param topic_filter 话题过滤器（NULL/空表示全部订阅）
+ * @param value_out    输出数值（可为 NULL）
+ * @param tick_out     输出时间戳（可为 NULL）
+ * @return RT_TRUE 取到数值
+ */
 rt_bool_t mqtt_tool_topic_latest(const char *topic_filter,
                                   double *value_out, rt_tick_t *tick_out)
 {

@@ -1,9 +1,6 @@
 /*
- * MQTT 工具 - 本地过滤与阈值规则（咨询识别、越界判定、规则管理）
+ * MQTT 工具 - 本地过滤与阈值规则：咨询识别、越界判定、规则管理
  * 只把「需要咨询」或「命中阈值规则」的消息交给 agent，例行数据本地拦截。
- *
- * 说明：本模块由原 tool_mqtt.c 拆分而来，模块间共享的状态与接口
- *       统一声明在 tool_mqtt_internal.h（对外接口见 tool_mqtt.h）。
  */
 #include "tool_mqtt_internal.h"
 
@@ -335,12 +332,12 @@ static rt_bool_t rule_compare(const char *op, double value, double limit)
 
 /*
  * @brief 阈值规则判定（含边沿触发与告警冷却）
- * @note  仅在「由未越界变为越界」或「冷却时间已过」时放行，
- *        避免持续越界期间每条上报都打扰 agent
  * @param item   消息
  * @param reason 命中原因（输出）
  * @param size   原因缓冲大小
  * @return RT_TRUE 需要交给 agent
+ * @note  仅在「由未越界变为越界」或「冷却时间已过」时放行，
+ *        避免持续越界期间每条上报都打扰 agent
  */
 rt_bool_t rule_gate(const mqtt_rx_item_t *item, char *reason, rt_size_t size)
 {
@@ -521,12 +518,3 @@ rt_err_t mqtt_do_rule(const char *action, const char *topic, const char *field,
     lock_give();
     return RT_EOK;
 }
-
-/*
- * @brief 取出轮询缓冲中的消息（供 poll 模式与手动排查使用）
- * @param max          最多取出条数
- * @param topic_filter 话题过滤（NULL/空表示不过滤，支持通配）
- * @param out          结果文本
- * @param out_size     结果缓冲大小
- * @return 实际取出条数
- */

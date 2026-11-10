@@ -1,9 +1,6 @@
 /*
- * MQTT 工具 - 接收线程与消息路由（门控放行、错峰、批量合并注入）
+ * MQTT 工具 - 接收线程与消息路由：门控放行、错峰、批量合并注入
  * 接收线程周期同步订阅状态，并对每条消息执行过滤门控与投递决策。
- *
- * 说明：本模块由原 tool_mqtt.c 拆分而来，模块间共享的状态与接口
- *       统一声明在 tool_mqtt_internal.h（对外接口见 tool_mqtt.h）。
  */
 #include "tool_mqtt_internal.h"
 #include "utils.h"          /* agent_inject_text() */
@@ -22,9 +19,9 @@ static mqtt_rx_item_t s_batch[PKG_AGENT_TOOL_MQTT_INJECT_BATCH_MAX];
 
 /*
  * @brief 处理一条收到的消息：按投递模式决定是否交给 agent 分析
+ * @param item 消息
  * @note  filter 模式（默认）下只有「像咨询」或「命中阈值规则」的消息才会打扰 agent，
  *        其余只更新统计并保留在滚动窗口里，需要时用 mqtt_receive 按需取用
- * @param item 消息
  */
 static void mqtt_route_item(const mqtt_rx_item_t *item)
 {

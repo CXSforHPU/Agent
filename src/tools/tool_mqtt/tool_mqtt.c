@@ -1,9 +1,6 @@
 /*
- * MQTT 工具 - 引擎核心（状态、基础工具、paho 回调、缓冲与消息注入）
- * 维护客户端句柄/订阅表/规则表/统计等全局状态，提供加解锁、话题匹配、
- *
- * 说明：本模块由原 tool_mqtt.c 拆分而来，模块间共享的状态与接口
- *       统一声明在 tool_mqtt_internal.h（对外接口见 tool_mqtt.h）。
+ * MQTT 工具 - 引擎核心：全局状态、基础工具、paho 回调、缓冲与消息注入
+ * 约束：状态锁临界区内只允许纯内存操作，paho 收发与日志输出一律放到锁外。
  */
 #include "tool_mqtt_internal.h"
 
@@ -139,9 +136,9 @@ rt_bool_t has_wildcard(const char *str)
 
 /*
  * @brief 把一条消息追加进订阅记录的近期历史环形缓冲
- * @note  调用者需持有 s_lock；满时覆盖最旧一条，始终保留最近 N 条
  * @param entry 订阅记录
  * @param item  消息
+ * @note  调用者需持有 s_lock；满时覆盖最旧一条，始终保留最近 N 条
  */
 void mqtt_hist_push(mqtt_sub_entry_t *entry, const mqtt_rx_item_t *item)
 {
@@ -383,19 +380,27 @@ mqtt_sub_entry_t *sub_find_free(void)
 }
 
 /*
- * @brief paho 回调（运行在 paho 工作线程上下文）
+ * @brief paho 连接回调：打印正在连接的 broker 地址
+ * @param c 客户端句柄
  */
-
 void mqtt_connect_callback(MQTTClient *c)
 {
     LOG_I("mqtt connecting: %s", MQTT_SERVER_URI);
 }
 
+/*
+ * @brief paho 上线回调：打印已连接的 broker 地址
+ * @param c 客户端句柄
+ */
 void mqtt_online_callback(MQTTClient *c)
 {
     LOG_I("mqtt online: %s", MQTT_SERVER_URI);
 }
 
+/*
+ * @brief paho 掉线回调：提示后台会自动重连
+ * @param c 客户端句柄
+ */
 void mqtt_offline_callback(MQTTClient *c)
 {
     LOG_W("mqtt offline, will retry automatically");
@@ -403,10 +408,10 @@ void mqtt_offline_callback(MQTTClient *c)
 
 /*
  * @brief 订阅消息回调：只做「拷贝 + 入队」，不做耗时处理
- * @note  运行在 paho 工作线程，必须尽快返回，否则会阻塞 keepalive 与 socket 收发；
- *        真正的分析/注入由接收线程完成
  * @param c        客户端句柄
  * @param msg_data 消息数据
+ * @note  运行在 paho 工作线程，必须尽快返回，否则会阻塞 keepalive 与 socket 收发；
+ *        真正的分析/注入由接收线程完成
  */
 void mqtt_sub_callback(MQTTClient *c, MessageData *msg_data)
 {
@@ -527,9 +532,7 @@ int poll_clear(void)
 }
 
 /*
- * 注：向 agent 注入文本的能力已提升为框架公共 API ——
- *     agent_inject_text()（声明见 inc/utils.h，实现见 src/utils/message.c），
- *     MQTT 模块（tool_mqtt_route.c）与其它工具共用同一入口；
- *     MQTT 特有的注入计数/错峰时间戳留在本模块里维护。
+ * 注：向 agent 注入文本已提升为框架公共 API agent_inject_text()（见 inc/utils.h），
+ *     MQTT 模块与其它工具共用同一入口，MQTT 特有的注入计数与错峰时间戳在本模块维护。
  */
 

@@ -1,9 +1,6 @@
 /*
- * MQTT 工具 - LLM 工具入口（mqtt_publish / mqtt_subscribe / mqtt_rule / mqtt_receive）
+ * MQTT 工具 - LLM 工具入口：mqtt_publish / mqtt_subscribe / mqtt_rule / mqtt_receive 等
  * 把工具参数 JSON 映射为业务操作，并把结果写回工具节点。
- *
- * 说明：本模块由原 tool_mqtt.c 拆分而来，模块间共享的状态与接口
- *       统一声明在 tool_mqtt_internal.h（对外接口见 tool_mqtt.h）。
  */
 #include "tool_mqtt_internal.h"
 
@@ -425,9 +422,9 @@ void tool_mqtt_connect(cJSON *args_obj, AgentToolNode_t node)
 
 /*
  * @brief MQTT 断开工具：断开连接并释放工作线程/接收线程/队列
- * @note  订阅意图保留，下次连接后自动重新订阅
  * @param args_obj 参数 JSON 对象（可为空）
  * @param node     工具节点
+ * @note  订阅意图保留，下次连接后自动重新订阅
  */
 void tool_mqtt_disconnect(cJSON *args_obj, AgentToolNode_t node)
 {
@@ -456,6 +453,10 @@ void tool_mqtt_disconnect(cJSON *args_obj, AgentToolNode_t node)
  * 本文件只在 PKG_AGENT_TOOL_MQTT_ENABLE 打开时参与编译，关掉后模块表里自然没有 mqtt。
  * ========================================================================== */
 
+/*
+ * @brief 填 mqtt_connect 工具的描述
+ * @param func 描述 JSON 对象
+ */
 static void mqtt_connect_desc(cJSON *func)
 {
     tool_desc(func, "Connect the MQTT client to the broker (starts it if needed) and report the "
@@ -465,6 +466,11 @@ static void mqtt_connect_desc(cJSON *func)
     tool_desc_more(func, "publish/subscribe already perform this check automatically.");
 }
 
+/*
+ * @brief 填 mqtt_connect 工具的参数表
+ * @param props   属性 JSON 对象
+ * @param required 必填项数组
+ */
 static void mqtt_connect_params(cJSON *props, cJSON *required)
 {
     create_property(props, "timeout_ms", "number",
@@ -472,6 +478,10 @@ static void mqtt_connect_params(cJSON *props, cJSON *required)
         "built-in connect wait).");
 }
 
+/*
+ * @brief 填 mqtt_disconnect 工具的描述
+ * @param func 描述 JSON 对象
+ */
 static void mqtt_disconnect_desc(cJSON *func)
 {
     tool_desc(func, "Disconnect the MQTT client and release its worker/receive threads.");
@@ -481,12 +491,21 @@ static void mqtt_disconnect_desc(cJSON *func)
         "reconfiguring the broker.");
 }
 
+/*
+ * @brief 填 mqtt_disconnect 工具的参数表
+ * @param props   属性 JSON 对象
+ * @param required 必填项数组
+ */
 static void mqtt_disconnect_params(cJSON *props, cJSON *required)
 {
     (void)props;
     (void)required;
 }
 
+/*
+ * @brief 填 mqtt_publish 工具的描述
+ * @param func 描述 JSON 对象
+ */
 static void mqtt_publish_desc(cJSON *func)
 {
     tool_desc(func, "Publish a message to an MQTT topic to send a command to a device or "
@@ -495,6 +514,11 @@ static void mqtt_publish_desc(cJSON *func)
     tool_desc_more(func, "Returns the publish result including topic and payload byte length.");
 }
 
+/*
+ * @brief 填 mqtt_publish 工具的参数表
+ * @param props   属性 JSON 对象
+ * @param required 必填项数组
+ */
 static void mqtt_publish_params(cJSON *props, cJSON *required)
 {
     create_property(props, "topic", "string",
@@ -505,6 +529,10 @@ static void mqtt_publish_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("message"));
 }
 
+/*
+ * @brief 填 mqtt_subscribe 工具的描述
+ * @param func 描述 JSON 对象
+ */
 static void mqtt_subscribe_desc(cJSON *func)
 {
     tool_desc(func, "Subscribe to an MQTT topic to watch it, or unsubscribe / list current "
@@ -514,6 +542,11 @@ static void mqtt_subscribe_desc(cJSON *func)
         "locally.");
 }
 
+/*
+ * @brief 填 mqtt_subscribe 工具的参数表
+ * @param props   属性 JSON 对象
+ * @param required 必填项数组
+ */
 static void mqtt_subscribe_params(cJSON *props, cJSON *required)
 {
     create_property(props, "action", "string",
@@ -528,6 +561,10 @@ static void mqtt_subscribe_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("action"));
 }
 
+/*
+ * @brief 填 mqtt_receive 工具的描述
+ * @param func 描述 JSON 对象
+ */
 static void mqtt_receive_desc(cJSON *func)
 {
     tool_desc(func, "Fetch MQTT messages buffered by topics that are not auto-forwarded "
@@ -536,6 +573,11 @@ static void mqtt_receive_desc(cJSON *func)
         "topic.");
 }
 
+/*
+ * @brief 填 mqtt_receive 工具的参数表
+ * @param props   属性 JSON 对象
+ * @param required 必填项数组
+ */
 static void mqtt_receive_params(cJSON *props, cJSON *required)
 {
     create_property(props, "max", "number",
@@ -544,6 +586,10 @@ static void mqtt_receive_params(cJSON *props, cJSON *required)
         "Only fetch messages of this topic (wildcards supported).");
 }
 
+/*
+ * @brief 填 mqtt_rule 工具的描述
+ * @param func 描述 JSON 对象
+ */
 static void mqtt_rule_desc(cJSON *func)
 {
     tool_desc(func, "Manage threshold rules so you are only notified when a subscribed value is "
@@ -554,6 +600,11 @@ static void mqtt_rule_desc(cJSON *func)
         "...'.");
 }
 
+/*
+ * @brief 填 mqtt_rule 工具的参数表
+ * @param props   属性 JSON 对象
+ * @param required 必填项数组
+ */
 static void mqtt_rule_params(cJSON *props, cJSON *required)
 {
     create_property(props, "action", "string",
@@ -572,6 +623,10 @@ static void mqtt_rule_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("action"));
 }
 
+/*
+ * @brief 填 mqtt_history 工具的描述
+ * @param func 描述 JSON 对象
+ */
 static void mqtt_history_desc(cJSON *func)
 {
     tool_desc(func, "Summarize what happened recently on subscribed MQTT topics: the latest "
@@ -582,6 +637,11 @@ static void mqtt_history_desc(cJSON *func)
         "asks you to assess the recent situation of a sensor/topic.");
 }
 
+/*
+ * @brief 填 mqtt_history 工具的参数表
+ * @param props   属性 JSON 对象
+ * @param required 必填项数组
+ */
 static void mqtt_history_params(cJSON *props, cJSON *required)
 {
     create_property(props, "topic", "string",
