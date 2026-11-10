@@ -18,6 +18,12 @@ char *get_role_string(RoleType type)
     return AgentRole[type];
 }
 
+/*
+ * @brief  造一条只带文本的消息
+ * @param  role    角色
+ * @param  content 正文
+ * @return 消息 JSON 对象，失败返回 NULL
+ */
 static cJSON *__text_message(const char *role, const char *content)
 {
     cJSON *message = cJSON_CreateObject();
@@ -30,6 +36,11 @@ static cJSON *__text_message(const char *role, const char *content)
     return message;
 }
 
+/*
+ * @brief  拼系统提示词：基础提示 + 技能清单 + 技能加载指引
+ * @param  self 上下文
+ * @return RT_EOK 成功
+ */
 static rt_err_t __build_system_prompt(Context_t self)
 {
     static const char guidance[] =
@@ -208,6 +219,12 @@ static rt_err_t __clear_message(Context_t self)
     return RT_EOK;
 }
 
+/*
+ * @brief  把历史对话压成一段摘要
+ * @param  self      上下文
+ * @param  threshold 超过多少条消息触发压缩
+ * @return RT_EOK 成功
+ */
 static rt_err_t __compress_context(Context_t self, int threshold)
 {
     static const char instruction[] =

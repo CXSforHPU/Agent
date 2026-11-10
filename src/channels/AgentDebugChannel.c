@@ -1,6 +1,9 @@
 #include "AgentDebugChannel.h"
 #include <stdlib.h>
 
+/* MSH 命令拼接后的内容上限 */
+#define DEBUG_CONTENT_MAX 256
+
 static MessageHub_t g_message_hub = RT_NULL;
 static Context_t g_context = RT_NULL;
 
@@ -54,7 +57,41 @@ static int agent_send_message(int argc, char *argv[])
     }
     MessageType msg_type = (MessageType)type_int;
 
-    char *content = argv[2];
+    /*
+     * MSH 按空白分词，"agent_send_message 0 launch qq" 会拆成
+     * argv[2]="launch"、argv[3]="qq"。只取 argv[2] 会把后半截丢掉，
+     * 模型收到的请求变成没有目标的 "launch"。所以这里把剩下的参数
+     * 用空格接起来，拼成完整内容。
+     */
+    char content[DEBUG_CONTENT_MAX];
+    int used = 0;
+    int i;
+
+    content[0] = '\0';
+    for (i = 2; i < argc; i++)
+    {
+        int len = (int)rt_strlen(argv[i]);
+
+        if (len == 0) {
+            continue;
+        }
+        if (used > 0)
+        {
+            if (used + 1 >= (int)sizeof(content)) {
+                break;
+            }
+            content[used++] = ' ';
+        }
+        if (used + len >= (int)sizeof(content)) {
+            len = (int)sizeof(content) - used - 1;
+        }
+        rt_memcpy(content + used, argv[i], len);
+        used += len;
+        content[used] = '\0';
+    }
+    if (used == 0) {
+        return -1;
+    }
 
     Messages_t input_messages = messages_create(1);
     if (input_messages == RT_NULL) {
@@ -86,4 +123,4 @@ static int agent_send_message(int argc, char *argv[])
     return 0;
 }
 
-MSH_CMD_EXPORT(agent_send_message, "agent_send_message <type> <content>");
+MSH_CMD_EXPORT(agent_send_message, "agent_send_message <type> <content...>");

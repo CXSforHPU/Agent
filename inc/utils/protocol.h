@@ -2,16 +2,12 @@
 #define __AGENT_UTILS_PROTOCOL_H__
 
 /*
- * LLM 协议统一入口
+ * LLM 协议统一入口。请求拼装与响应解析在 src/utils/protocol/ 下按协议分文件：
+ * protocol_openai.c 走 /chat/completions，protocol_anthropic.c 走 /v1/messages。
  *
- * 包内只跟这个头文件打交道，具体的请求拼装与响应解析在 src/utils/protocol/
- * 下按协议分模块实现：
- *   protocol_openai.c     OpenAI /chat/completions，Bearer 头，delta 式 SSE
- *   protocol_anthropic.c  Anthropic /v1/messages，x-api-key 头，事件式 SSE
- *
- * 上下文里保存的消息一律用规范格式（OpenAI 风格）：role + content，
- * content 是字符串或 [{type, ...}] 数组，工具调用放在 tool_calls 里。
- * 各协议模块负责把规范格式转成自己的报文格式，解析时再转回规范格式。
+ * 上下文里的消息一律用规范格式（OpenAI 风格）：role + content，content 是字符串
+ * 或 [{type, ...}] 数组，工具调用放在 tool_calls 里。各协议模块负责转成自己的
+ * 报文格式，解析时再转回规范格式。
  */
 
 #include <rtthread.h>
@@ -56,31 +52,77 @@ typedef struct agent_protocol_ops
     cJSON *(*format_content)(cJSON *content);
 } agent_protocol_ops_t;
 
-/* 取当前协议的操作表 */
+/*
+ * @brief  取当前协议的操作表
+ * @return 操作表指针，调用者不释放
+ */
 const agent_protocol_ops_t *agent_protocol_get_ops(void);
 
-/* 当前协议 */
+/*
+ * @brief  取当前生效的协议
+ * @return 协议枚举值
+ */
 agent_api_protocol_t agent_protocol_current(void);
 
-/* 切换协议，同时改写运行时配置 */
+/*
+ * @brief  切换协议，同时改写运行时配置里的协议与端点
+ * @param  protocol 目标协议
+ */
 void agent_protocol_switch(agent_api_protocol_t protocol);
 
-/* 流状态初始化与释放 */
+/*
+ * @brief  初始化流状态
+ * @param  stream      流状态
+ * @param  on_reasoning 思考过程分片回调
+ * @param  on_tool_call 工具调用文本回调
+ * @param  on_context   回答正文分片回调
+ */
 void agent_protocol_stream_init(agent_protocol_stream_t *stream,
                                  void (*on_reasoning)(const char *text),
                                  void (*on_tool_call)(const char *text),
                                  void (*on_context)(const char *text));
+
+/*
+ * @brief  释放流状态里累积的缓冲区
+ * @param  stream 流状态
+ */
 void agent_protocol_stream_deinit(agent_protocol_stream_t *stream);
 
-/* 累积思考过程与正文 */
+/*
+ * @brief  累积一段思考过程
+ * @param  stream 流状态
+ * @param  seg    思考过程分片
+ */
 void agent_protocol_add_reasoning(agent_protocol_stream_t *stream, const char *seg);
+
+/*
+ * @brief  累积一段回答正文
+ * @param  stream 流状态
+ * @param  seg    正文分片
+ */
 void agent_protocol_add_content(agent_protocol_stream_t *stream, const char *seg);
 
-/* 累积工具调用：先登记 id 与函数名，再追加参数分片 */
+/*
+ * @brief  登记一个工具调用的 id 与函数名
+ * @param  stream 流状态
+ * @param  index  分片序号
+ * @param  id     工具调用 id
+ * @param  name   函数名
+ */
 void agent_protocol_tool_begin(agent_protocol_stream_t *stream, int index, const char *id, const char *name);
+
+/*
+ * @brief  追加一段工具调用参数
+ * @param  stream   流状态
+ * @param  index    分片序号
+ * @param  fragment 参数分片
+ */
 void agent_protocol_tool_args(agent_protocol_stream_t *stream, int index, const char *fragment);
 
-/* 把分片归一化成 tool_calls 数组，并回调 on_tool_call */
+/*
+ * @brief  把分片归一化成 tool_calls 数组，并回调 on_tool_call
+ * @param  stream 流状态
+ */
 void agent_protocol_tool_finalize(agent_protocol_stream_t *stream);
 
 #endif /* __AGENT_UTILS_PROTOCOL_H__ */

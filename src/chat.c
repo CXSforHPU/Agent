@@ -72,8 +72,7 @@ ChatResponse_t chat(
         LOG_E("chat: webclient session create failed\n");
         goto __cleanup;
     }
-    /* 设置超时，避免网络卡死导致清理流程无限等待 */
-    webclient_set_timeout(webSession, 30000);
+    /* 超时在连上之后才设，见第 5 步 */
 
     /* 3. 按协议构造请求体 */
     payload_json = cJSON_CreateObject();
@@ -103,7 +102,25 @@ ChatResponse_t chat(
     webclient_header_fields_add(webSession, "Content-Length: %d\r\n", payload_len);
 
     /* 5. 发送 POST 请求 */
-    resp_status = webclient_post(webSession, get_dynamic_agent_api_url(), payload, payload_len);
+    /*
+     * 分成两段：先连上，设好收发超时，再发请求体。webclient 的超时只能
+     * 设在已经连上的 socket 上，连之前设会被丢掉，实际用的还是它写死的
+     * 6 秒；模型的响应慢的时候 6 秒不够用。
+     */
+    resp_status = webclient_post(webSession, get_dynamic_agent_api_url(), RT_NULL, 0);
+    if (resp_status < 0)
+    {
+        LOG_E("chat: POST connect failed, status=%d\n", resp_status);
+        goto __cleanup;
+    }
+    /* 设置超时，避免网络卡死导致清理流程无限等待 */
+    agent_webclient_set_timeout(webSession, 30000);
+    if (webclient_write(webSession, payload, payload_len) != payload_len)
+    {
+        LOG_E("chat: send payload failed\n");
+        goto __cleanup;
+    }
+    resp_status = webclient_handle_response(webSession);
     if (resp_status != 200)
     {
         LOG_E("chat: POST failed, http status=%d\n", resp_status);

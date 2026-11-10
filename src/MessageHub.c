@@ -157,7 +157,13 @@ MessageType messages_get_type_idx(Messages_t messages, int idx)
     return messages->message_ptr[idx].message_type;
 }
 
-/* 发送消息到 mailbox */
+/*
+ * @brief  发送消息到 mailbox
+ * @param  self    消息中心
+ * @param  message 消息
+ * @param  mb      目标邮箱
+ * @return RT_EOK 成功
+ */
 static rt_err_t _put_message(MessageHub_t self, Messages_t message, rt_mailbox_t mb)
 {
     if (self == RT_NULL || message == RT_NULL)
@@ -168,7 +174,12 @@ static rt_err_t _put_message(MessageHub_t self, Messages_t message, rt_mailbox_t
     return rt_mb_send(mb, (rt_ubase_t)message);
 }
 
-/* 从 mailbox 接收消息 */
+/*
+ * @brief  从 mailbox 接收消息
+ * @param  self 消息中心
+ * @param  mb   邮箱
+ * @return 消息，失败返回 NULL
+ */
 static Messages_t _get_message(MessageHub_t self, rt_mailbox_t mb)
 {
     Messages_t messages = RT_NULL;
