@@ -12,7 +12,14 @@
 #include <rtdevice.h>
 #include <drivers/dev_pwm.h>
 
-/* 取出 PWM 设备与通道号；失败时结果已经写好，返回 RT_NULL。 */
+/*
+ * @brief  解析并校验 PWM 设备与通道号
+ * @param  args     工具参数 JSON 对象
+ * @param  node     工具节点，失败时用于回填结果
+ * @param  name_out 输出设备名
+ * @param  channel  输出通道号
+ * @return PWM 设备，失败返回 RT_NULL
+ */
 static struct rt_device_pwm *pwm_arg(cJSON *args, AgentToolNode_t node,
                                      const char **name_out, int *channel)
 {
@@ -34,6 +41,11 @@ static struct rt_device_pwm *pwm_arg(cJSON *args, AgentToolNode_t node,
     return (struct rt_device_pwm *)dev;
 }
 
+/*
+ * @brief  设置一个 PWM 通道的周期与高电平脉宽
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_pwm_set(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -87,6 +99,11 @@ void tool_pwm_set(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  读回一个 PWM 通道的周期与高电平脉宽
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_pwm_get(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -125,6 +142,12 @@ void tool_pwm_get(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  启动或停止一个 PWM 通道
+ * @param  args   工具参数 JSON 对象
+ * @param  node   工具节点，用于回填结果
+ * @param  enable RT_TRUE 启动，RT_FALSE 停止
+ */
 static void pwm_switch(cJSON *args, AgentToolNode_t node, rt_bool_t enable)
 {
     char out[DEVICE_OUT_SIZE];
@@ -161,9 +184,24 @@ static void pwm_switch(cJSON *args, AgentToolNode_t node, rt_bool_t enable)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  启动一个 PWM 通道
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_pwm_enable(cJSON *args, AgentToolNode_t node) { pwm_switch(args, node, RT_TRUE); }
+
+/*
+ * @brief  停止一个 PWM 通道
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_pwm_disable(cJSON *args, AgentToolNode_t node) { pwm_switch(args, node, RT_FALSE); }
 
+/*
+ * @brief  填 pwm_set 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void pwm_set_desc(cJSON *func)
 {
     tool_desc(func, "Set a PWM channel's period and pulse width in nanoseconds (duty = "
@@ -172,6 +210,11 @@ static void pwm_set_desc(cJSON *func)
     tool_desc_more(func, "The channel stays stopped until pwm_enable.");
 }
 
+/*
+ * @brief  填 pwm_set 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void pwm_set_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact PWM device name from device_list.");
@@ -185,12 +228,21 @@ static void pwm_set_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("pulse_ns"));
 }
 
+/*
+ * @brief  填 pwm_get 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void pwm_get_desc(cJSON *func)
 {
     tool_desc(func, "Read back a PWM channel's configured period and pulse width.");
     tool_desc_read_only(func);
 }
 
+/*
+ * @brief  填 pwm_get 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void pwm_get_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact PWM device name from device_list.");
@@ -199,6 +251,10 @@ static void pwm_get_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("channel"));
 }
 
+/*
+ * @brief  填 pwm_enable 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void pwm_enable_desc(cJSON *func)
 {
     tool_desc(func, "Start a PWM channel that was configured with pwm_set.");
@@ -206,6 +262,11 @@ static void pwm_enable_desc(cJSON *func)
     tool_desc_more(func, "Call only after the user authorized this peripheral.");
 }
 
+/*
+ * @brief  填 pwm_enable 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void pwm_enable_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact PWM device name from device_list.");
@@ -214,12 +275,21 @@ static void pwm_enable_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("channel"));
 }
 
+/*
+ * @brief  填 pwm_disable 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void pwm_disable_desc(cJSON *func)
 {
     tool_desc(func, "Stop a PWM channel.");
     tool_desc_more(func, "State-changing, but the safe direction: the output goes idle.");
 }
 
+/*
+ * @brief  填 pwm_disable 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void pwm_disable_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact PWM device name from device_list.");

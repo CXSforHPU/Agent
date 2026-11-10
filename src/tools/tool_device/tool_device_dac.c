@@ -11,6 +11,14 @@
 #include <rtdevice.h>
 #include <drivers/dac.h>
 
+/*
+ * @brief  解析并校验 DAC 设备与通道号
+ * @param  args     工具参数 JSON 对象
+ * @param  node     工具节点，失败时用于回填结果
+ * @param  name_out 输出设备名
+ * @param  channel  输出通道号
+ * @return DAC 设备，失败返回 RT_NULL
+ */
 static rt_dac_device_t dac_arg(cJSON *args, AgentToolNode_t node, const char **name_out,
                                rt_uint32_t *channel)
 {
@@ -32,6 +40,11 @@ static rt_dac_device_t dac_arg(cJSON *args, AgentToolNode_t node, const char **n
     return (rt_dac_device_t)dev;
 }
 
+/*
+ * @brief  向一个 DAC 通道输出原始码，超量程时拒绝
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_dac_write(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -92,6 +105,11 @@ void tool_dac_write(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  使能一个 DAC 通道
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_dac_enable(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -125,6 +143,11 @@ void tool_dac_enable(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  关闭一个 DAC 通道
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_dac_disable(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -158,6 +181,10 @@ void tool_dac_disable(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  填 dac_write 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void dac_write_desc(cJSON *func)
 {
     tool_desc(func, "Output a raw code on a DAC channel.");
@@ -167,6 +194,11 @@ static void dac_write_desc(cJSON *func)
         "reports both.");
 }
 
+/*
+ * @brief  填 dac_write 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void dac_write_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact DAC device name from device_list.");
@@ -179,12 +211,21 @@ static void dac_write_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("value"));
 }
 
+/*
+ * @brief  填 dac_enable 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void dac_enable_desc(cJSON *func)
 {
     tool_desc(func, "Enable a DAC channel.");
     tool_desc_state_changing(func);
 }
 
+/*
+ * @brief  填 dac_enable 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void dac_enable_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact DAC device name from device_list.");
@@ -193,12 +234,21 @@ static void dac_enable_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("channel"));
 }
 
+/*
+ * @brief  填 dac_disable 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void dac_disable_desc(cJSON *func)
 {
     tool_desc(func, "Disable a DAC channel.");
     tool_desc_more(func, "State-changing, but the safe direction: the output goes idle.");
 }
 
+/*
+ * @brief  填 dac_disable 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void dac_disable_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact DAC device name from device_list.");

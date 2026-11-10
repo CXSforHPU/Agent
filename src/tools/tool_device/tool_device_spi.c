@@ -12,6 +12,13 @@
 #include <rtdevice.h>
 #include <drivers/dev_spi.h>
 
+/*
+ * @brief  查找 SPI 从机设备并校验它属于从机设备类
+ * @param  args     工具参数 JSON 对象
+ * @param  node     工具节点，失败时用于回填结果
+ * @param  name_out 输出设备名
+ * @return SPI 从机设备，失败返回 RT_NULL
+ */
 static struct rt_spi_device *spi_arg(cJSON *args, AgentToolNode_t node, const char **name_out)
 {
     char out[DEVICE_OUT_SIZE];
@@ -38,6 +45,11 @@ static struct rt_spi_device *spi_arg(cJSON *args, AgentToolNode_t node, const ch
     return (struct rt_spi_device *)dev;
 }
 
+/*
+ * @brief  配置一个 SPI 从机设备的工作模式、时钟、位宽与位序
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_spi_configure(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -133,6 +145,11 @@ void tool_spi_configure(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  在一个 SPI 从机设备上做全双工收发
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_spi_transfer(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -244,6 +261,10 @@ void tool_spi_transfer(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, result, out);
 }
 
+/*
+ * @brief  填 spi_configure 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void spi_configure_desc(cJSON *func)
 {
     tool_desc(func, "Set the SPI settings of one slave device (clock polarity/phase mode, max "
@@ -253,6 +274,11 @@ static void spi_configure_desc(cJSON *func)
     tool_desc_more(func, "'spi10'.");
 }
 
+/*
+ * @brief  填 spi_configure 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void spi_configure_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string",
@@ -264,6 +290,10 @@ static void spi_configure_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("name"));
 }
 
+/*
+ * @brief  填 spi_transfer 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void spi_transfer_desc(cJSON *func)
 {
     tool_desc(func, "Full-duplex exchange on one SPI slave device: clock out 'data' while "
@@ -273,6 +303,11 @@ static void spi_transfer_desc(cJSON *func)
         "authorized this device.");
 }
 
+/*
+ * @brief  填 spi_transfer 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void spi_transfer_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string",

@@ -25,11 +25,20 @@ static const struct
     {"output_od",       PIN_MODE_OUTPUT_OD},
 };
 
+/*
+ * @brief  设备遍历回调，统计引脚类设备的数量
+ * @param  dev 当前遍历到的设备
+ * @param  arg 指向计数器的指针
+ */
 static void pin_present_cb(rt_device_t dev, void *arg)
 {
     if (dev->type == RT_Device_Class_Pin) (*(int *)arg)++;
 }
 
+/*
+ * @brief  统计设备框架里已注册的引脚类设备数量
+ * @return 引脚设备数量
+ */
 static int pin_device_count(void)
 {
     int count = 0;
@@ -38,7 +47,13 @@ static int pin_device_count(void)
     return count;
 }
 
-/* 'pin' 支持编号（35）和引脚名（"PA.0"，交给 rt_pin_get 解析）。 */
+/*
+ * @brief  解析并校验 pin 参数，编号与引脚名都接受
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，失败时用于回填结果
+ * @param  pin  输出引脚编号
+ * @return 成功返回 RT_TRUE，失败返回 RT_FALSE
+ */
 static rt_bool_t pin_arg(cJSON *args, AgentToolNode_t node, rt_base_t *pin)
 {
     cJSON *item = cJSON_GetObjectItemCaseSensitive(args, "pin");
@@ -57,6 +72,7 @@ static rt_bool_t pin_arg(cJSON *args, AgentToolNode_t node, rt_base_t *pin)
     }
     if (cJSON_IsString(item) && item->valuestring[0] != '\0')
     {
+        /* 引脚名交给 rt_pin_get 解析，编号体系由 BSP 的引脚驱动决定 */
         value = rt_pin_get(item->valuestring);
         if (value < 0) goto bad;
         *pin = (rt_base_t)value;
@@ -69,6 +85,11 @@ bad:
     return RT_FALSE;
 }
 
+/*
+ * @brief  确认设备框架里已注册引脚驱动
+ * @param  node 工具节点，失败时用于回填结果
+ * @return 有引脚驱动返回 RT_TRUE，否则返回 RT_FALSE
+ */
 static rt_bool_t pin_framework(AgentToolNode_t node)
 {
     if (pin_device_count() > 0) return RT_TRUE;
@@ -78,6 +99,11 @@ static rt_bool_t pin_framework(AgentToolNode_t node)
     return RT_FALSE;
 }
 
+/*
+ * @brief  设置一个 GPIO 引脚的方向与上下拉配置
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_pin_mode(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -142,6 +168,11 @@ void tool_pin_mode(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  把一个 GPIO 引脚驱动为高或低电平，并回读电平
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_pin_write(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -163,10 +194,6 @@ void tool_pin_write(cJSON *args, AgentToolNode_t node)
     {
         level = (long)value->valuedouble;
     }
-    else if (cJSON_IsString(value) && agent_dev_parse_num(value->valuestring, &level))
-    {
-        /* numeric string level */
-    }
     else if (cJSON_IsString(value) && rt_strcmp(value->valuestring, "high") == 0)
     {
         level = PIN_HIGH;
@@ -175,7 +202,7 @@ void tool_pin_write(cJSON *args, AgentToolNode_t node)
     {
         level = PIN_LOW;
     }
-    else
+    else if (!cJSON_IsString(value) || !agent_dev_parse_num(value->valuestring, &level))
     {
         agent_dev_finish(node, -RT_EINVAL, "error: 'value' must be 0, 1, 'low' or 'high'");
         return;
@@ -197,6 +224,11 @@ void tool_pin_write(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  读取一个 GPIO 引脚当前的电平
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_pin_read(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -221,6 +253,10 @@ void tool_pin_read(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  填 pin_mode 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void pin_mode_desc(cJSON *func)
 {
     tool_desc(func, "Set one GPIO pin's direction and pull configuration through the RT-Thread "
@@ -231,6 +267,11 @@ static void pin_mode_desc(cJSON *func)
         "driving hardware.");
 }
 
+/*
+ * @brief  填 pin_mode 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void pin_mode_params(cJSON *props, cJSON *required)
 {
     create_property(props, "pin", "number",
@@ -243,6 +284,10 @@ static void pin_mode_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("mode"));
 }
 
+/*
+ * @brief  填 pin_write 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void pin_write_desc(cJSON *func)
 {
     tool_desc(func, "Drive one GPIO pin high or low.");
@@ -250,6 +295,11 @@ static void pin_write_desc(cJSON *func)
         "tool reports the level read back, which is not proof the hardware acted on it.");
 }
 
+/*
+ * @brief  填 pin_write 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void pin_write_params(cJSON *props, cJSON *required)
 {
     create_property(props, "pin", "number", "Pin number used by this BSP's pin driver.");
@@ -258,6 +308,10 @@ static void pin_write_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("value"));
 }
 
+/*
+ * @brief  填 pin_read 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void pin_read_desc(cJSON *func)
 {
     tool_desc(func, "Read the current level of one GPIO pin.");
@@ -266,6 +320,11 @@ static void pin_read_desc(cJSON *func)
         "is whatever the output driver is holding.");
 }
 
+/*
+ * @brief  填 pin_read 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void pin_read_params(cJSON *props, cJSON *required)
 {
     create_property(props, "pin", "number", "Pin number used by this BSP's pin driver.");

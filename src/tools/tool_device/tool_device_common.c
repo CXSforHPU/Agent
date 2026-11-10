@@ -10,6 +10,10 @@
 #include <stdarg.h>
 #include <rtdevice.h>
 
+/*
+ * @brief  清空工具节点上一次的返回结果
+ * @param  node 工具节点
+ */
 void agent_dev_reset_result(AgentToolNode_t node)
 {
     messages_destroy(node->ret.messages);
@@ -17,6 +21,12 @@ void agent_dev_reset_result(AgentToolNode_t node)
     node->ret.ret = -RT_ERROR;
 }
 
+/*
+ * @brief  把结果码与结果文本写回工具节点
+ * @param  node   工具节点
+ * @param  result 结果码
+ * @param  text   结果文本
+ */
 void agent_dev_finish(AgentToolNode_t node, rt_err_t result, const char *text)
 {
     node->ret.ret = result;
@@ -34,6 +44,13 @@ void agent_dev_finish(AgentToolNode_t node, rt_err_t result, const char *text)
     }
 }
 
+/*
+ * @brief  向结果缓冲区追加一段格式化文本，越界时截断
+ * @param  out   结果缓冲区
+ * @param  size  缓冲区大小
+ * @param  used  已用字节数，追加后更新
+ * @param  fmt   格式串
+ */
 void agent_dev_append(char *out, rt_size_t size, rt_size_t *used, const char *fmt, ...)
 {
     va_list args;
@@ -48,6 +65,12 @@ void agent_dev_append(char *out, rt_size_t size, rt_size_t *used, const char *fm
     else *used += written;
 }
 
+/*
+ * @brief  解析十进制或 0x 十六进制数字字符串
+ * @param  text  数字文本
+ * @param  value 解析出的数值
+ * @return 成功返回 1，非法返回 0
+ */
 int agent_dev_parse_num(const char *text, long *value)
 {
     long result = 0;
@@ -85,6 +108,11 @@ static const char *class_names[] =
     "adc", "dac", "wdt", "pwm", "bus", "unknown"
 };
 
+/*
+ * @brief  取设备类号对应的类名
+ * @param  type 设备类号
+ * @return 类名，越界或未知时返回 "unknown"
+ */
 const char *agent_dev_class_name(int type)
 {
     if (type >= 0 && (size_t)type < sizeof(class_names) / sizeof(class_names[0]))
@@ -92,6 +120,11 @@ const char *agent_dev_class_name(int type)
     return "unknown";
 }
 
+/*
+ * @brief  按类名查设备类号
+ * @param  name 类名
+ * @return 设备类号，未知类名返回 -1
+ */
 int agent_dev_class_by_name(const char *name)
 {
     size_t i;
@@ -104,11 +137,21 @@ int agent_dev_class_by_name(const char *name)
     return -1;
 }
 
+/*
+ * @brief  取设备类名表的长度
+ * @return 类名个数
+ */
 int agent_dev_class_count(void)
 {
     return (int)(sizeof(class_names) / sizeof(class_names[0]));
 }
 
+/*
+ * @brief  把设备标志位翻译成可读文本
+ * @param  flags 标志位组合
+ * @param  out   输出缓冲区
+ * @param  size  输出缓冲区大小
+ */
 void agent_dev_decode_flags(rt_uint16_t flags, char *out, rt_size_t size)
 {
     static const struct { rt_uint16_t bit; const char *name; } bits[] =
@@ -136,6 +179,12 @@ void agent_dev_decode_flags(rt_uint16_t flags, char *out, rt_size_t size)
     }
 }
 
+/*
+ * @brief  遍历设备框架里注册的所有设备
+ * @param  callback 每个设备调用一次的回调
+ * @param  arg      传给回调的上下文
+ * @return 遍历到的设备数量
+ */
 int agent_dev_foreach(void (*callback)(rt_device_t dev, void *arg), void *arg)
 {
     struct rt_object_information *info;
@@ -157,6 +206,16 @@ int agent_dev_foreach(void (*callback)(rt_device_t dev, void *arg), void *arg)
     return count;
 }
 
+/*
+ * @brief  按 name 参数查找设备，可要求设备已打开
+ * @param  args      工具参数 JSON 对象
+ * @param  node      工具节点，失败时用于回填结果
+ * @param  name_out  输出设备名
+ * @param  need_open 是否要求设备处于已打开状态
+ * @param  out       结果缓冲区
+ * @param  used      已用字节数
+ * @return 设备句柄，失败返回 RT_NULL
+ */
 rt_device_t agent_dev_find(cJSON *args, AgentToolNode_t node, const char **name_out,
                            rt_bool_t need_open, char *out, rt_size_t *used)
 {
@@ -189,6 +248,18 @@ rt_device_t agent_dev_find(cJSON *args, AgentToolNode_t node, const char **name_
     return dev;
 }
 
+/*
+ * @brief  查找设备并校验它属于指定设备类
+ * @param  args        工具参数 JSON 对象
+ * @param  node        工具节点，失败时用于回填结果
+ * @param  name_out    输出设备名
+ * @param  class_id    期望的设备类号
+ * @param  class_label 期望类名，用于错误文本
+ * @param  need_open   是否要求设备处于已打开状态
+ * @param  out         结果缓冲区
+ * @param  used        已用字节数
+ * @return 设备句柄，失败返回 RT_NULL
+ */
 rt_device_t agent_dev_find_class(cJSON *args, AgentToolNode_t node, const char **name_out,
                                  int class_id, const char *class_label, rt_bool_t need_open,
                                  char *out, rt_size_t *used)
@@ -208,6 +279,15 @@ rt_device_t agent_dev_find_class(cJSON *args, AgentToolNode_t node, const char *
     return dev;
 }
 
+/*
+ * @brief  把十六进制文本解码成字节数组
+ * @param  text      十六进制文本，允许空格、冒号、逗号分隔
+ * @param  buffer    输出字节数组
+ * @param  max       输出数组容量
+ * @param  err       错误文本缓冲区
+ * @param  err_size  错误文本缓冲区大小
+ * @return 解码字节数，非法返回 -RT_EINVAL
+ */
 int agent_dev_hex_decode(const char *text, rt_uint8_t *buffer, rt_size_t max,
                          char *err, rt_size_t err_size)
 {
@@ -252,6 +332,14 @@ int agent_dev_hex_decode(const char *text, rt_uint8_t *buffer, rt_size_t max,
     return (int)bytes;
 }
 
+/*
+ * @brief  在结果里追加 hex 与可打印文本两行预览
+ * @param  out   结果缓冲区
+ * @param  size  结果缓冲区大小
+ * @param  used  已用字节数
+ * @param  data  数据字节
+ * @param  len   数据长度
+ */
 void agent_dev_hex_preview(char *out, rt_size_t size, rt_size_t *used,
                            const rt_uint8_t *data, rt_size_t len)
 {

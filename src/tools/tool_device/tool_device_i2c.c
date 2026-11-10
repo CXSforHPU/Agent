@@ -14,6 +14,14 @@
 
 #define I2C_ADDR_MAX 0x3ff
 
+/*
+ * @brief  解析并校验 I2C 总线设备与从机地址
+ * @param  args     工具参数 JSON 对象
+ * @param  node     工具节点，失败时用于回填结果
+ * @param  name_out 输出总线设备名
+ * @param  addr     输出从机地址
+ * @return I2C 总线设备，失败返回 RT_NULL
+ */
 static struct rt_i2c_bus_device *i2c_bus_arg(cJSON *args, AgentToolNode_t node,
                                              const char **name_out, rt_uint16_t *addr)
 {
@@ -36,7 +44,14 @@ static struct rt_i2c_bus_device *i2c_bus_arg(cJSON *args, AgentToolNode_t node,
     return rt_container_of(dev, struct rt_i2c_bus_device, parent);
 }
 
-/* 'data' + 'encoding' -> 缓冲区，长度写进 len。失败时结果已写好，返回 RT_FALSE。 */
+/*
+ * @brief  解析并校验 data 与 encoding，把待发送字节写进缓冲区
+ * @param  args   工具参数 JSON 对象
+ * @param  node   工具节点，失败时用于回填结果
+ * @param  buffer 输出字节缓冲区
+ * @param  len    输出字节长度
+ * @return 成功返回 RT_TRUE，失败返回 RT_FALSE
+ */
 static rt_bool_t i2c_payload(cJSON *args, AgentToolNode_t node, rt_uint8_t *buffer,
                              rt_size_t *len)
 {
@@ -93,6 +108,13 @@ static rt_bool_t i2c_payload(cJSON *args, AgentToolNode_t node, rt_uint8_t *buff
     return RT_TRUE;
 }
 
+/*
+ * @brief  解析并校验要读取的字节数
+ * @param  args   工具参数 JSON 对象
+ * @param  node   工具节点，失败时用于回填结果
+ * @param  count  输出字节数，缺省为 1
+ * @return 成功返回 RT_TRUE，失败返回 RT_FALSE
+ */
 static rt_bool_t i2c_count_arg(cJSON *args, AgentToolNode_t node, rt_size_t *count)
 {
     cJSON *item = cJSON_GetObjectItemCaseSensitive(args, "count");
@@ -109,6 +131,11 @@ static rt_bool_t i2c_count_arg(cJSON *args, AgentToolNode_t node, rt_size_t *cou
     return RT_TRUE;
 }
 
+/*
+ * @brief  向一个 I2C 从机写入一段字节
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_i2c_write(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -156,6 +183,11 @@ void tool_i2c_write(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  从一个 I2C 从机读取一段字节
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_i2c_read(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -201,6 +233,11 @@ void tool_i2c_read(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  在一次 I2C 传输里先写后读，用于读寄存器
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_i2c_writeread(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -268,6 +305,10 @@ void tool_i2c_writeread(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, done < 0 ? (rt_err_t)done : RT_EOK, out);
 }
 
+/*
+ * @brief  填 i2c_write 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void i2c_write_desc(cJSON *func)
 {
     tool_desc(func, "Send bytes to an I2C slave on a bus device (START, address, data, STOP).");
@@ -275,6 +316,11 @@ static void i2c_write_desc(cJSON *func)
         "and address; a returned byte count only proves the transfer completed on the wire.");
 }
 
+/*
+ * @brief  填 i2c_write 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void i2c_write_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string",
@@ -290,6 +336,10 @@ static void i2c_write_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("data"));
 }
 
+/*
+ * @brief  填 i2c_read 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void i2c_read_desc(cJSON *func)
 {
     tool_desc(func, "Read bytes from an I2C slave on a bus device (START, read address, data, "
@@ -298,6 +348,11 @@ static void i2c_read_desc(cJSON *func)
     tool_desc_more(func, "Returns hex and printable text.");
 }
 
+/*
+ * @brief  填 i2c_read 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void i2c_read_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string",
@@ -308,6 +363,10 @@ static void i2c_read_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("addr"));
 }
 
+/*
+ * @brief  填 i2c_writeread 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void i2c_writeread_desc(cJSON *func)
 {
     tool_desc(func, "Write then read in one I2C transfer, the usual way to read a register: send "
@@ -316,6 +375,11 @@ static void i2c_writeread_desc(cJSON *func)
         "authorized this bus and address.");
 }
 
+/*
+ * @brief  填 i2c_writeread 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void i2c_writeread_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string",

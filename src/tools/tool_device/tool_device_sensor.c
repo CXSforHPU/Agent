@@ -51,6 +51,11 @@ static const struct sensor_class sensor_classes[] =
     { "power",       "mW",      RT_FALSE },
 };
 
+/*
+ * @brief  取传感器单位枚举对应的单位文本
+ * @param  unit 单位枚举值
+ * @return 单位文本，未知单位返回 "unknown"
+ */
 static const char *sensor_unit_name(rt_uint8_t unit)
 {
     static const char *names[] =
@@ -63,6 +68,14 @@ static const char *sensor_unit_name(rt_uint8_t unit)
     return "unknown";
 }
 
+/*
+ * @brief  查找传感器设备并校验它属于传感器类
+ * @param  args      工具参数 JSON 对象
+ * @param  node      工具节点，失败时用于回填结果
+ * @param  name_out  输出设备名
+ * @param  need_open 是否要求设备处于已打开状态
+ * @return 传感器设备，失败返回 RT_NULL
+ */
 static rt_device_t sensor_arg(cJSON *args, AgentToolNode_t node, const char **name_out,
                               rt_bool_t need_open)
 {
@@ -73,7 +86,13 @@ static rt_device_t sensor_arg(cJSON *args, AgentToolNode_t node, const char **na
                                 need_open, out, &used);
 }
 
-/* data.type 是 RT_SENSOR_CLASS_*，按它选 union 成员并带上框架注释里的单位。 */
+/*
+ * @brief  按 data.type 解码采样值并带上框架定义的单位
+ * @param  out   结果缓冲区
+ * @param  size  结果缓冲区大小
+ * @param  used  已用字节数
+ * @param  d     一条采样数据
+ */
 static void sensor_decode(char *out, rt_size_t size, rt_size_t *used,
                           const struct rt_sensor_data *d)
 {
@@ -121,6 +140,11 @@ static void sensor_decode(char *out, rt_size_t size, rt_size_t *used,
     }
 }
 
+/*
+ * @brief  读取一次传感器数据并解码成带单位的读数
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_sensor_read(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -158,6 +182,11 @@ void tool_sensor_read(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  显示一个传感器的型号、类、厂商、单位与量程
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_sensor_info(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -197,6 +226,11 @@ void tool_sensor_info(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  执行一条可带标量参数的传感器控制命令
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_sensor_control(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -280,6 +314,10 @@ void tool_sensor_control(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  填 sensor_read 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void sensor_read_desc(cJSON *func)
 {
     tool_desc(func, "Take one reading from a sensor device and decode it into engineering units.");
@@ -288,6 +326,11 @@ static void sensor_read_desc(cJSON *func)
         "delivered.");
 }
 
+/*
+ * @brief  填 sensor_read 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void sensor_read_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string",
@@ -295,6 +338,10 @@ static void sensor_read_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("name"));
 }
 
+/*
+ * @brief  填 sensor_info 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void sensor_info_desc(cJSON *func)
 {
     tool_desc(func, "Show a sensor's model, class, vendor, unit, measurement range, minimum "
@@ -302,6 +349,11 @@ static void sensor_info_desc(cJSON *func)
     tool_desc_more(func, "Read-only; use it before changing range or output rate.");
 }
 
+/*
+ * @brief  填 sensor_info 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void sensor_info_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string",
@@ -309,6 +361,10 @@ static void sensor_info_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("name"));
 }
 
+/*
+ * @brief  填 sensor_control 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void sensor_control_desc(cJSON *func)
 {
     tool_desc(func, "Apply one of the sensor framework commands that take a single scalar "
@@ -318,6 +374,11 @@ static void sensor_control_desc(cJSON *func)
     tool_desc_more(func, "State-changing: call only after the user authorized this sensor.");
 }
 
+/*
+ * @brief  填 sensor_control 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void sensor_control_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string",

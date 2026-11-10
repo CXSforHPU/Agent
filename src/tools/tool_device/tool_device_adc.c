@@ -13,6 +13,11 @@
 #include <rtdevice.h>
 #include <drivers/adc.h>
 
+/*
+ * @brief  采样一个 ADC 通道，返回原始码与换算后的电压
+ * @param  args 工具参数 JSON 对象
+ * @param  node 工具节点，用于回填结果
+ */
 void tool_adc_read(cJSON *args, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -59,6 +64,7 @@ void tool_adc_read(cJSON *args, AgentToolNode_t node)
     mv = rt_adc_voltage(adc, channel);
     rt_device_control(dev, RT_ADC_CMD_GET_RESOLUTION, &bits);
     rt_device_control(dev, RT_ADC_CMD_GET_VREF, &vref);
+    /* 只有真正使能成功的通道才在这里关掉 */
     if (result == RT_EOK) rt_adc_disable(adc, channel);
 
     agent_dev_append(out, sizeof(out), &used, "adc read: device=%s channel=%d raw=%u",
@@ -69,6 +75,10 @@ void tool_adc_read(cJSON *args, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  填 adc_read 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void adc_read_desc(cJSON *func)
 {
     tool_desc(func, "Sample one ADC channel: enables it, converts once, reads the raw code and "
@@ -76,6 +86,11 @@ static void adc_read_desc(cJSON *func)
     tool_desc_read_only(func);
 }
 
+/*
+ * @brief  填 adc_read 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void adc_read_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact ADC device name from device_list.");

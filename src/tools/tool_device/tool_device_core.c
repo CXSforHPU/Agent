@@ -81,6 +81,11 @@ struct list_arg
     int stopped;
 };
 
+/*
+ * @brief  设备遍历回调，把匹配类的设备逐条追加到结果文本
+ * @param  dev 当前遍历到的设备
+ * @param  arg 指向 struct list_arg 的上下文
+ */
 static void list_cb(rt_device_t dev, void *arg)
 {
     struct list_arg *ctx = (struct list_arg *)arg;
@@ -108,6 +113,11 @@ struct count_arg
     int matched;
 };
 
+/*
+ * @brief  设备遍历回调，统计设备总数与匹配过滤条件的数量
+ * @param  dev 当前遍历到的设备
+ * @param  arg 指向 struct count_arg 的上下文
+ */
 static void count_cb(rt_device_t dev, void *arg)
 {
     struct count_arg *ctx = (struct count_arg *)arg;
@@ -116,6 +126,11 @@ static void count_cb(rt_device_t dev, void *arg)
     if (ctx->wanted_type >= 0 && (int)dev->type == ctx->wanted_type) ctx->matched++;
 }
 
+/*
+ * @brief  列出设备框架里注册的所有设备，可按设备类过滤
+ * @param  args_obj 工具参数 JSON 对象
+ * @param  node     工具节点，用于回填结果
+ */
 void tool_device_list(cJSON *args_obj, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -178,6 +193,11 @@ void tool_device_list(cJSON *args_obj, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  显示一个设备的类、标志、打开状态与引用计数
+ * @param  args_obj 工具参数 JSON 对象
+ * @param  node     工具节点，用于回填结果
+ */
 void tool_device_info(cJSON *args_obj, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -229,6 +249,11 @@ void tool_device_info(cJSON *args_obj, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  按名字打开一个设备，可指定读写模式与打开标志
+ * @param  args_obj 工具参数 JSON 对象
+ * @param  node     工具节点，用于回填结果
+ */
 void tool_device_open(cJSON *args_obj, AgentToolNode_t node)
 {
     static const struct { const char *name; rt_uint16_t bit; } flag_bits[] =
@@ -340,6 +365,11 @@ void tool_device_open(cJSON *args_obj, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  关闭一个已打开的设备，控制台设备会被拒绝
+ * @param  args_obj 工具参数 JSON 对象
+ * @param  node     工具节点，用于回填结果
+ */
 void tool_device_close(cJSON *args_obj, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -387,6 +417,11 @@ void tool_device_close(cJSON *args_obj, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  从一个已打开的设备读取数据，块设备按块、字符设备按字节
+ * @param  args_obj 工具参数 JSON 对象
+ * @param  node     工具节点，用于回填结果
+ */
 void tool_device_read(cJSON *args_obj, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -525,6 +560,11 @@ void tool_device_read(cJSON *args_obj, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  向一个已打开的设备写入文本或十六进制数据，块设备必须整块写
+ * @param  args_obj 工具参数 JSON 对象
+ * @param  node     工具节点，用于回填结果
+ */
 void tool_device_write(cJSON *args_obj, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -688,6 +728,11 @@ void tool_device_write(cJSON *args_obj, AgentToolNode_t node)
     agent_dev_finish(node, RT_EOK, out);
 }
 
+/*
+ * @brief  在一个已打开的设备上执行框架控制命令，只支持可由标量表达的命令
+ * @param  args_obj 工具参数 JSON 对象
+ * @param  node     工具节点，用于回填结果
+ */
 void tool_device_control(cJSON *args_obj, AgentToolNode_t node)
 {
     char out[DEVICE_OUT_SIZE];
@@ -876,6 +921,11 @@ void tool_device_control(cJSON *args_obj, AgentToolNode_t node)
 }
 
 /* 每个工具的参数对象写成静态 JSON，注册时才解析成 cJSON，省掉十几个临时对象。 */
+
+/*
+ * @brief  填 device_list 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void device_list_desc(cJSON *func)
 {
     tool_desc(func, "List devices registered in the RT-Thread device framework with name, class, "
@@ -885,6 +935,11 @@ static void device_list_desc(cJSON *func)
     tool_desc_read_only(func);
 }
 
+/*
+ * @brief  填 device_list 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void device_list_params(cJSON *props, cJSON *required)
 {
     create_property(props, "class", "string",
@@ -892,6 +947,10 @@ static void device_list_params(cJSON *props, cJSON *required)
         "class number. Omit to list every device.");
 }
 
+/*
+ * @brief  填 device_info 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void device_info_desc(cJSON *func)
 {
     tool_desc(func, "Show one device: class, capability flags, open state, reference count, which "
@@ -900,12 +959,21 @@ static void device_info_desc(cJSON *func)
     tool_desc_more(func, "Read-only; use before opening to confirm the device fits the task.");
 }
 
+/*
+ * @brief  填 device_info 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void device_info_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact device name from device_list.");
     cJSON_AddItemToArray(required, cJSON_CreateString("name"));
 }
 
+/*
+ * @brief  填 device_open 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void device_open_desc(cJSON *func)
 {
     tool_desc(func, "Open a device for use.");
@@ -914,6 +982,11 @@ static void device_open_desc(cJSON *func)
     tool_desc_more(func, "Close it when done.");
 }
 
+/*
+ * @brief  填 device_open 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void device_open_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact device name from device_list.");
@@ -926,6 +999,10 @@ static void device_open_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("name"));
 }
 
+/*
+ * @brief  填 device_close 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void device_close_desc(cJSON *func)
 {
     tool_desc(func, "Close a device once (reference counted).");
@@ -934,12 +1011,21 @@ static void device_close_desc(cJSON *func)
     tool_desc_more(func, "Call it after finishing work on a peripheral.");
 }
 
+/*
+ * @brief  填 device_close 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void device_close_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact device name from device_list.");
     cJSON_AddItemToArray(required, cJSON_CreateString("name"));
 }
 
+/*
+ * @brief  填 device_read 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void device_read_desc(cJSON *func)
 {
     tool_desc(func, "Read from an opened device; returns hex and printable text.");
@@ -949,6 +1035,11 @@ static void device_read_desc(cJSON *func)
     tool_desc_more(func, "Reports only what the device actually returned.");
 }
 
+/*
+ * @brief  填 device_read 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void device_read_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact device name from device_list.");
@@ -961,6 +1052,10 @@ static void device_read_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("name"));
 }
 
+/*
+ * @brief  填 device_write 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void device_write_desc(cJSON *func)
 {
     tool_desc(func, "Write to an opened device.");
@@ -970,6 +1065,11 @@ static void device_write_desc(cJSON *func)
         "peripheral acted on them.");
 }
 
+/*
+ * @brief  填 device_write 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void device_write_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact device name from device_list.");
@@ -984,6 +1084,10 @@ static void device_write_params(cJSON *props, cJSON *required)
     cJSON_AddItemToArray(required, cJSON_CreateString("data"));
 }
 
+/*
+ * @brief  填 device_control 工具的描述
+ * @param  func 描述 JSON 对象
+ */
 static void device_control_desc(cJSON *func)
 {
     tool_desc(func, "Run a framework control command on an opened device.");
@@ -994,6 +1098,11 @@ static void device_control_desc(cJSON *func)
     tool_desc_more(func, "State-changing commands need explicit user authorization.");
 }
 
+/*
+ * @brief  填 device_control 工具的参数表
+ * @param  props    属性 JSON 对象
+ * @param  required 必填项数组
+ */
 static void device_control_params(cJSON *props, cJSON *required)
 {
     create_property(props, "name", "string", "Exact device name from device_list.");
