@@ -17,6 +17,9 @@ SRC_ROOT = os.path.join(CWD, "src")
 INC_ROOT = os.path.join(CWD, "inc")
 
 # 子模块目录
+SRC_CORE = os.path.join(SRC_ROOT, "core")
+INC_CORE = os.path.join(INC_ROOT, "core")
+
 SRC_CHANNELS = os.path.join(SRC_ROOT, "channels")
 INC_CHANNELS = os.path.join(INC_ROOT, "channels")
 
@@ -46,13 +49,14 @@ src = []
 CPPPATH = []
 
 # ---------------------- Core 核心源码 ----------------------
-# 遍历src目录下所有.c文件
-for filename in os.listdir(SRC_ROOT):
-    file_fullpath = os.path.join(SRC_ROOT, filename)
+# 遍历src/core目录下所有.c文件
+for filename in os.listdir(SRC_CORE):
+    file_fullpath = os.path.join(SRC_CORE, filename)
     if filename.endswith(".c") and os.path.isfile(file_fullpath):
         src.append(file_fullpath)
 # 添加核心头文件目录
 CPPPATH.append(INC_ROOT)
+CPPPATH.append(INC_CORE)
 
 if GetDepend(["PKG_USING_AGENT"]):
     src += list(SConscript("skills/SConscript"))
