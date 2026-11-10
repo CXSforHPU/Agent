@@ -22,7 +22,7 @@
 
 ## 1. MessageHub：消息中心与消息数组
 
-头文件：`inc/MessageHub.h` 实现：`src/MessageHub.c`
+头文件：`inc/core/MessageHub.h` 实现：`src/core/MessageHub.c`
 
 ### 1.1 类型
 
@@ -113,18 +113,18 @@ typedef struct MessageHub
 
 ## 2. Chat：LLM 通信
 
-头文件：`inc/chat.h` 实现：`src/chat.c`
+头文件：`inc/core/chat.h` 实现：`src/core/chat.c`
 
 `chat.c` 只处理 HTTP 与 SSE 行拆分，请求体、鉴权头和事件解析都交给协议模块，位置在 `src/utils/protocol/`，统一入口 `inc/utils/protocol.h`。当前协议决定报文格式，切换接口见 2.3。
 
-请求地址填在 `PKG_AGENT_API_URL`。两种协议的地址不一样，板子直接发 HTTP，路径要写全：
+请求地址由「服务根地址 + 协议路径」拼出来。菜单里填两个 base URL，路径框架自己接：
 
-| 协议 | `PKG_AGENT_API_URL` 填什么 |
-|---|---|
-| OpenAI | `https://api.deepseek.com/chat/completions` |
-| Anthropic | `https://api.deepseek.com/anthropic/v1/messages` |
+| 协议 | Kconfig 里的 base URL | 框架补的路径 | 实际请求地址 |
+|---|---|---|---|
+| OpenAI | `PKG_AGENT_API_BASE_URL_OPENAI`，默认 `https://api.deepseek.com` | `/chat/completions` | `https://api.deepseek.com/chat/completions` |
+| Anthropic | `PKG_AGENT_API_BASE_URL_ANTHROPIC`，默认 `https://api.deepseek.com/anthropic` | `/v1/messages` | `https://api.deepseek.com/anthropic/v1/messages` |
 
-Anthropic SDK 的 base_url 是 `https://api.deepseek.com/anthropic`，那不是请求端点。SDK 会在后面补上 `/v1/messages`，板子没有 SDK 这一层。少写这段路径，服务端返回 404。
+`get_dynamic_agent_request_url()` 负责拼接，base URL 结尾的斜杠会先去掉，避免拼出 `//v1/messages`。运行时没有覆盖过 base URL 时，切换协议会跟着换用另一份 base URL；一旦通过 `agent_config_set()` 覆盖过，就固定用覆盖值，切协议不再自动换。
 
 ### 2.1 类型
 
@@ -184,7 +184,7 @@ typedef struct ChatResponse
 
 `agent_api_protocol_t` 有两个值：`AGENT_API_PROTOCOL_OPENAI` 与 `AGENT_API_PROTOCOL_ANTHROPIC`。
 
-`agent_protocol_switch()` 只改报文格式，不改请求地址。切成 Anthropic 之后，`PKG_AGENT_API_URL` 还得换成 `https://api.deepseek.com/anthropic/v1/messages`，否则请求会打到 OpenAI 的路径上。
+`agent_protocol_switch()` 改报文格式，也换请求地址：base URL 没被运行时覆盖过时，会跟着切到另一份 Kconfig base URL。已经用 `agent_config_set()` 覆盖过 base URL 的话，地址就固定在覆盖值上，切协议只换报文格式。
 
 消息在上下文里一律存规范格式，也就是 OpenAI 风格。协议模块负责转成自己的报文，解析时转回规范格式，因此两种协议下 `chat()` 的入参、返回结构和工具调用 JSON 完全一致，切换协议不需要改调用方。
 
@@ -192,7 +192,7 @@ Anthropic 报文与规范格式的对应关系见 [framework.md](./framework.md)
 
 ## 3. Context：上下文管理器
 
-头文件：`inc/context.h` 实现：`src/context.c`
+头文件：`inc/core/context.h` 实现：`src/core/context.c`
 
 ### 3.1 类型
 
@@ -264,7 +264,7 @@ typedef struct Context
 
 ## 4. Tool：工具系统
 
-头文件：`inc/tool_base.h`、`inc/tool_func.h`、`inc/utils/tool_json.h` 实现：`src/tool_base.c`、`src/tool_func.c`、`src/utils/tool_json.c`、`src/tools/*`
+头文件：`inc/core/tool_base.h`、`inc/core/tool_func.h`、`inc/utils/tool_json.h` 实现：`src/core/tool_base.c`、`src/core/tool_func.c`、`src/utils/tool_json.c`、`src/tools/*`
 
 ### 4.1 类型
 
@@ -422,7 +422,7 @@ typedef struct AgentToolList
 
 ### 4.7 Agent 运行时访问器
 
-头文件：`inc/AgentRuntime.h`
+头文件：`inc/core/AgentRuntime.h`
 
 | 函数 | 说明 |
 |---|---|
@@ -726,14 +726,14 @@ typedef struct
 
 ## 8. AgentConfig：运行时配置
 
-头文件：`inc/AgentConfig.h`，实现：`src/AgentConfig.c`
+头文件：`inc/core/AgentConfig.h`，实现：`src/core/AgentConfig.c`
 
 ```c
 typedef struct agent_runtime_config
 {
     char api_key[AGENT_CFG_API_KEY_MAX];
     char model_name[AGENT_CFG_MODEL_MAX];
-    char api_url[AGENT_CFG_API_URL_MAX];
+    char base_url[AGENT_CFG_BASE_URL_MAX];
     agent_api_protocol_t protocol;
     rt_bool_t is_configured;
 } rt_align(RT_ALIGN_SIZE) agent_runtime_config_t;
@@ -742,10 +742,11 @@ typedef struct agent_runtime_config
 | 函数 | 说明 |
 |---|---|
 | `agent_runtime_config_t *agent_config_get(void)` | 取静态配置指针 |
-| `void agent_config_set(const char *api_key, const char *model_name, const char *api_url)` | 热更新配置，参数可为 `RT_NULL` |
+| `void agent_config_set(const char *api_key, const char *model_name, const char *base_url)` | 热更新配置，参数可为 `RT_NULL` |
 | `const char *get_dynamic_agent_api_key(void)` | 优先返回运行时值，否则返回 `PKG_AGENT_API_KEY` |
 | `const char *get_dynamic_agent_model_name(void)` | 同上，回退 `PKG_AGENT_MODEL_NAME` |
-| `const char *get_dynamic_agent_api_url(void)` | 同上，回退 `PKG_AGENT_API_URL` |
+| `const char *get_dynamic_agent_base_url(void)` | 同上，回退当前协议对应的 `PKG_AGENT_API_BASE_URL_*` |
+| `const char *get_dynamic_agent_request_url(void)` | base URL 加协议路径，见第 2 节的拼接表。返回内部静态缓冲，同一时刻只供一个请求线程用 |
 | `agent_api_protocol_t get_dynamic_agent_api_protocol(void)` | 当前协议，默认取 `PKG_AGENT_API_PROTOCOL_SEL` 选中的那个 |
 | `void agent_config_set_protocol(agent_api_protocol_t protocol)` | 切换协议 |
 
@@ -755,7 +756,7 @@ typedef struct agent_runtime_config
 
 ## 9. Prompt：系统提示词
 
-头文件：`inc/prompt.h` 实现：`src/prompt.c`
+头文件：`inc/core/prompt.h` 实现：`src/core/prompt.c`
 
 | 函数 | 说明 |
 |---|---|
@@ -789,7 +790,7 @@ typedef struct agent_runtime_config
 
 ## 12. Skill：技能模块
 
-头文件：`inc/skill.h` 实现：`src/skill.c`
+头文件：`inc/core/skill.h` 实现：`src/core/skill.c`
 工具：`src/tools/tool_skill.c`，文件末尾用 `AGENT_TOOL_MODULE_EXPORT(skill, skill_tools)` 登记，工具名是 `skill`
 
 ### 12.1 类型
@@ -830,9 +831,9 @@ struct agent_skill
 
 ## 13. AgentFsm：工具调用状态机
 
-头文件：`inc/AgentFsm.h` 实现：`src/AgentFsm.c`
+头文件：`inc/core/AgentFsm.h` 实现：`src/core/AgentFsm.c`
 
-这个模块只被 `src/AgentLoop.c` 调用。状态机不碰邮箱和 TTS，输出由 `AgentFsmOps` 注入。节点与边的流转见 [framework.md](./framework.md) 3.1。
+这个模块只被 `src/core/AgentLoop.c` 调用。状态机不碰邮箱和 TTS，输出由 `AgentFsmOps` 注入。节点与边的流转见 [framework.md](./framework.md) 3.1。
 
 ### 13.1 宏
 

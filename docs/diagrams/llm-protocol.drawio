@@ -60,19 +60,19 @@
           <mxGeometry x="680" y="360" width="320" height="140" as="geometry" />
         </mxCell>
 
-        <mxCell id="url-openai" value="PKG_AGENT_API_URL&#xa;https://api.deepseek.com&#xa;/chat/completions"
+        <mxCell id="url-openai" value="PKG_AGENT_API_BASE_URL_OPENAI&#xa;https://api.deepseek.com&#xa;+ /chat/completions"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=13;"
                 vertex="1" parent="1">
           <mxGeometry x="1060" y="160" width="260" height="140" as="geometry" />
         </mxCell>
 
-        <mxCell id="url-anthropic" value="PKG_AGENT_API_URL&#xa;https://api.deepseek.com&#xa;/anthropic/v1/messages"
+        <mxCell id="url-anthropic" value="PKG_AGENT_API_BASE_URL_ANTHROPIC&#xa;https://api.deepseek.com/anthropic&#xa;+ /v1/messages"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=13;"
                 vertex="1" parent="1">
           <mxGeometry x="1060" y="360" width="260" height="140" as="geometry" />
         </mxCell>
 
-        <mxCell id="note1" value="切换协议只改报文格式&#xa;agent_protocol_switch() 不改请求地址&#xa;换协议要同时改 PKG_AGENT_API_URL&#xa;少写 /v1/messages 会拿到 404"
+        <mxCell id="note1" value="base URL 只填服务根地址，路径框架按协议补&#xa;agent_protocol_switch() 连地址一起换&#xa;base URL 被运行时覆盖过才固定不变&#xa;结尾斜杠先去掉，不会拼出 //v1/messages"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;align=left;verticalAlign=top;spacingLeft=12;spacingTop=10;"
                 vertex="1" parent="1">
           <mxGeometry x="80" y="560" width="560" height="160" as="geometry" />

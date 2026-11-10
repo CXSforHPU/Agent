@@ -25,22 +25,15 @@
 
 ### 2. 填接口地址与协议
 
-`Agent Runtime Configuration` 这一组要填三样东西：
+`Model & Endpoint` 这一组要填三样东西：
 
 | 配置项 | 说明 |
 |---|---|
 | API Key | 服务商的密钥 |
 | Model Name | 模型名，按服务商的写法填 |
-| API URL | 完整端点，域名加路径 |
+| base URL | 服务根地址，两种协议各一个 |
 
-API URL 填的是完整端点。两种协议各有一个地址，互不通用：
-
-| 协议 | API URL 填什么 |
-|---|---|
-| OpenAI | `https://api.deepseek.com/chat/completions` |
-| Anthropic | `https://api.deepseek.com/anthropic/v1/messages` |
-
-Anthropic SDK 的 base_url 是 `https://api.deepseek.com/anthropic`，那不是请求端点。SDK 会在后面补上 `/v1/messages`，板子直接发 HTTP，没有 SDK 这一层，路径要自己写全。少写 `/v1/messages` 会拿到 404。
+两种协议各有一个 base URL，只填域名加前缀，不带路径。OpenAI 默认 `https://api.deepseek.com`，Anthropic 默认 `https://api.deepseek.com/anthropic`，框架按协议补上 `/chat/completions` 或 `/v1/messages`。两个都填上，切协议时地址跟着换。拼出来的完整地址见[核心机制](#llm-协议)。
 
 协议在 `PKG_AGENT_API_PROTOCOL_SEL` 里选。选 Anthropic 时菜单会多出 `anthropic-version` 和 `max_tokens` 两项。
 
@@ -126,7 +119,7 @@ msh_agent_tts -o /a.wav 今天天气不错
 
 播放需要板上先注册音频设备。合成走的是同步等待，服务端没预热时首帧要等服务端把模型拉起来，实测冷启动 203 s，模型常驻后每句 2～3 s。服务端要先装配好推理链与音色权重，步骤见 [resource/file_server/README.md](resource/file_server/README.md) 第 11 节。
 
-想让每轮回复自动播报，在 `Audio tts Server Settings` 里打开 `Auto play the answer by voice`（`PKG_AGENT_TTS_AUTO_PLAY`）。它依赖 `PKG_AGENT_DRIVER_AUDIO`，默认关闭。打开后一条回复只发一次请求，服务端按 1.5 s 一帧往外发，后台线程收一帧播一帧，主循环不等待。兜底提示不发声。
+想让每轮回复自动播报，在 `Multimodal → Speech → TTS` 里打开 `Auto play the answer by voice`（`PKG_AGENT_TTS_AUTO_PLAY`）。它依赖 `PKG_AGENT_DRIVER_AUDIO`，默认关闭。打开后一条回复只发一次请求，服务端按 1.5 s 一帧往外发，后台线程收一帧播一帧，主循环不等待。兜底提示不发声。
 
 音频驱动与多模态开关相互独立。只使用录音、播放时，打开 `Enable Agent Driver Audio` 即可，但 BSP 需要先启用音频设备。
 
@@ -167,20 +160,20 @@ draw.io 源文件：[agent-fsm.drawio](./docs/diagrams/agent-fsm.drawio)
 
 | 组件 | 文件 | 职责 |
 |---|---|---|
-| AgentLoop | `src/AgentLoop.c` | 初始化、对话主循环、组装全局状态并启动状态机、清理 |
-| AgentFsm | `src/AgentFsm.c` | 工具调用状态机：决策、校验、执行、观察、护栏、收尾 |
-| Chat | `src/chat.c` | 发请求、拆 SSE 行；报文格式交给 `src/utils/protocol/` 下的协议模块 |
-| MessageHub | `src/MessageHub.c` | 双邮箱消息传递，支持超时接收 |
-| Context | `src/context.c` | 维护 system / user / assistant / tool 消息 |
-| Tool | `src/tool_base.c`、`src/tool_func.c` | 工具链表的注册、查找、执行与清理；模块表在 `src/utils/tool_json.c` |
+| AgentLoop | `src/core/AgentLoop.c` | 初始化、对话主循环、组装全局状态并启动状态机、清理 |
+| AgentFsm | `src/core/AgentFsm.c` | 工具调用状态机：决策、校验、执行、观察、护栏、收尾 |
+| Chat | `src/core/chat.c` | 发请求、拆 SSE 行；报文格式交给 `src/utils/protocol/` 下的协议模块 |
+| MessageHub | `src/core/MessageHub.c` | 双邮箱消息传递，支持超时接收 |
+| Context | `src/core/context.c` | 维护 system / user / assistant / tool 消息 |
+| Tool | `src/core/tool_base.c`、`src/core/tool_func.c` | 工具链表的注册、查找、执行与清理；模块表在 `src/utils/tool_json.c` |
 | Channels | `src/channels/` | CLI、WebNet、Debug 通道实现 |
-| AgentConfig | `src/AgentConfig.c` | 编译期默认值与运行时配置 |
+| AgentConfig | `src/core/AgentConfig.c` | 编译期默认值与运行时配置 |
 | Utils | `src/utils/` | 多模态转换、文件上传下载、STT 与 TTS、文本注入、webclient 超时封装 |
 | AgentAudio | `src/driver/audio/AgentAudio.c` | 播放与录音命令封装 |
 | MQTT | `src/tools/tool_mqtt/` | MQTT 连接、订阅、过滤、规则与历史缓存 |
 | Device | `src/tools/tool_device/` | 设备框架工具，通用层 7 个工具加 8 个设备类模块，各模块自己登记到 `src/utils/tool_json.c` 的模块表 |
 | MCP | `src/tools/tool_mcp/` | MCP 客户端：握手、取远端工具表、把远端工具注册进 agent 工具表 |
-| Skill | `src/skill.c`、`src/tools/tool_skill.c` | 内嵌技能注册表、技能目录与加载工具 |
+| Skill | `src/core/skill.c`、`src/tools/tool_skill.c` | 内嵌技能注册表、技能目录与加载工具 |
 
 ### 目录结构
 
@@ -204,18 +197,16 @@ draw.io 源文件：[agent-fsm.drawio](./docs/diagrams/agent-fsm.drawio)
 
 对话层支持两种报文格式，实现放在 `src/utils/protocol/`，按协议一个文件：
 
-| 协议 | 端点地址 | 鉴权 | 结束标志 |
-|---|---|---|---|
-| OpenAI | `https://api.deepseek.com/chat/completions` | `Authorization: Bearer` | `data: [DONE]` |
-| Anthropic | `https://api.deepseek.com/anthropic/v1/messages` | `x-api-key` 与 `anthropic-version` | `message_stop` 事件 |
+| 协议 | base URL 选项 | 默认值 | 补的路径 | 鉴权 | 结束标志 |
+|---|---|---|---|---|---|
+| OpenAI | `PKG_AGENT_API_BASE_URL_OPENAI` | `https://api.deepseek.com` | `/chat/completions` | `Authorization: Bearer` | `data: [DONE]` |
+| Anthropic | `PKG_AGENT_API_BASE_URL_ANTHROPIC` | `https://api.deepseek.com/anthropic` | `/v1/messages` | `x-api-key` 与 `anthropic-version` | `message_stop` 事件 |
 
-`PKG_AGENT_API_URL` 要填上表里的完整地址。换成别家服务商时，地址、鉴权头和模型名一起改。
-
-Anthropic 的地址多一段路径。SDK 的 base_url 是 `https://api.deepseek.com/anthropic`，SDK 自己补 `/v1/messages`；板子发的是裸 HTTP，路径要写全。
+菜单里填的是服务根地址，不含路径。默认值加上补的路径就是实际请求地址，base URL 结尾的斜杠会先去掉，不会拼出 `//v1/messages`。换成别家服务商时，base URL、鉴权头和模型名一起改。
 
 上下文里的消息统一存 OpenAI 风格的规范格式，协议模块负责转成各自的报文，解析时再转回来，所以两种协议下 `chat()` 的入参、返回结构和工具调用 JSON 完全一样。
 
-菜单里的 `PKG_AGENT_API_PROTOCOL_SEL` 决定默认协议，运行中用 MSH 命令 `agent_protocol openai` 或 `agent_protocol anthropic` 切换，改完下一轮请求就按新协议拼包。这个命令不改地址，切换后要自己把 `PKG_AGENT_API_URL` 换成对应协议的端点。
+菜单里的 `PKG_AGENT_API_PROTOCOL_SEL` 决定默认协议，运行中用 MSH 命令 `agent_protocol openai` 或 `agent_protocol anthropic` 切换，改完下一轮请求就按新协议拼包。base URL 没被运行时覆盖过时，切协议会跟着换用另一份 Kconfig base URL；覆盖过就固定用覆盖值。
 
 ![LLM 协议选择与报文转换](./docs/diagrams/llm-protocol.png)
 
@@ -318,7 +309,8 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 | 选项 | 说明 |
 |---|---|
-| `PKG_AGENT_API_KEY` / `PKG_AGENT_MODEL_NAME` / `PKG_AGENT_API_URL` | 默认 API 配置，可在运行时覆盖。URL 填完整端点，OpenAI 用 `https://api.deepseek.com/chat/completions`，Anthropic 用 `https://api.deepseek.com/anthropic/v1/messages` |
+| `PKG_AGENT_API_KEY` / `PKG_AGENT_MODEL_NAME` | 默认 API 配置，可在运行时覆盖 |
+| `PKG_AGENT_API_BASE_URL_OPENAI` / `PKG_AGENT_API_BASE_URL_ANTHROPIC` | 两种协议的服务根地址，默认 `https://api.deepseek.com` 与 `https://api.deepseek.com/anthropic`，不含路径 |
 | `PKG_AGENT_API_PROTOCOL_SEL` | 协议选择，OpenAI 或 Anthropic，默认 OpenAI；运行中可用 `agent_protocol` 命令切换，只改报文格式不改地址 |
 | `PKG_AGENT_ANTHROPIC_VERSION` | Anthropic 的 `anthropic-version` 请求头，默认 `2023-06-01`；仅在菜单选中 Anthropic 时显示 |
 | `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096；仅在菜单选中 Anthropic 时显示 |

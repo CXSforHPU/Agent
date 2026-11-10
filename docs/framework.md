@@ -52,7 +52,7 @@ AgentAudio 由应用直接调用，不参与对话主循环。
 
 ### 3.1 AgentLoop
 
-文件：`src/AgentLoop.c`
+文件：`src/core/AgentLoop.c`
 
 主循环线程名为 `AgentLoop`，栈 10240 字节，优先级 10。
 
@@ -61,7 +61,7 @@ AgentAudio 由应用直接调用，不参与对话主循环。
 - 一次请求结束后调用 `compress_context(g_context, PKG_AGENT_MESSAGE_TRIM)`。排除 system 和已有摘要后的消息数超过阈值时，尝试压缩旧历史，保留策略见 3.3。
 - 处理期间 `g_agent_busy` 为真，摘要请求期间也保持为真。`agent_is_busy()` 在此期间返回 `RT_TRUE`，等待新消息时返回 `RT_FALSE`。MQTT 注入等外部模块可据此错峰。
 
-`agent_loop` 只做两件事：组装全局状态（`AgentFsm_t`），把状态机跑完。工具循环的流转规则在 `src/AgentFsm.c`，每个节点做完本状态的事就返回下一个节点，也就是状态图里的一条边。
+`agent_loop` 只做两件事：组装全局状态（`AgentFsm_t`），把状态机跑完。工具循环的流转规则在 `src/core/AgentFsm.c`，每个节点做完本状态的事就返回下一个节点，也就是状态图里的一条边。
 
 | 节点 | 做什么 | 下一个节点 |
 |---|---|---|
@@ -80,7 +80,7 @@ draw.io 源文件：[agent-fsm.drawio](diagrams/agent-fsm.drawio)
 
 `agent_loop` 的规则：
 
-- 工具循环最多跑几轮由 Kconfig 的 `PKG_AGENT_TOOL_LOOP_MAX` 决定，默认 6，取值范围 1～32。`inc/AgentFsm.h` 里的 `AGENT_LOOP_MAX` 读取这个宏。
+- 工具循环最多跑几轮由 Kconfig 的 `PKG_AGENT_TOOL_LOOP_MAX` 决定，默认 6，取值范围 1～32。`inc/core/AgentFsm.h` 里的 `AGENT_LOOP_MAX` 读取这个宏。
 - 每轮由 `THINK` 节点调一次 `chat()`。请求失败最多尝试 3 次，退避间隔为 1 s、2 s。
 - `THINK` 判定没有 `tool_calls` 时，本轮回答即为最终回答，转 `FINISH`。
 - 有 `tool_calls` 时，先追加带 `tool_calls` 的 assistant 消息，再由 `VALIDATE` 逐个校验、`ACT` 执行、`OBSERVE` 写回。
@@ -102,7 +102,7 @@ MSH 命令：
 
 ### 3.2 MessageHub
 
-文件：`src/MessageHub.c`、`inc/MessageHub.h`
+文件：`src/core/MessageHub.c`、`inc/core/MessageHub.h`
 
 - 输入邮箱 `AgentInputMb`，容量 10，方向为通道 → 主循环。
 - 输出邮箱 `AgentOutMb`，容量 10，方向为主循环 → 通道。
@@ -114,11 +114,11 @@ MSH 命令：
 
 ### 3.3 Context
 
-文件：`src/context.c`、`inc/context.h`
+文件：`src/core/context.c`、`inc/core/context.h`
 
 维护一个 cJSON 消息数组，角色包括 system、user、assistant、tool。`has_summary` 标记索引 1 处是否有滚动摘要。
 
-- 创建时调用 `build_system_prompt`。保留 `src/prompt.c` 中 `get_system_prompt()` 的内容，再追加自动生成的内置技能 JSON 目录和加载说明。
+- 创建时调用 `build_system_prompt`。保留 `src/core/prompt.c` 中 `get_system_prompt()` 的内容，再追加自动生成的内置技能 JSON 目录和加载说明。
 - 技能加载说明要求模型在使用任务工具前调用 `skill({"name":"<name>"})`。完整说明仍在上下文中时可复用；只剩摘要时要重新加载。
 - `append_assistant_message`：
   - 没有工具调用时，写入 assistant 的正文。
@@ -139,18 +139,18 @@ assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容�
 
 ### 3.4 Chat
 
-文件：`src/chat.c`、`inc/chat.h`
+文件：`src/core/chat.c`、`inc/core/chat.h`
 
 `chat.c` 只管 HTTP 与 SSE 行拆分，报文格式交给 `src/utils/protocol/` 下的协议模块。当前协议由 `agent_protocol_get_ops()` 给出：OpenAI 走 `protocol_openai.c`，Anthropic 走 `protocol_anthropic.c`，切换见 3.8。
 
-请求地址填在 `PKG_AGENT_API_URL`。两种协议地址不同，板子直接发 HTTP，路径要写全：
+请求地址由「服务根地址 + 协议路径」拼出来，菜单里填两个 base URL，路径框架自己接：
 
-| 协议 | `PKG_AGENT_API_URL` 填什么 |
-|---|---|
-| OpenAI | `https://api.deepseek.com/chat/completions` |
-| Anthropic | `https://api.deepseek.com/anthropic/v1/messages` |
+| 协议 | base URL 选项 | 默认值 | 补的路径 | 实际请求地址 |
+|---|---|---|---|---|
+| OpenAI | `PKG_AGENT_API_BASE_URL_OPENAI` | `https://api.deepseek.com` | `/chat/completions` | `https://api.deepseek.com/chat/completions` |
+| Anthropic | `PKG_AGENT_API_BASE_URL_ANTHROPIC` | `https://api.deepseek.com/anthropic` | `/v1/messages` | `https://api.deepseek.com/anthropic/v1/messages` |
 
-Anthropic SDK 的 base_url 是 `https://api.deepseek.com/anthropic`，那不是请求端点。SDK 会在后面补上 `/v1/messages`，板子没有 SDK 这一层。少写这段路径，服务端返回 404。
+拼接在 `get_dynamic_agent_request_url()` 里做，base URL 结尾的斜杠先去掉，避免拼出 `//v1/messages`。base URL 没被运行时覆盖过时，切换协议会跟着换用另一份；覆盖过就固定用覆盖值。
 
 ![LLM 协议选择与报文转换](diagrams/llm-protocol.png)
 
@@ -174,7 +174,7 @@ draw.io 源文件：[llm-protocol.drawio](diagrams/llm-protocol.drawio)
 
 ### 3.5 Tool 工具系统
 
-文件：`src/tool_base.c`、`src/tool_func.c`、`src/utils/tool_json.c`（模块表）、`src/tools/*`（设备工具在 `src/tools/tool_device/`，MQTT 工具在 `src/tools/tool_mqtt/`）
+文件：`src/core/tool_base.c`、`src/core/tool_func.c`、`src/utils/tool_json.c`（模块表）、`src/tools/*`（设备工具在 `src/tools/tool_device/`，MQTT 工具在 `src/tools/tool_mqtt/`）
 
 - 全局单例工具链表，节点保存工具定义 JSON 与执行函数。
 - 工具函数签名：`void tool_xxx(cJSON *args, AgentToolNode_t node)`，结果写入 `node->ret.messages`。
@@ -233,10 +233,11 @@ WebNet 通道提供三个 CGI：
 
 ### 3.7 AgentConfig
 
-文件：`src/AgentConfig.c`、`inc/AgentConfig.h`
+文件：`src/core/AgentConfig.c`、`inc/core/AgentConfig.h`
 
-- 编译期默认值来自 `PKG_AGENT_API_KEY`、`PKG_AGENT_MODEL_NAME`、`PKG_AGENT_API_URL`。
+- 编译期默认值来自 `PKG_AGENT_API_KEY`、`PKG_AGENT_MODEL_NAME`，以及两份 `PKG_AGENT_API_BASE_URL_*`。
 - 运行时可用 `agent_config_set()` 修改，`get_dynamic_agent_*()` 优先返回运行时值。
+- `get_dynamic_agent_base_url()` 给服务根地址，`get_dynamic_agent_request_url()` 再接上协议路径，发请求用后者。
 - 纯静态存储，不使用堆。
 
 ### 3.8 Utils 与多模态
@@ -276,7 +277,7 @@ Anthropic 的报文差异由 `protocol_anthropic.c` 处理：
 
 切换协议用 `agent_protocol_switch()`，它同时改写运行时配置，下次发请求就按新协议拼包。菜单里的 `PKG_AGENT_API_PROTOCOL_SEL` 只决定默认值。
 
-`agent_protocol_switch()` 不改请求地址。切成 Anthropic 之后，还要把 `PKG_AGENT_API_URL` 换成 `https://api.deepseek.com/anthropic/v1/messages`。地址填 `https://api.deepseek.com/anthropic` 会拿到 404，那只是 SDK 的 base_url。
+`agent_protocol_switch()` 连请求地址一起改：base URL 没被运行时覆盖过时，切协议会换用另一份 Kconfig base URL；覆盖过就固定用覆盖值，只换报文格式。
 
 `file_op`、`stt`、`tts` 三个模块各带一个开关，分别是 `PKG_AGENT_MULTIMODAL_ENABLE`、`PKG_AGENT_STT_ENABLE`、`PKG_AGENT_TTS_ENABLE`。同名 .c 与 .h 用同一个宏整文件包住，`utils_internal.h` 也按这组宏决定是否导入。两个语音开关在 Kconfig 里位于多模态菜单之下，不开多模态就没有这两个宏。其余三个模块没有开关，始终编译。
 
@@ -358,7 +359,7 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 ### 3.13 Skill 技能模块
 
-文件：`skills/`、`skills/SConscript`、`skills/embed_skills.py`、`src/skill.c`、`inc/skill.h`、`src/tools/tool_skill.c`
+文件：`skills/`、`skills/SConscript`、`skills/embed_skills.py`、`src/core/skill.c`、`inc/core/skill.h`、`src/tools/tool_skill.c`
 
 技能是放在 `skills/` 目录下的 Markdown 文件。文件名去掉 `.md` 就是技能名，例如 `device-commands.md` 的技能名是 `device-commands`。随包发布的有 `math`、`mqtt`、`device`、`device-commands`。
 
@@ -370,7 +371,7 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 目录是 JSON 数组，每项包含 `name`、`title`、`size`。`title` 取 Markdown 里第一个 `# ` 标题，没有标题就用技能名。
 
-目录会注入系统提示词。`src/context.c` 的 `__build_system_prompt()` 在基础提示词后面依次接上目录和一段加载说明，要求模型在使用任务工具前调用 `skill({"name":"<name>"})` 并照着做。
+目录会注入系统提示词。`src/core/context.c` 的 `__build_system_prompt()` 在基础提示词后面依次接上目录和一段加载说明，要求模型在使用任务工具前调用 `skill({"name":"<name>"})` 并照着做。
 
 模型通过 `skill` 工具取正文。不带 `name` 时返回目录，带 `name` 时返回该技能的完整 Markdown。工具实现在 `src/tools/tool_skill.c`，参数说明和注册表也在同一个文件末尾。
 
@@ -505,7 +506,9 @@ sequenceDiagram
 
 | 宏 | 说明 |
 |---|---|
-| `PKG_AGENT_API_KEY` / `PKG_AGENT_API_URL` / `PKG_AGENT_MODEL_NAME` | 默认 API 配置 |
+| `PKG_AGENT_API_KEY` / `PKG_AGENT_MODEL_NAME` | 默认 API 配置 |
+| `PKG_AGENT_API_BASE_URL_OPENAI` | OpenAI 的服务根地址，默认 `https://api.deepseek.com`，框架补 `/chat/completions` |
+| `PKG_AGENT_API_BASE_URL_ANTHROPIC` | Anthropic 的服务根地址，默认 `https://api.deepseek.com/anthropic`，框架补 `/v1/messages` |
 | `PKG_AGENT_API_PROTOCOL_SEL` | 协议选择，OpenAI 或 Anthropic，默认 OpenAI；只决定默认值，运行时可用 `agent_protocol_switch()` 切换 |
 | `PKG_AGENT_ANTHROPIC_VERSION` | Anthropic 的 `anthropic-version` 请求头，默认 `2023-06-01`；仅在菜单选中 Anthropic 时显示 |
 | `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096；仅在菜单选中 Anthropic 时显示 |
@@ -520,12 +523,7 @@ sequenceDiagram
 
 沿用 `PKG_AGENT_MESSAGE_TRIM` 配置名，帮助说明已改为摘要压缩语义。它不再表示固定保留条数，最近消息的保留范围见 3.3。
 
-`PKG_AGENT_API_URL` 按协议填不同的地址：
-
-| 协议 | 地址 |
-|---|---|
-| OpenAI | `https://api.deepseek.com/chat/completions` |
-| Anthropic | `https://api.deepseek.com/anthropic/v1/messages` |
+请求地址由两份 base URL 加协议路径拼出，拼接规则见 3.6 的表。
 
 ### 多模态与语音
 
@@ -590,7 +588,7 @@ LVGL 通道的实现不在包内，由应用工程编译。
 ## 10. 已知说明
 
 - 串口中文乱码是控制台编码问题，不影响框架内存与功能。
-- `src/prompt.c` 里的系统提示词是示例内容，接入自己的产品时应按场景修改。
+- `src/core/prompt.c` 里的系统提示词是示例内容，接入自己的产品时应按场景修改。
 - `cleanup_agent_entry` 不停止 MQTT 客户端。需要断开连接时，先执行 `mqtt_tool stop`。
 - LVGL 通道只提供接口，包内不包含聊天界面。
 - `utils.h` 中下载函数的声明名与实际定义不一致，详见 [api.md](./api.md) 的“已知差异”。

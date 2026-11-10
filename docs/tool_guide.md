@@ -189,7 +189,7 @@ AGENT_TOOL_MODULE_EXPORT(add, add_tools)
 
 宏生成模块描述符，并用 `INIT_COMPONENT_EXPORT` 在内核组件初始化阶段调 `agent_tool_module_add()`，把模块登记进 `src/utils/tool_json.c` 的模块表。`init_tools()` 调一次 `agent_tool_register_modules()`，遍历模块表把每个工具挂上工具链表。模块表容量 24 项。
 
-`src/tools/*.c` 由 `SConscript` 自动收录，不需要改构建脚本。加一个工具也不用动 `src/tool_func.c` 和 `inc/tools/tools.h`。只有包外还要直接调用这个执行函数时，才需要新建头文件并加进 `tools.h`，`tool_add.h` 就是这种情况。
+`src/tools/*.c` 由 `SConscript` 自动收录，不需要改构建脚本。加一个工具也不用动 `src/core/tool_func.c` 和 `inc/tools/tools.h`。只有包外还要直接调用这个执行函数时，才需要新建头文件并加进 `tools.h`，`tool_add.h` 就是这种情况。
 
 ## 4. 示例：求余工具 mod
 

@@ -495,10 +495,10 @@ payload: {"temp":25}
 
 | 位置 | 改动 |
 |---|---|
-| `inc/AgentRuntime.h`（新增） | `agent_get_message_hub()` / `agent_is_running()` / `agent_is_busy()`：供工具层注入消息并做错峰 |
+| `inc/core/AgentRuntime.h`（新增） | `agent_get_message_hub()` / `agent_is_running()` / `agent_is_busy()`：供工具层注入消息并做错峰 |
 | `inc/utils.h` + `src/utils/message.c` | **公共注入入口 `agent_inject_text()`**：把一段文本作为用户消息交给 agent。原为 MQTT 模块私有的 `mqtt_inject_text()`，现提升为框架公共 API，任何工具/驱动都能复用（MQTT 路由线程仍然调用它，`tool_mqtt_route.c` 只保留本模块自己的注入计数 `s_inject_total` 与错峰时间戳 `s_last_inject_tick`） |
-| `src/AgentLoop.c` | 实现上述访问器；`cleanup_agent` 先摘除 hub 全局引用再销毁（避免注入方访问已释放对象）；输出 mailbox 满时释放消息（避免泄漏） |
-| `src/AgentFsm.c` | 工具调用状态机：请求失败自动重试 3 次；工具循环防呆（重复调用跳过、上限 6、强制文本收尾） |
+| `src/core/AgentLoop.c` | 实现上述访问器；`cleanup_agent` 先摘除 hub 全局引用再销毁（避免注入方访问已释放对象）；输出 mailbox 满时释放消息（避免泄漏） |
+| `src/core/AgentFsm.c` | 工具调用状态机：请求失败自动重试 3 次；工具循环防呆（重复调用跳过、上限 6、强制文本收尾） |
 | `inc/tools/tools.h` | `#ifdef PKG_AGENT_TOOL_MQTT_ENABLE` 下包含 `tool_mqtt.h` |
 | `src/tools/tool_mqtt/tool_mqtt_tools.c` | 七个工具的描述与参数构造函数、描述符表，文件末尾用 `AGENT_TOOL_MODULE_EXPORT(mqtt, mqtt_tools)` 登记；本文件只在 `PKG_AGENT_TOOL_MQTT_ENABLE` 打开时参与编译 |
 | `SConscript` | 启用宏后遍历 `src/tools/tool_mqtt/*.c` 编译，并加入 `inc/tools/tool_mqtt` 头文件路径 |
@@ -626,8 +626,8 @@ gdb 给出的关键信息：
 
 | 问题 | 现象 | 修复 |
 |---|---|---|
-| `PKG_AGENT_STREAM_LINE_BUFSZ` 仅 256 字节 | **模型不调用工具**：带 `tool_calls` 的 SSE 报文行实测 310+ 字节，超长整行被静默丢弃，框架认为模型没发起调用，直接把「我准备调用工具」的文本当成最终回答 | 该值提到 1024；同时改为「超长行告警并跳过」而非静默丢弃（`src/chat.c`） |
-| 推理字段名不兼容 | 提供方返回 `reasoning_content`，而 `chat.c` 只认 `reasoning`，导致思考过程全丢（界面只剩空白回复） | 两个字段名都支持（`src/chat.c`） |
+| `PKG_AGENT_STREAM_LINE_BUFSZ` 仅 256 字节 | **模型不调用工具**：带 `tool_calls` 的 SSE 报文行实测 310+ 字节，超长整行被静默丢弃，框架认为模型没发起调用，直接把「我准备调用工具」的文本当成最终回答 | 该值提到 1024；同时改为「超长行告警并跳过」而非静默丢弃（`src/core/chat.c`） |
+| 推理字段名不兼容 | 提供方返回 `reasoning_content`，而 `chat.c` 只认 `reasoning`，导致思考过程全丢（界面只剩空白回复） | 两个字段名都支持（`src/core/chat.c`） |
 | 工具调用分片字段为 `null` | 流式后续分片形如 `{"index":0,"id":null,"type":null,"function":{"name":"","arguments":"..."}}`，原实现按「字段必须齐全」判断并直接取 `valuestring`，会漏拼接/踩空指针 | 分片容错：`index` 缺失按 0、`id`/`name` 取首个非空分片、`arguments` 分片拼接；最终统一归一化（缺失 `id` 用 `call_<index>` 兜底、空 `arguments` 用 `{}` 兜底），保证下游 `tool_call_id` 与参数始终有效 |
 | CLI 通道线程栈 1024 字节 | 在 CLI 通道下输入较长的一句话后出现 `_rt_mutex_take: scheduler is not available` 断言 | `inc/channels/CLI.h` 的 `CLI_THREAD_STACK_SIZE` 改为 4096 |
 | lwIP `tcpip_thread` 栈 2048 字节 | 网络流量较大时内核栈检查告警/断言 | `RT_LWIP_TCPTHREAD_STACKSIZE` 提到 4096、`RT_LWIP_ETHTHREAD_STACKSIZE` 提到 2048 |
