@@ -321,7 +321,7 @@ resource/web/
 └── README.md              控制台自己的完整说明
 ```
 
-运维页 `/ops` 管的是文件服务器（`resource/file_server` 那套 FastAPI）和它带的 MCP 网关：装依赖、启动、停止都做成按钮，语音合成与语音转写也能在页面上试，日志能读尾部。按钮背后的接口是 `/api/ops/*`。
+运维页 `/ops` 管的是文件服务器（`resource/file_server` 那套 FastAPI）和它带的 MCP 网关：装依赖、启动、停止都做成按钮，两个服务的端口也能在页面上改，语音合成与语音转写能在页面上试，日志能读尾部并自动跟随最新一行。按钮背后的接口是 `/api/ops/*`。
 
 启动方式、接口清单与环境变量见 [resource/web/README.md](./resource/web/README.md)。
 
