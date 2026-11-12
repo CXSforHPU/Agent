@@ -198,7 +198,7 @@ public class OpsService {
      *
      * <p>控制台自己连文件服务器用 fileServerHost，板子在控制台外面，
      * 得用 deviceHost，两边的主机名经常不一样：控制台是 127.0.0.1，
-     * 板子那边可能是 10.0.2.2 或者局域网的 IP。
+     * 板子那边可能是 192.168.137.1 或者局域网的 IP。
      */
     public Map<String, Object> endpoints() {
         Map<String, Object> out = new LinkedHashMap<>();

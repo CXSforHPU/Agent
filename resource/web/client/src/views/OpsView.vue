@@ -821,13 +821,13 @@ function jumpToLatest() {
           <div class="section-label">板端地址</div>
           <NInput
             v-model:value="deviceHostInput"
-            placeholder="10.0.2.2"
+            placeholder="192.168.137.1"
             style="width: 180px"
             @update:value="deviceHostDirty = true"
           />
           <div class="muted">
-            板子访问文件服务器与 MCP 网关用的主机名，只填主机名或 IP。QEMU 里的板子填
-            10.0.2.2，真板子填局域网 IP。固件开了自动获取地址时，板端就按这个来连。
+            板子访问文件服务器与 MCP 网关用的主机名，只填主机名或 IP。QEMU 走 TAP 网桥时填
+            192.168.137.1，真板子填局域网 IP。固件开了自动获取地址时，板端就按这个来连。
           </div>
         </div>
       </div>

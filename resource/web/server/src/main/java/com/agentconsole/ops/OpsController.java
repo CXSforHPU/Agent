@@ -57,7 +57,7 @@ public class OpsController {
     /**
      * 改端口与启动组件。body 里可以带 fileServerPort、mcpPort、deviceHost
      * 与 startComponents，四项都可选，比如
-     * {"fileServerPort": 8001, "deviceHost": "10.0.2.2"}。
+     * {"fileServerPort": 8001, "deviceHost": "192.168.137.1"}。
      */
     @PutMapping("/settings")
     public ResponseEntity<ApiResponse<Map<String, Object>>> updateSettings(

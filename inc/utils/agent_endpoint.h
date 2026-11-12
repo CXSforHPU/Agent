@@ -19,18 +19,19 @@
  * 工程 .config 比包里的 Kconfig 旧时还没有这些选项，用默认地址兜底。
  * 自动获取模式下文件服务器与 MCP 的地址不在 menuconfig 里出现，
  * 固件编译时就是下面这个默认值，控制台连不上时当回退用。
+ * 默认值按 QEMU 走 TAP 网桥接宿主机算，宿主机在共享网段上是 192.168.137.1。
  */
 #ifndef PKG_AGENT_WEB_SERVER_URL
-#define PKG_AGENT_WEB_SERVER_URL "http://10.0.2.2:8000"
+#define PKG_AGENT_WEB_SERVER_URL "http://192.168.137.1:8000"
 #endif
 
 #ifndef PKG_AGENT_MCP_SERVER_URL
-#define PKG_AGENT_MCP_SERVER_URL "http://10.0.2.2:8765/mcp"
+#define PKG_AGENT_MCP_SERVER_URL "http://192.168.137.1:8765/mcp"
 #endif
 
 /* 自动获取模式下板端靠它找控制台，手动模式下板端不问控制台 */
 #ifndef PKG_AGENT_CONSOLE_URL
-#define PKG_AGENT_CONSOLE_URL "http://10.0.2.2:8080"
+#define PKG_AGENT_CONSOLE_URL "http://192.168.137.1:8080"
 #endif
 
 #ifndef PKG_AGENT_CONSOLE_API
