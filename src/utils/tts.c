@@ -13,14 +13,37 @@
 #ifdef PKG_AGENT_TTS_ENABLE
 
 /*
+ * @brief 拼出 TTS 接口地址
+ * @param buf  存放地址的缓冲区
+ * @param size 缓冲区大小
+ * @return RT_EOK 成功；地址为空或放不下返回负值
+ */
+static rt_err_t tts_url(char *buf, size_t size)
+{
+    if (PKG_AGENT_WEB_SERVER_URL[0] == '\0')
+    {
+        LOG_E("[tts] PKG_AGENT_WEB_SERVER_URL is empty");
+        return -RT_EINVAL;
+    }
+    int n = rt_snprintf(buf, size, "%s/tts", PKG_AGENT_WEB_SERVER_URL);
+    if (n < 0 || n >= (int)size)
+    {
+        LOG_E("[tts] url too long");
+        return -RT_EINVAL;
+    }
+    return RT_EOK;
+}
+
+/*
  * @brief 建会话、POST 合成请求并等到响应头，返回可以直接收响应体的会话
  * @param text   待合成文本（UTF-8，非空）
+ * @param url    TTS 接口地址
  * @param stream 非 0 时要求服务端流式分块，响应体变成 [u32 长度][WAV] 的帧序列
  * @return 会话指针，调用方负责 webclient_close()；失败返回 RT_NULL
  * @note 照 STT 的老办法：先只发请求头，连上之后把超时放宽，再自己写请求体、
  *       自己收响应，避免服务端首帧几十秒把默认超时撞穿。
  */
-static struct webclient_session *tts_post(const char *text, rt_bool_t stream)
+static struct webclient_session *tts_post(const char *text, rt_bool_t stream, const char *url)
 {
     struct webclient_session *session = RT_NULL;
     cJSON *root = RT_NULL;
@@ -53,9 +76,9 @@ static struct webclient_session *tts_post(const char *text, rt_bool_t stream)
     webclient_header_fields_add(session, "Content-Type: application/json\r\n");
     webclient_header_fields_add(session, "Content-Length: %d\r\n", (int)body_len);
 
-    LOG_I("[tts] POST %s, text %d bytes%s", PKG_AGENT_TTS_URL, (int)body_len,
+    LOG_I("[tts] POST %s, text %d bytes%s", url, (int)body_len,
           stream ? " (stream)" : "");
-    if (webclient_post(session, PKG_AGENT_TTS_URL, RT_NULL, 0) < 0)
+    if (webclient_post(session, url, RT_NULL, 0) < 0)
     {
         LOG_W("[tts] post connect fail");
         goto fail;
@@ -174,19 +197,19 @@ static rt_err_t agent_tts_synth(const char *text, const char *save_path, rt_off_
     int fd = -1, len = 0, total = 0;
     unsigned char *io_buf = RT_NULL;
     struct webclient_session *session = RT_NULL;
+    char url[AGENT_TTS_URL_BUF_SZ] = {0};
     int clen = 0;
 
     if (text == RT_NULL || text[0] == '\0' || save_path == RT_NULL)
     {
         return -RT_EINVAL;
     }
-    if (PKG_AGENT_TTS_URL[0] == '\0')
+    if (tts_url(url, sizeof(url)) != RT_EOK)
     {
-        LOG_E("[tts] PKG_AGENT_TTS_URL is empty");
         return -RT_EINVAL;
     }
 
-    session = tts_post(text, RT_FALSE);
+    session = tts_post(text, RT_FALSE, url);
     if (session == RT_NULL)
     {
         return -RT_ERROR;
@@ -266,7 +289,11 @@ static int msh_agent_tts(int argc, char *argv[])
         rt_kprintf("Usage:\n");
         rt_kprintf("  %s [-f] [-o <path>] <text>   # synthesize text to wav and play it\n", prog);
         rt_kprintf("  %s -f <text>                 # synthesize only, no playback\n", prog);
-        rt_kprintf("  server: %s, default save: %s\n", PKG_AGENT_TTS_URL, AGENT_TTS_SAVE_PATH);
+        {
+            char url[AGENT_TTS_URL_BUF_SZ] = {0};
+            tts_url(url, sizeof(url));
+            rt_kprintf("  server: %s, default save: %s\n", url, AGENT_TTS_SAVE_PATH);
+        }
         return 0;
     }
 
@@ -364,6 +391,7 @@ static void tts_play_stream(const char *text)
     struct webclient_session *session;
     unsigned char *io_buf = RT_NULL;
     char path[AGENT_TTS_SLOT_PATH_SZ];
+    char url[AGENT_TTS_URL_BUF_SZ] = {0};
     int slot = 0, blocks = 0, frame;
     rt_bool_t broke = RT_FALSE;
 
@@ -373,7 +401,12 @@ static void tts_play_stream(const char *text)
         agent_driver_audio_stop();
     }
 
-    session = tts_post(text, RT_TRUE);
+    if (tts_url(url, sizeof(url)) != RT_EOK)
+    {
+        return;
+    }
+
+    session = tts_post(text, RT_TRUE, url);
     if (session == RT_NULL)
     {
         LOG_W("[tts] reply stream request failed");
@@ -497,8 +530,11 @@ void agent_tts_speak_init(void)
     rt_thread_startup(g_tts_speak_thread);
     tts_slot_path(0, path, sizeof(path));
     tts_slot_path(1, alt, sizeof(alt));
-    LOG_I("[tts] reply auto play on, server=%s slots=%s %s",
-          PKG_AGENT_TTS_URL, path, alt);
+    {
+        char url[AGENT_TTS_URL_BUF_SZ] = {0};
+        tts_url(url, sizeof(url));
+        LOG_I("[tts] reply auto play on, server=%s slots=%s %s", url, path, alt);
+    }
 }
 
 /*

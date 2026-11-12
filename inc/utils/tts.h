@@ -13,6 +13,10 @@
 #define AGENT_TTS_IO_BUF_SZ     8192
 /* 乒乓槽位路径缓冲区：在 AGENT_TTS_SAVE_PATH 的扩展名前插一位序号 */
 #define AGENT_TTS_SLOT_PATH_SZ  64
+/* TTS 接口地址缓冲区：<web 服务器地址>/tts */
+#define AGENT_TTS_URL_BUF_SZ     128
+/* 服务端流式合成的分块时长，tts_post() 组请求体时要带上 */
+#define AGENT_TTS_BLOCK_SECONDS   1.5
 /* 让服务端重采样到板上采样率，省一半字节 */
 #define AGENT_TTS_SAMPLE_RATE   16000
 /* 板上 I2S 播放线程把送进来的每个采样复制成左右两个 PCM 槽
@@ -38,7 +42,6 @@
  * 乒乓槽位只要提前收好一块就不会听见停顿。
  * 块切到 0.5 s 只把起播提前 0.25 s，而最长间隔 0.97 s 已经超过一块的长度，会饿。
  */
-#define AGENT_TTS_BLOCK_SECONDS   1.5
 /* 一条回复最多收这么多块，防止跑飞的长答案一直占着扬声器（1.5 s/块 ≈ 96 s） */
 #define AGENT_TTS_MAX_BLOCKS      64
 /* 播报队列深度：一格放一条回复的文本指针，8 条已经排到十几秒之后 */

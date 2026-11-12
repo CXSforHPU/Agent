@@ -52,7 +52,15 @@ const char *agent_stt_transcribe(const char *path)
 
     char boundary[60];
     rt_snprintf(boundary, sizeof(boundary), "----------------------------%012d", rt_tick_get());
-    const char *uri = PKG_AGENT_STT_URL;
+    char uri[128] = {0};
+    int uri_len = rt_snprintf(uri, sizeof(uri), "%s/stt", PKG_AGENT_WEB_SERVER_URL);
+    if (uri_len < 0 || uri_len >= (int)sizeof(uri))
+    {
+        LOG_W("[stt] url too long");
+        rt_free(io_buf);
+        close(fd);
+        return RT_NULL;
+    }
     const char *filename = strrchr(path, '/');
     filename = filename ? filename + 1 : path;
     char form_data[128];

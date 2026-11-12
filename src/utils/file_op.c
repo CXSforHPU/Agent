@@ -191,7 +191,13 @@ cleanup:
 static rt_err_t agent_multi_get_file(const char *file_id, const char *path)
 {
     char url[128] = {0};
-    rt_snprintf(url, sizeof(url), "%s/%s", PKG_AGENT_DOWNLOAD_URL, file_id);
+    int n = rt_snprintf(url, sizeof(url), "%s/download/%s",
+                        PKG_AGENT_WEB_SERVER_URL, file_id);
+    if (n < 0 || n >= (int)sizeof(url))
+    {
+        LOG_E("[download] url too long");
+        return -RT_EINVAL;
+    }
     LOG_I("[download] url: %s -> %s", url, path);
     int ret = webclient_get_file(url, path);
     if (ret == 0)
@@ -214,6 +220,7 @@ static rt_err_t agent_upload_file(const char *path, char *out_url, size_t out_ur
     char resp_buf[512] = {0};
     char form_data[128] = {0};
     char filename[64] = {0};
+    char upload_url[128] = {0};
     cJSON *resp_json = RT_NULL;
     rt_err_t ret = -RT_ERROR;
 
@@ -224,7 +231,15 @@ static rt_err_t agent_upload_file(const char *path, char *out_url, size_t out_ur
     path_get_filename(path, filename, sizeof(filename));
     rt_snprintf(form_data, sizeof(form_data), "name=\"file\";filename=\"%s\"", filename);
 
-    int upload_ret = agent_post_file_stream(PKG_AGENT_UPLOAD_URL, path, form_data,
+    int url_len = rt_snprintf(upload_url, sizeof(upload_url), "%s/upload",
+                              PKG_AGENT_WEB_SERVER_URL);
+    if (url_len < 0 || url_len >= (int)sizeof(upload_url))
+    {
+        LOG_E("upload url too long");
+        return -RT_EINVAL;
+    }
+
+    int upload_ret = agent_post_file_stream(upload_url, path, form_data,
                                             resp_buf, sizeof(resp_buf));
     if (upload_ret != WEBCLIENT_OK)
     {
@@ -254,8 +269,8 @@ static rt_err_t agent_upload_file(const char *path, char *out_url, size_t out_ur
         goto exit_fail;
     }
 
-    int sn = rt_snprintf(out_url, out_url_len, "%s/%s",
-                         PKG_AGENT_DOWNLOAD_URL, file_id_json->valuestring);
+    int sn = rt_snprintf(out_url, out_url_len, "%s/download/%s",
+                         PKG_AGENT_WEB_SERVER_URL, file_id_json->valuestring);
     if (sn < 0 || sn >= (int)out_url_len)
     {
         LOG_E("url buffer overflow");

@@ -195,7 +195,9 @@ PKG_AGENT_MCP_SERVER_URL=http://PC-IP:8765/mcp
 
 本地调试时为 `http://127.0.0.1:8000/download/{file_id}`。
 
-Agent 侧的 `PKG_AGENT_DOWNLOAD_URL` 要填到 `/download` 为止，例如 `http://127.0.0.1:8000/download`。代码会直接追加 `/{file_id}`，不要再带一层 `/download`。内网穿透后把服务根地址换成公网地址。
+Agent 侧的 `PKG_AGENT_WEB_SERVER_URL` 要填到端口为止，例如 `http://127.0.0.1:8000`。代码会自己拼 `/upload`、`/download/{file_id}`、`/stt`、`/tts`，不要在宏里带路径。内网穿透后把地址换成公网地址。
+
+板端和模型服务取的不是同一个地址。板端上传走 `PKG_AGENT_WEB_SERVER_URL`，模型下载走板端回传的下载 URL，两条链路共用同一个基址。板端填本机地址时，只有板端这一侧通，模型服务抓不到文件。
 
 ## 5. 语音转写
 
@@ -224,7 +226,7 @@ Agent 侧配置：
 
 1. 打开多模态开关 `PKG_AGENT_MULTIMODAL_ENABLE`。
 2. 打开 `PKG_AGENT_STT_ENABLE`。
-3. 把 `PKG_AGENT_STT_URL` 填为 `http://<服务器地址>:8000/stt`。
+3. 把 `PKG_AGENT_WEB_SERVER_URL` 填为 `http://<服务器地址>:8000`，板端会拼出 `/stt`。
 
 录音格式固定为 16000 Hz、双声道、16 位 WAV。服务端读取后转成单声道再识别。
 
@@ -262,27 +264,34 @@ HTTPS 地址：
 
 ### 上传地址使用 HTTP
 
-Agent 的 `PKG_AGENT_UPLOAD_URL` 必须填 HTTP 地址，例如：
+Agent 的 `PKG_AGENT_WEB_SERVER_URL` 建议填 HTTP 地址，例如：
 
 ```text
-http://xxx.fgnwct.com/upload
+http://xxx.fgnwct.com
 ```
 
-实测 RT-Thread 通过 HTTPS 上传会遇到问题，表现为上传失败或返回 20040。`PKG_AGENT_STT_URL` 同理，建议使用 HTTP。
+实测 RT-Thread 通过 HTTPS 上传会遇到问题，表现为上传失败或返回 20040。`/stt` 同理，建议使用 HTTP。
 
-`PKG_AGENT_DOWNLOAD_URL` 是给大模型下载文件用的地址，必须是公网可访问的地址。模型服务访问不到内网地址和 `localhost`，使用 HTTPS 时证书也要被公网信任。
+板端自己拼出的下载地址要给大模型用，必须是公网可访问的地址。模型服务访问不到内网地址和 `localhost`，使用 HTTPS 时证书也要被公网信任。
 
 ## 7. 配置示例
 
 Agent 的多模态配置：
 
 ```text
-PKG_AGENT_UPLOAD_URL   = http://xxx.fgnwct.com/upload
-PKG_AGENT_DOWNLOAD_URL = https://xxx.fgnwct.com/download
-PKG_AGENT_STT_URL      = http://xxx.fgnwct.com/stt
+PKG_AGENT_WEB_SERVER_URL = http://xxx.fgnwct.com
 ```
 
-`PKG_AGENT_DOWNLOAD_URL` 只填到 `/download`，不要带 `file_id`。代码会直接追加 `/{file_id}`，拼出 `{PKG_AGENT_DOWNLOAD_URL}/{file_id}`。
+板端按这个地址拼出四个接口：
+
+```text
+上传     <地址>/upload
+下载     <地址>/download/<file_id>
+语音识别 <地址>/stt
+语音合成 <地址>/tts
+```
+
+地址只填到端口，不要带路径，也不要带 `file_id`。
 
 menuconfig 中的填写位置：
 
@@ -294,7 +303,7 @@ menuconfig 中的填写位置：
 
 1. `uv run --no-sync main.py` 正常运行，浏览器能打开 `127.0.0.1:8000/docs`。
 2. 穿透通道在线，HTTP 地址在浏览器中可访问。
-3. `PKG_AGENT_UPLOAD_URL` 使用 HTTP 公网地址。
+3. `PKG_AGENT_WEB_SERVER_URL` 使用 HTTP 公网地址。
 4. 开发板网络正常；使用 HTTPS 下载时，系统时间已同步。
 5. 上传后复制 `file_id` 拼出的下载 URL，在无痕窗口能直接访问。
 6. 下载 URL 中的 `file_id` 是完整的 36 位 UUID，没有截断。

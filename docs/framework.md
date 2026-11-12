@@ -312,7 +312,7 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 - 仅在 `PKG_AGENT_STT_ENABLE` 时编译。
 - `to_content()` 处理 `TYPE_AUDIO` 时调用 `agent_stt_transcribe()`。
-- 使用 multipart POST 把 WAV 发到 `PKG_AGENT_STT_URL`。
+- 使用 multipart POST 把 WAV 发到 `<PKG_AGENT_WEB_SERVER_URL>/stt`。
 - 连接超时 120 s，响应缓冲为静态 1024 字节。
 - 解析 `{"code":0,"data":{"text":"..."}}`。
 - 转写后删除本地录音，无论成功与否；成功时生成文本项，失败时生成一条提示文本，不上传音频。原因是纯文本模型收到 `audio_url` 会直接返回 422。
@@ -535,12 +535,10 @@ sequenceDiagram
 | 宏 | 说明 |
 |---|---|
 | `PKG_AGENT_MULTIMODAL_ENABLE` / `PKG_AGENT_MULTIMODAL_DISABLE` | 多模态开关，默认关闭 |
-| `PKG_AGENT_UPLOAD_URL` / `PKG_AGENT_DOWNLOAD_URL` | 文件服务器地址 |
+| `PKG_AGENT_WEB_SERVER_URL` | web 服务器根地址，默认 `http://10.0.2.2:8000`，不含路径 |
 | `PKG_AGENT_FILE_OP_THREAD_SIZE` | 文件操作线程栈，默认 4096 |
 | `PKG_AGENT_STT_ENABLE` / `PKG_AGENT_STT_DISABLE` | 语音转写开关，默认启用 |
-| `PKG_AGENT_STT_URL` | STT 接口地址 |
 | `PKG_AGENT_TTS_ENABLE` / `PKG_AGENT_TTS_DISABLE` | 语音合成开关，默认启用 |
-| `PKG_AGENT_TTS_URL` | TTS 接口地址 |
 | `PKG_AGENT_TTS_SAVE_FILE` | 合成 WAV 的落盘路径，默认 `/tts.wav`，需可写文件系统 |
 | `PKG_AGENT_TTS_AUTO_PLAY` | 回复自动播报，依赖 `PKG_AGENT_DRIVER_AUDIO`，默认关闭 |
 | `PKG_AGENT_DRIVER_AUDIO` | 音频驱动开关，独立于多模态 |

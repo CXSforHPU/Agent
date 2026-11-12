@@ -24,6 +24,11 @@
 #include "string.h"
 #include "MessageHub.h"
 
+/* 工程 .config 比包里的 Kconfig 旧时还没有这个选项，用默认的本机地址兜底 */
+#ifndef PKG_AGENT_WEB_SERVER_URL
+#define PKG_AGENT_WEB_SERVER_URL "http://10.0.2.2:8000"
+#endif
+
 #include "utils/message.h"
 #include "utils/format.h"
 #include "utils/tool_json.h"

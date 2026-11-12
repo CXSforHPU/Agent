@@ -363,8 +363,8 @@ resource/web/
 | `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096；仅在菜单选中 Anthropic 时显示 |
 | `PKG_AGENT_COMMUNICATION_CHANNEL_SEL` | 通道选择，默认 CLI |
 | `PKG_AGENT_MULTIMODAL_ENABLE` | 多模态总开关，默认关闭 |
-| `PKG_AGENT_UPLOAD_URL` / `PKG_AGENT_DOWNLOAD_URL` | 文件服务器地址 |
-| `PKG_AGENT_STT_ENABLE` / `PKG_AGENT_STT_URL` | 本地语音转写开关与接口地址 |
+| `PKG_AGENT_WEB_SERVER_URL` | web 服务器根地址，默认 `http://10.0.2.2:8000`；板端自己拼 `/upload`、`/download/<file_id>`、`/stt`、`/tts` |
+| `PKG_AGENT_STT_ENABLE` | 本地语音转写开关 |
 | `PKG_AGENT_DRIVER_AUDIO` | 音频驱动，独立于多模态 |
 | `PKG_AGENT_TOOL_MQTT_ENABLE` | MQTT 工具开关 |
 | `PKG_AGENT_TOOL_LOOP_MAX` | 一次请求最多跑几轮工具调用，默认 6，取值范围 1～32 |
@@ -422,7 +422,7 @@ python -B build/skill_qemu/run_llm_live.py
 | 模型反复调用同一个工具 | 工具结果为空，或模型不认可结果 | 重复调用会被跳过；连续两轮无效调用或达到 `PKG_AGENT_TOOL_LOOP_MAX` 轮时强制文本回答 |
 | CLI 看不到兜底提示 | 兜底文本只投递输出邮箱时，CLI 不显示 | 兜底文本由 `agent_notify()` 同时走流式打印；仍看不到就检查通道是否实现了 `on_context` |
 | 未启动 MQTT 时查询报 `mqtt state busy` | 状态锁只在客户端启动时创建，未启动就取不到 | 锁为幂等懒创建，未启动也能读订阅表和历史 |
-| STT 转写失败 | 地址错误、服务未启动、模型未下载 | 检查 `PKG_AGENT_STT_URL`，确认文件服务器 `/stt` 可用 |
+| STT 转写失败 | 地址错误、服务未启动、模型未下载 | 检查 `PKG_AGENT_WEB_SERVER_URL`，确认拼出来的 `<地址>/stt` 可用 |
 | TTS 合成返回 503 | 服务端没装配推理链，音色权重也没拉下来 | 在文件服务器目录跑 `bash deploy.sh --tts`（Windows 用 `deploy.bat --tts`），再用 `python fetch_tts.py check` 核对 |
 
 ## 依赖
