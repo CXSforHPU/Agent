@@ -723,14 +723,12 @@ typedef struct
 
 | 函数 | 说明 |
 |---|---|
-| `void agent_endpoint_init(void)` | 初始化。自动模式下向控制台问一次地址，问不到就打告警并用手填的地址 |
+| `void agent_endpoint_init(void)` | 初始化。自动模式下向控制台问一次地址，问不到就打告警并用固件内置的地址 |
 | `rt_err_t agent_endpoint_refresh(void)` | 重新问控制台一次。手动模式下返回 `-RT_ENOSYS` |
 | `const char *agent_endpoint_file_server(void)` | 当前的文件服务器地址。取不到运行时值时回 `PKG_AGENT_WEB_SERVER_URL` |
 | `const char *agent_endpoint_mcp(void)` | 当前的 MCP 网关地址。取不到运行时值时回 `PKG_AGENT_MCP_SERVER_URL` |
 
-地址来源由 Kconfig 的 `External Server` 菜单选。手动模式直接用宏里的地址；自动模式启动时请求
-`GET <PKG_AGENT_CONSOLE_URL><PKG_AGENT_CONSOLE_API>`，读回包里的 `data.fileServerUrl` 与
-`data.mcpUrl`。宏值在头文件里带 `#ifndef` 兜底，工程 `.config` 跟不上的包也有默认值。
+地址来源由 Kconfig 的 `External Server` 菜单选。手动模式三个地址都在菜单里填死；自动模式只填控制台地址，启动时请求 `GET <PKG_AGENT_CONSOLE_URL><PKG_AGENT_CONSOLE_API>`，读回包里的 `data.fileServerUrl` 与 `data.mcpUrl`。宏值在头文件里带 `#ifndef` 兜底，工程 `.config` 跟不上的包也有默认值。
 
 `init_agent()` 在 `init_tools()` 之前调 `agent_endpoint_init()`，MCP 客户端握手要用地址。
 
@@ -816,7 +814,7 @@ typedef struct agent_runtime_config
 | `msh_agent_upload_download down <file_id> <save_path>` | utils | 按文件 ID 下载 |
 | `msh_agent_tts [-f] [-o <path>] <text>` | utils | 合成语音落盘并播放 |
 | `agent_protocol [openai\|anthropic]` | utils | 查看或切换 LLM 协议 |
-| `msh_agent_endpoint [refresh]` | utils | 打印外部服务器地址与来源，带 `refresh` 再问控制台一次 |
+| `msh_agent_endpoint [refresh]` | utils | 打印控制台、文件服务器与 MCP 三个地址和来源，带 `refresh` 再问控制台一次 |
 | `mqtt_tool connect\|disconnect\|start\|stop\|status\|list\|sub\|unsub\|pub\|recv\|history\|rule\|rules\|sim\|flush` | MQTT 工具 | MQTT 调试命令 |
 
 `msh_agent_upload_download` 支持 `up` / `upload` 与 `down` / `download` 两组写法，也接受 `-h`、`--help`、`help`。

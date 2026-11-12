@@ -4,16 +4,22 @@
 #include <rtthread.h>
 
 /*
- * 外部服务器地址。文件服务器与 MCP 网关都在板子外面，地址有两个来源：
+ * 外部服务器地址。文件服务器、MCP 网关、管理控制台都在板子外面，
+ * 地址有两个来源：
  *
- *   手动  Kconfig 里写死，取不到也不换
- *   自动  启动时向管理控制台问一次，拿控制台报的文件服务器与 MCP 地址
+ *   手动  三个地址都在 Kconfig 里填死，板端启动时不问控制台
+ *   自动  只填控制台地址，板端启动时问一次，
+ *         拿控制台报的文件服务器与 MCP 网关地址
  *
- * 自动模式拿不到控制台时回退到手动地址，所以控制台没开只是地址旧一点，
- * 不会让上传下载与 MCP 直接瘫掉。
+ * 自动模式拿不到控制台时回退到下面编译进固件的默认地址，
+ * 所以控制台没开只是地址旧一点，不会让上传下载与 MCP 直接瘫掉。
  */
 
-/* 工程 .config 比包里的 Kconfig 旧时还没有这些选项，用默认地址兜底 */
+/*
+ * 工程 .config 比包里的 Kconfig 旧时还没有这些选项，用默认地址兜底。
+ * 自动获取模式下文件服务器与 MCP 的地址不在 menuconfig 里出现，
+ * 固件编译时就是下面这个默认值，控制台连不上时当回退用。
+ */
 #ifndef PKG_AGENT_WEB_SERVER_URL
 #define PKG_AGENT_WEB_SERVER_URL "http://10.0.2.2:8000"
 #endif
@@ -22,6 +28,7 @@
 #define PKG_AGENT_MCP_SERVER_URL "http://10.0.2.2:8765/mcp"
 #endif
 
+/* 自动获取模式下板端靠它找控制台，手动模式下板端不问控制台 */
 #ifndef PKG_AGENT_CONSOLE_URL
 #define PKG_AGENT_CONSOLE_URL "http://10.0.2.2:8080"
 #endif

@@ -347,7 +347,7 @@ msh /> agent_send_message 0 读一下 RTC 的时间
 
 地址来源有两种模式，各跑一遍。
 
-手动模式用 Kconfig 里的地址。自动模式启动时向控制台问一次，问不到就用手填的地址。
+手动模式三个地址都在 Kconfig 里填死，板端启动时不发任何请求。自动模式只填控制台地址，启动时向控制台问一次，问不到就用固件内置的地址。
 
 ```bash
 python build/qemu_endpoint_check.py manual
@@ -358,9 +358,9 @@ python build/qemu_endpoint_check.py auto
 
 1. 起一个假控制台，端口取固件的 `PKG_AGENT_CONSOLE_URL`，`GET /api/ops/endpoints` 回一份地址跟 Kconfig 不一样的 JSON，报的端口是 8100 与 8790。
 2. 起 QEMU，等板子启动完，打 `msh_agent_endpoint` 看板子用的是哪一份地址。
-3. 自动模式下再起一次板子，这次假控制台不答，板子应该回退到 Kconfig 里的地址。
+3. 自动模式下再起一次板子，这次假控制台不答，板子应该回退到固件内置的地址。
 
-判据一共 8 项。手动模式：模式是 manual，地址是 Kconfig 里的那两个，串口日志里没有 `[endpoint] GET`。自动模式加控制台在：模式是 auto，地址是假控制台报的那两个，日志里有 `[endpoint] file server ..., mcp ...`，没有回退告警。自动模式加控制台不在：日志里有 `[endpoint] use the fallback address in Kconfig`，地址是 Kconfig 里的那两个。
+判据一共 10 项。手动模式：模式是 manual，控制台地址、文件服务器地址、MCP 地址都是 Kconfig 里的值，串口日志里没有 `[endpoint] GET`。自动模式加控制台在：模式是 auto，地址是假控制台报的那两个，日志里有 `[endpoint] file server ..., mcp ...`，没有回退告警。自动模式加控制台不在：日志里有 `[endpoint] console unreachable`，地址回落到固件内置的那两个。
 
-脚本从固件的 `rtconfig.h` 读 `PKG_AGENT_CONSOLE_URL`，假控制台就起在这个地址的端口上，回退地址也从 `rtconfig.h` 读。改了固件配置不用改脚本。
+脚本从固件的 `rtconfig.h` 读 `PKG_AGENT_CONSOLE_URL`，假控制台就起在这个地址的端口上。回退地址先读 `rtconfig.h`，自动模式下这两个宏不在 `rtconfig.h` 里，改读包内 `inc/utils/agent_endpoint.h` 的默认值。改了固件配置不用改脚本。
 

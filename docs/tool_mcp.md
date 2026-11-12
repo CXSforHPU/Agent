@@ -74,7 +74,7 @@ SSE 解析按 `data:` 行取报文，优先挑 id 匹配的那一条。
 | 选项 | 默认值 | 说明 |
 |---|---|---|
 | `PKG_AGENT_TOOL_MCP_ENABLE` | `n` | 打开后编译 MCP 客户端与工具模块 |
-| `PKG_AGENT_MCP_SERVER_URL` | `http://10.0.2.2:8765/mcp` | 服务端完整地址。自动模式下这是控制台连不上时的回退值 |
+| `PKG_AGENT_MCP_SERVER_URL` | `http://10.0.2.2:8765/mcp` | 服务端完整地址。只有手动模式下显示，自动模式下这个地址由控制台下发 |
 | `PKG_AGENT_MCP_MAX_TOOLS` | `40` | 最多注册多少个远端工具，范围 1 到 64 |
 | `PKG_AGENT_MCP_TIMEOUT_MS` | `30000` | 单次 HTTP 请求超时，范围 1000 到 120000 |
 | `PKG_AGENT_MCP_RESP_BUFSZ` | `32768` | 单个响应体的上限，范围 2048 到 65536 |
@@ -174,7 +174,7 @@ deploy.bat --start-only --start file-server,mcp
 `--file-server-url https://你的域名`。参数说明见
 [../resource/file_server/mcp/README.md](../resource/file_server/mcp/README.md) 的「图片存到文件服务器」。
 
-设备端把 `PKG_AGENT_MCP_SERVER_URL` 改成网关所在机器的 IP，重新编译固件。开了自动获取地址就不用改这个宏，板端启动时自己向控制台问，见 [framework.md](./framework.md) 的 3.14。
+设备端把 `PKG_AGENT_MCP_SERVER_URL` 改成网关所在机器的 IP，重新编译固件。选了自动模式就不用改这个宏，只填控制台地址，板端启动时自己向控制台问，见 [framework.md](./framework.md) 的 3.14。
 
 ### 5.1 用户自己的工具
 

@@ -299,11 +299,15 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 ### 外部服务器地址
 
-板端要连两台外部服务器：文件服务器（上传下载、语音合成、语音转写）和 MCP 网关。这两个地址在 `External Server` 菜单里配，来源有两种。
+板端要连三台外部服务器：文件服务器（上传下载、语音合成、语音转写）、MCP 网关、管理控制台。地址在 `External Server` 菜单里配，分两种方式。
 
-手动模式是默认值。`PKG_AGENT_WEB_SERVER_URL` 和 `PKG_AGENT_MCP_SERVER_URL` 填什么就用什么，板端启动时不发任何请求。
+**手动**（默认）：三个地址都自己填，板端启动时不发任何请求。
 
-自动模式下，板端启动时向管理控制台问一次地址，接口是 `GET <控制台地址>/api/ops/endpoints`。控制台回一份 JSON，`data.fileServerUrl` 和 `data.mcpUrl` 是板端该用的地址：
+- `PKG_AGENT_CONSOLE_URL`：控制台地址。手动模式下板端不问控制台，填不填都不影响，填上以后切到自动模式不用重填。
+- `PKG_AGENT_WEB_SERVER_URL`：文件服务器根地址，板端自己拼 `/upload`、`/download/<file_id>`、`/stt`、`/tts`。
+- `PKG_AGENT_MCP_SERVER_URL`：MCP 网关地址，含 `/mcp` 路径。
+
+**自动**：只填控制台地址。板端启动时向控制台问一次，接口是 `GET <控制台地址>/api/ops/endpoints`。控制台回一份 JSON，`data.fileServerUrl` 和 `data.mcpUrl` 是板端该用的地址：
 
 ```json
 {
@@ -321,7 +325,7 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 控制台报的是板端该用的主机名，不是控制台自己那台机器的地址。运维页的「板端地址」填这个值：QEMU 里的板子填 `10.0.2.2`，真板子填局域网 IP。
 
-控制台连不上、回的不是 200、或者 JSON 里缺字段，板端都用 Kconfig 里手填的地址继续跑，不会卡住启动。手填的地址在自动模式下是回退值，不是废弃项。
+控制台连不上、回的不是 200、或者 JSON 里缺字段，板端退回编译进固件的默认地址（`http://10.0.2.2:8000` 与 `http://10.0.2.2:8765/mcp`）继续跑，不会卡住启动。自动模式下这两个地址不在菜单里出现，要改就切回手动模式。
 
 `msh_agent_endpoint` 打印当前用的地址和来源，`msh_agent_endpoint refresh` 再问控制台一次。
 
@@ -410,10 +414,10 @@ resource/web/
 
 | 选项 | 说明 |
 |---|---|
-| `PKG_AGENT_EXT_SERVER_SEL` | 地址来源，手动填死还是启动时向控制台问一次，默认手动 |
-| `PKG_AGENT_WEB_SERVER_URL` | 文件服务器根地址，默认 `http://10.0.2.2:8000`；板端自己拼 `/upload`、`/download/<file_id>`、`/stt`、`/tts`。自动模式下这是控制台连不上时的回退值 |
-| `PKG_AGENT_MCP_SERVER_URL` | MCP 网关地址，默认 `http://10.0.2.2:8765/mcp`。自动模式下这是回退值 |
-| `PKG_AGENT_CONSOLE_URL` | 控制台地址，默认 `http://10.0.2.2:8080`；只有自动模式下显示 |
+| `PKG_AGENT_EXT_SERVER_SEL` | 地址来源，三个都自己填，还是只填控制台地址、另两个向控制台要，默认自己填 |
+| `PKG_AGENT_CONSOLE_URL` | 控制台地址，默认 `http://10.0.2.2:8080`。自动模式下板端靠它问地址；手动模式下板端不问控制台 |
+| `PKG_AGENT_WEB_SERVER_URL` | 文件服务器根地址，默认 `http://10.0.2.2:8000`；板端自己拼 `/upload`、`/download/<file_id>`、`/stt`、`/tts`。只有手动模式下显示 |
+| `PKG_AGENT_MCP_SERVER_URL` | MCP 网关地址，默认 `http://10.0.2.2:8765/mcp`。只有手动模式下显示 |
 | `PKG_AGENT_CONSOLE_API` | 控制台上报地址的接口路径，默认 `/api/ops/endpoints`；只有自动模式下显示 |
 | `PKG_AGENT_ENDPOINT_TIMEOUT_MS` | 读控制台响应体的超时，默认 3000 毫秒；只有自动模式下显示 |
 
@@ -459,7 +463,7 @@ python -B build/skill_qemu/run_llm_live.py
 | 模型反复调用同一个工具 | 工具结果为空，或模型不认可结果 | 重复调用会被跳过；连续两轮无效调用或达到 `PKG_AGENT_TOOL_LOOP_MAX` 轮时强制文本回答 |
 | CLI 看不到兜底提示 | 兜底文本只投递输出邮箱时，CLI 不显示 | 兜底文本由 `agent_notify()` 同时走流式打印；仍看不到就检查通道是否实现了 `on_context` |
 | 未启动 MQTT 时查询报 `mqtt state busy` | 状态锁只在客户端启动时创建，未启动就取不到 | 锁为幂等懒创建，未启动也能读订阅表和历史 |
-| STT 转写失败 | 地址错误、服务未启动、模型未下载 | 检查 `PKG_AGENT_WEB_SERVER_URL`，确认拼出来的 `<地址>/stt` 可用 |
+| STT 转写失败 | 地址错误、服务未启动、模型未下载 | 手动模式查 `PKG_AGENT_WEB_SERVER_URL`，自动模式查控制台报的 `fileServerUrl`，确认拼出来的 `<地址>/stt` 可用 |
 | 自动模式下板端连不上文件服务器 | 控制台报的地址板端够不着 | 运维页的「板端地址」填板子能访问到的地址；QEMU 里的板子填 `10.0.2.2`，真板子填局域网 IP |
 | TTS 合成返回 503 | 服务端没装配推理链，音色权重也没拉下来 | 在文件服务器目录跑 `bash deploy.sh --tts`（Windows 用 `deploy.bat --tts`），再用 `python fetch_tts.py check` 核对 |
 | TTS 或 STT 返回 404 | 启动时没选这个组件，服务只注册选中的端点 | 用 `--start` 点上 `tts` 或 `stt`，或者在运维页的勾选框里选中后重新启动 |

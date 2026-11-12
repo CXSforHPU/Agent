@@ -387,14 +387,14 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 文件：`src/utils/agent_endpoint.c`、`inc/utils/agent_endpoint.h`
 
-板端要连两台外部服务器：文件服务器和 MCP 网关。这个模块给出它们的当前地址。
+板端要连三台外部服务器：文件服务器、MCP 网关和管理控制台。这个模块给出它们的当前地址。
 
 地址有两个来源，由 Kconfig 的 `External Server` 菜单选：
 
 | 模式 | 行为 |
 |---|---|
-| 手动（默认） | 直接用 `PKG_AGENT_WEB_SERVER_URL` 与 `PKG_AGENT_MCP_SERVER_URL`，启动时不发任何请求 |
-| 自动 | 启动时向控制台问一次，用控制台报的地址；问不到就用手填的地址 |
+| 手动（默认） | 三个地址都在 Kconfig 里填死，启动时不发任何请求 |
+| 自动 | 只填控制台地址，启动时向控制台问一次，用控制台报的地址；问不到就用固件内置的默认地址 |
 
 自动模式下板端请求 `GET <PKG_AGENT_CONSOLE_URL><PKG_AGENT_CONSOLE_API>`，默认是 `http://10.0.2.2:8080/api/ops/endpoints`。回包里读 `data.fileServerUrl` 与 `data.mcpUrl` 两个字段。
 
@@ -402,9 +402,9 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 - `init_agent()` 在 `init_tools()` 之前调 `agent_endpoint_init()`。MCP 客户端握手要用地址，所以解析必须先跑。
 - `file_op.c`、`stt.c`、`tts.c` 和 `mcp_client.c` 调 `agent_endpoint_file_server()` 或 `agent_endpoint_mcp()` 取地址，不再直接读宏。
-- 宏值在 `agent_endpoint.h` 里带 `#ifndef` 兜底，工程 `.config` 跟不上的包也有默认地址可用。
+- 宏值在 `agent_endpoint.h` 里带 `#ifndef` 兜底，工程 `.config` 跟不上的包也有默认地址可用。自动模式下文件服务器与 MCP 的地址不在菜单里出现，固件编译时就是头文件里的默认值。
 
-控制台连不上、回的不是 200、或者 JSON 缺字段，模块都返回失败并打告警，板端用手填的地址继续跑。地址写进两个静态缓冲区，取地址的函数在缓冲区为空时直接回宏值，所以回退不需要额外的分支。
+控制台连不上、回的不是 200、或者 JSON 缺字段，模块都返回失败并打告警，板端用固件内置的地址继续跑。地址写进两个静态缓冲区，取地址的函数在缓冲区为空时直接回宏值，所以回退不需要额外的分支。
 
 `msh_agent_endpoint` 打印当前地址和来源，`msh_agent_endpoint refresh` 再问控制台一次。
 
@@ -574,10 +574,10 @@ sequenceDiagram
 
 | 宏 | 说明 |
 |---|---|
-| `PKG_AGENT_EXT_SERVER_MANUAL` / `PKG_AGENT_EXT_SERVER_AUTO` | 地址来源，手动填死还是启动时向控制台问一次，默认手动 |
-| `PKG_AGENT_WEB_SERVER_URL` | 文件服务器根地址，默认 `http://10.0.2.2:8000`，不含路径 |
-| `PKG_AGENT_MCP_SERVER_URL` | MCP 网关地址，默认 `http://10.0.2.2:8765/mcp` |
-| `PKG_AGENT_CONSOLE_URL` | 控制台地址，默认 `http://10.0.2.2:8080`，只有自动模式下显示 |
+| `PKG_AGENT_EXT_SERVER_MANUAL` / `PKG_AGENT_EXT_SERVER_AUTO` | 地址来源，三个都自己填，还是只填控制台地址、另两个向控制台要，默认自己填 |
+| `PKG_AGENT_CONSOLE_URL` | 控制台地址，默认 `http://10.0.2.2:8080`。自动模式下板端靠它问地址，手动模式下板端不问控制台 |
+| `PKG_AGENT_WEB_SERVER_URL` | 文件服务器根地址，默认 `http://10.0.2.2:8000`，不含路径。只有手动模式下显示 |
+| `PKG_AGENT_MCP_SERVER_URL` | MCP 网关地址，默认 `http://10.0.2.2:8765/mcp`。只有手动模式下显示 |
 | `PKG_AGENT_CONSOLE_API` | 控制台上报地址的接口路径，默认 `/api/ops/endpoints`，只有自动模式下显示 |
 | `PKG_AGENT_ENDPOINT_TIMEOUT_MS` | 读控制台响应体的超时，默认 3000 毫秒，只有自动模式下显示 |
 

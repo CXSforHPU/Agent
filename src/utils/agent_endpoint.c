@@ -130,7 +130,7 @@ void agent_endpoint_init(void)
 #ifdef PKG_AGENT_EXT_SERVER_AUTO
     if (agent_endpoint_refresh() != RT_EOK)
     {
-        LOG_W("[endpoint] use the fallback address in Kconfig");
+        LOG_W("[endpoint] console unreachable, use the address built into the firmware");
     }
 #endif
 }
@@ -154,11 +154,12 @@ static int msh_agent_endpoint(int argc, char *argv[])
 {
     rt_kprintf("mode       : %s\n",
 #ifdef PKG_AGENT_EXT_SERVER_AUTO
-               "auto (query the console at startup)"
+               "auto (ask the console for the file server and MCP)"
 #else
-               "manual (from Kconfig)"
+               "manual (all three addresses from Kconfig)"
 #endif
     );
+    rt_kprintf("console    : %s\n", PKG_AGENT_CONSOLE_URL);
     rt_kprintf("file server: %s\n", agent_endpoint_file_server());
     rt_kprintf("mcp        : %s\n", agent_endpoint_mcp());
 
