@@ -38,15 +38,16 @@ public class OpsService {
     private static final Logger log = LoggerFactory.getLogger(OpsService.class);
     private static final com.fasterxml.jackson.databind.ObjectMapper mapper =
             new com.fasterxml.jackson.databind.ObjectMapper();
-    /** 宿主级设置里存文件服务器端口的那一条。 */
+    /** 宿主级设置里存端口的那两条。 */
     private static final String KEY_FILE_SERVER_PORT = "fileServerPort";
+    private static final String KEY_MCP_PORT = "mcpPort";
 
     private final Path fileServerDir;
     private final Path clientDir;
     private final Path runDir;
     private final String fileServerHost;
     private final int defaultPort;
-    private final int mcpPort;
+    private final int defaultMcpPort;
     private final int ttsTimeoutSeconds;
     private final HttpClient http;
     private final OpsSettingRepository settings;
@@ -55,6 +56,8 @@ public class OpsService {
     private volatile Process fileServerProcess;
     /** 文件服务器当前的端口。运维页可以改，改完存库。 */
     private volatile int fileServerPort;
+    /** MCP 网关当前的端口。运维页可以改，改完存库。 */
+    private volatile int mcpPort;
 
     public OpsService(@Value("${agent.console.file-server-dir:../file_server}") String fileServerDir,
                       @Value("${agent.console.client-dir:../client}") String clientDir,
@@ -69,7 +72,7 @@ public class OpsService {
         this.runDir = Paths.get(runDir).toAbsolutePath().normalize();
         this.fileServerHost = host;
         this.defaultPort = port;
-        this.mcpPort = mcpPort;
+        this.defaultMcpPort = mcpPort;
         this.ttsTimeoutSeconds = ttsTimeoutSeconds;
         this.settings = settings;
         // 运维页存过的端口优先，没有就用配置文件里的默认值
@@ -77,6 +80,10 @@ public class OpsService {
                 .map(OpsService::parsePort)
                 .filter(p -> p > 0)
                 .orElse(port);
+        this.mcpPort = settings.find(KEY_MCP_PORT)
+                .map(OpsService::parsePort)
+                .filter(p -> p > 0)
+                .orElse(mcpPort);
         // 文件服务器是 uvicorn，只讲 HTTP/1.1。JDK 的 HttpClient 默认 HTTP/2，
         // 明文时会先发 Upgrade: h2c，uvicorn 认不出就把请求体丢了，
         // 回 422「Field required」。
@@ -105,7 +112,8 @@ public class OpsService {
         out.put("ttsReady", Files.isDirectory(fileServerDir.resolve("third_party/gpt-sovits-infer")));
         out.put("fileServerUrl", baseUrl());
         out.put("fileServerPort", fileServerPort);
-        out.put("mcpUrl", "http://" + fileServerHost + ":" + mcpPort + "/mcp");
+        out.put("mcpPort", mcpPort);
+        out.put("mcpUrl", mcpUrl());
         out.put("managed", fileServerProcess != null && fileServerProcess.isAlive());
         return out;
     }
@@ -115,33 +123,72 @@ public class OpsService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("fileServerPort", fileServerPort);
         out.put("defaultPort", defaultPort);
+        out.put("mcpPort", mcpPort);
+        out.put("defaultMcpPort", defaultMcpPort);
         return out;
     }
 
     /**
-     * 改文件服务器的端口。
+     * 改端口。fileServerPort 与 mcpPort 都可空，空的那项不动。
      *
      * <p>服务还在跑的时候不让改：换了端口以后旧进程没人管，会占着旧端口，
      * 而按端口反查 pid 的停止逻辑也只会查新端口，旧进程就漏了。
      */
-    public Map<String, Object> setPort(int port) {
+    public Map<String, Object> updateSettings(Integer fileServerPort, Integer mcpPort) {
+        if (fileServerPort == null && mcpPort == null) {
+            throw new IllegalArgumentException("没给端口");
+        }
+        if (fileServerPort != null) {
+            checkPort(fileServerPort);
+            if (fileServerPort != this.fileServerPort && portOpen(fileServerHost, this.fileServerPort)) {
+                throw new IllegalStateException("文件服务器还在跑，先点停止再改端口");
+            }
+        }
+        if (mcpPort != null) {
+            checkPort(mcpPort);
+            if (mcpPort != this.mcpPort && portOpen(fileServerHost, this.mcpPort)) {
+                throw new IllegalStateException("MCP 网关还在跑，先点停止再改端口");
+            }
+        }
+        int newFileServerPort = fileServerPort == null ? this.fileServerPort : fileServerPort;
+        int newMcpPort = mcpPort == null ? this.mcpPort : mcpPort;
+        if (newFileServerPort == newMcpPort) {
+            throw new IllegalArgumentException("文件服务器和 MCP 网关不能用同一个端口");
+        }
+
+        List<String> changed = new ArrayList<>();
+        if (fileServerPort != null && fileServerPort != this.fileServerPort) {
+            settings.put(KEY_FILE_SERVER_PORT, String.valueOf(fileServerPort));
+            this.fileServerPort = fileServerPort;
+            changed.add("文件服务器端口 " + fileServerPort);
+        }
+        if (mcpPort != null && mcpPort != this.mcpPort) {
+            settings.put(KEY_MCP_PORT, String.valueOf(mcpPort));
+            this.mcpPort = mcpPort;
+            changed.add("MCP 网关端口 " + mcpPort);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("fileServerPort", this.fileServerPort);
+        out.put("mcpPort", this.mcpPort);
+        out.put("message", changed.isEmpty()
+                ? "端口没变"
+                : String.join("、", changed) + "，下次启动生效");
+        return out;
+    }
+
+    private static void checkPort(int port) {
         if (port < 1 || port > 65535) {
             throw new IllegalArgumentException("端口只能在 1~65535 之间");
         }
-        if (port == fileServerPort) {
-            return Map.<String, Object>of("fileServerPort", port, "message", "端口没变");
-        }
-        if (portOpen(fileServerHost, fileServerPort)) {
-            throw new IllegalStateException("文件服务器还在跑，先点停止再改端口");
-        }
-        settings.put(KEY_FILE_SERVER_PORT, String.valueOf(port));
-        fileServerPort = port;
-        return Map.<String, Object>of("fileServerPort", port,
-                "message", "端口改成 " + port + "，下次启动生效");
     }
 
     private String baseUrl() {
         return "http://" + fileServerHost + ":" + fileServerPort;
+    }
+
+    private String mcpUrl() {
+        return "http://" + fileServerHost + ":" + mcpPort + "/mcp";
     }
 
     private boolean portOpen(String host, int port) {
@@ -219,6 +266,8 @@ public class OpsService {
             // MCP 网关的 --file-server 地址也跟着变
             cmd.add("--port");
             cmd.add(String.valueOf(fileServerPort));
+            cmd.add("--mcp-port");
+            cmd.add(String.valueOf(mcpPort));
         }
         return cmd;
     }

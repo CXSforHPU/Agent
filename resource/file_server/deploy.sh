@@ -198,8 +198,11 @@ fi
 
 if [[ "$mcp" == true ]]; then
     echo "==> starting the MCP gateway on port $mcp_port"
+    # pid 文件跟 bat 那份对齐，控制台停网关时按 pid 找进程
+    mcp_pid_file="$PWD/mcp_gateway.pid"
     "$python" mcp/mcp_gateway.py --host 0.0.0.0 --port "$mcp_port" \
         --root "$HOME" --file-server "http://127.0.0.1:${PORT:-8000}" \
+        --pid-file "$mcp_pid_file" \
         >> mcp_gateway.log 2>&1 &
     mcp_pid=$!
     # The file server runs in the foreground, so the gateway has to go down with it.

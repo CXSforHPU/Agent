@@ -36,37 +36,46 @@ public class OpsController {
         return ApiResponse.ok(ops.status());
     }
 
-    /** 运维面板的宿主级设置，目前是文件服务器的端口。 */
+    /** 运维面板的宿主级设置，目前是文件服务器与 MCP 网关的端口。 */
     @GetMapping("/settings")
     public ApiResponse<Map<String, Object>> settings(JwtService.Claims claims) {
         return ApiResponse.ok(ops.settings());
     }
 
-    /** 改文件服务器的端口。body 是 {"port": 8001}。 */
+    /**
+     * 改端口。body 里可以带 fileServerPort 与 mcpPort，两项都可选，
+     * 比如 {"fileServerPort": 8001, "mcpPort": 8766}。
+     */
     @PutMapping("/settings")
     public ResponseEntity<ApiResponse<Map<String, Object>>> updateSettings(
             @RequestBody Map<String, Object> body,
             JwtService.Claims claims) {
-        Object raw = body.get("port");
-        int port;
-        if (raw instanceof Number number) {
-            port = number.intValue();
-        } else if (raw != null) {
-            try {
-                port = Integer.parseInt(raw.toString().trim());
-            } catch (NumberFormatException e) {
-                return ResponseEntity.badRequest().body(ApiResponse.fail("端口要填数字"));
-            }
-        } else {
-            return ResponseEntity.badRequest().body(ApiResponse.fail("没给端口"));
+        Integer fileServerPort;
+        Integer mcpPort;
+        try {
+            fileServerPort = portOf(body.get("fileServerPort"));
+            mcpPort = portOf(body.get("mcpPort"));
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("端口要填数字"));
         }
         try {
-            return ResponseEntity.ok(ApiResponse.ok(ops.setPort(port)));
+            return ResponseEntity.ok(ApiResponse.ok(ops.updateSettings(fileServerPort, mcpPort)));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
         } catch (IllegalStateException e) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(e.getMessage()));
         }
+    }
+
+    /** body 里的端口值，键不在就是没这项。 */
+    private static Integer portOf(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof Number number) {
+            return number.intValue();
+        }
+        return Integer.valueOf(raw.toString().trim());
     }
 
     /** 装依赖。返回任务 id，前端轮询 /jobs/{id} 看进度。 */

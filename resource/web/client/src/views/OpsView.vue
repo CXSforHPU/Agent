@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, nextTick } from 'vue'
 import { api } from '../api.js'
 
 const status = ref({})
@@ -10,6 +10,8 @@ const busy = ref('')
 
 const logName = ref('file-server')
 const logLines = ref([])
+const logBox = ref(null)
+const followLog = ref(true)
 
 const ttsText = ref('这是 Agent 管理控制台合成的语音。')
 const ttsSpeaker = ref('')
@@ -19,8 +21,10 @@ const ttsBusy = ref(false)
 const ttsError = ref('')
 const ttsProgress = ref(null)
 
-const portInput = ref('')
-const portDirty = ref(false)
+const fileServerPortInput = ref('')
+const fileServerPortDirty = ref(false)
+const mcpPortInput = ref('')
+const mcpPortDirty = ref(false)
 const portBusy = ref(false)
 
 const sttFile = ref(null)
@@ -30,10 +34,23 @@ const sttError = ref('')
 
 let timer = null
 let progressTimer = null
+let logTimer = null
 
 const statusRows = computed(() => [
-  { key: '文件服务器', on: status.value.fileServer, note: status.value.fileServerUrl || '' },
-  { key: 'MCP 网关', on: status.value.mcpGateway, note: status.value.mcpUrl || '' },
+  {
+    key: '文件服务器',
+    on: status.value.fileServer,
+    note: status.value.fileServerPort
+      ? `端口 ${status.value.fileServerPort} · ${status.value.fileServerUrl || ''}`
+      : (status.value.fileServerUrl || ''),
+  },
+  {
+    key: 'MCP 网关',
+    on: status.value.mcpGateway,
+    note: status.value.mcpPort
+      ? `端口 ${status.value.mcpPort} · ${status.value.mcpUrl || ''}`
+      : (status.value.mcpUrl || ''),
+  },
   { key: 'Python 环境', on: status.value.venvReady, note: '文件服务器的 .venv' },
   { key: 'TTS 权重', on: status.value.ttsReady, note: 'GPT-SoVITS 推理代码与音色权重' },
 ])
@@ -87,11 +104,14 @@ const ttsProgressText = computed(() => {
 onMounted(() => {
   refreshStatus()
   refreshJobs()
+  loadLog()
   timer = setInterval(refreshStatus, 5000)
+  logTimer = setInterval(refreshLog, 3000)
 })
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  if (logTimer) clearInterval(logTimer)
   stopProgressPolling()
   if (audioUrl.value) URL.revokeObjectURL(audioUrl.value)
 })
@@ -105,8 +125,11 @@ async function refreshStatus() {
   try {
     status.value = await api.opsStatus()
     // 用户正在改端口的时候不要被轮询刷回去
-    if (!portDirty.value && status.value.fileServerPort) {
-      portInput.value = String(status.value.fileServerPort)
+    if (!fileServerPortDirty.value && status.value.fileServerPort) {
+      fileServerPortInput.value = String(status.value.fileServerPort)
+    }
+    if (!mcpPortDirty.value && status.value.mcpPort) {
+      mcpPortInput.value = String(status.value.mcpPort)
     }
   } catch (e) {
     error.value = e.message
@@ -179,20 +202,46 @@ async function startServer() {
   }
 }
 
-async function savePort() {
+function checkPort(value, label) {
+  const port = Number(value)
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    error.value = `${label}要填 1~65535 之间的整数`
+    return null
+  }
+  return port
+}
+
+// 只发改过的端口，没动的那项不动
+async function savePorts() {
   error.value = ''
   notice.value = ''
-  const port = Number(portInput.value)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    error.value = '端口要填 1~65535 之间的整数'
+  const body = {}
+  if (fileServerPortDirty.value) {
+    const port = checkPort(fileServerPortInput.value, '文件服务器端口')
+    if (port === null) {
+      return
+    }
+    body.fileServerPort = port
+  }
+  if (mcpPortDirty.value) {
+    const port = checkPort(mcpPortInput.value, 'MCP 网关端口')
+    if (port === null) {
+      return
+    }
+    body.mcpPort = port
+  }
+  if (!Object.keys(body).length) {
+    notice.value = '端口没改'
     return
   }
   portBusy.value = true
   try {
-    const data = await api.opsSaveSettings({ port })
-    portInput.value = String(data.fileServerPort)
-    portDirty.value = false
-    notice.value = data.message || `端口改成 ${data.fileServerPort}`
+    const data = await api.opsSaveSettings(body)
+    fileServerPortInput.value = String(data.fileServerPort)
+    mcpPortInput.value = String(data.mcpPort)
+    fileServerPortDirty.value = false
+    mcpPortDirty.value = false
+    notice.value = data.message || '端口已保存'
     await refreshStatus()
   } catch (e) {
     report(e)
@@ -294,9 +343,60 @@ async function loadLog() {
   error.value = ''
   try {
     logLines.value = await api.opsLog(logName.value, 200)
+    await scrollLogToEnd()
   } catch (e) {
     report(e)
   }
+}
+
+// 日志自动跟随：定时拉一次尾部，有新行就滚到底。
+// 用户往上翻过就停跟随，滚回底部再跟上。
+async function refreshLog() {
+  try {
+    const lines = await api.opsLog(logName.value, 200)
+    const el = logBox.value
+    const before = el ? el.scrollHeight : 0
+    const last = lines.length ? lines[lines.length - 1] : ''
+    const lastBefore = logLines.value.length ? logLines.value[logLines.value.length - 1] : ''
+    if (lines.length === logLines.value.length && last === lastBefore) {
+      return
+    }
+    logLines.value = lines
+    await nextTick()
+    if (!el) {
+      return
+    }
+    if (followLog.value) {
+      el.scrollTop = el.scrollHeight
+    } else {
+      // 尾部挤掉了几行，把滚动位置补回去，视线不要跳
+      el.scrollTop += el.scrollHeight - before
+    }
+  } catch (e) {
+    // 日志拉不到不算错，不打断页面
+  }
+}
+
+async function scrollLogToEnd() {
+  await nextTick()
+  const el = logBox.value
+  if (el) {
+    el.scrollTop = el.scrollHeight
+  }
+}
+
+function onLogScroll() {
+  const el = logBox.value
+  if (!el) {
+    return
+  }
+  // 离底部 16 像素以内就算贴着底部
+  followLog.value = el.scrollHeight - el.scrollTop - el.clientHeight < 16
+}
+
+function jumpToLatest() {
+  followLog.value = true
+  scrollLogToEnd()
 }
 </script>
 
@@ -385,20 +485,41 @@ async function loadLog() {
       <div class="row-actions">
         <input
           id="ops-port"
-          v-model="portInput"
+          v-model="fileServerPortInput"
           class="input inline port"
           type="number"
           min="1"
           max="65535"
-          @input="portDirty = true"
+          @input="fileServerPortDirty = true"
         />
-        <button class="btn ghost small" :disabled="portBusy" @click="savePort">
-          {{ portBusy ? '保存中……' : '保存端口' }}
-        </button>
       </div>
       <p class="muted">
         改端口前要先停掉文件服务器，保存后下次启动生效。MCP 网关会自动跟着指向新端口。
       </p>
+    </div>
+
+    <div class="field">
+      <label for="ops-mcp-port">MCP 网关端口</label>
+      <div class="row-actions">
+        <input
+          id="ops-mcp-port"
+          v-model="mcpPortInput"
+          class="input inline port"
+          type="number"
+          min="1"
+          max="65535"
+          @input="mcpPortDirty = true"
+        />
+      </div>
+      <p class="muted">
+        板端用这个端口连网关。改完保存，下次启动文件服务器时连带生效，两个端口不能填一样。
+      </p>
+    </div>
+
+    <div class="row-actions">
+      <button class="btn ghost small" :disabled="portBusy" @click="savePorts">
+        {{ portBusy ? '保存中……' : '保存端口' }}
+      </button>
     </div>
   </div>
 
@@ -468,15 +589,19 @@ async function loadLog() {
 
   <div class="panel">
     <h3>日志</h3>
+    <p class="muted">
+      每 3 秒拉一次尾部，有新行就自动滚到底。往上翻过就停跟随，滚回底部或者点「回到最新」再跟上。
+    </p>
     <div class="row-actions">
-      <select v-model="logName" class="input inline">
+      <select v-model="logName" class="input inline" @change="loadLog">
         <option value="file-server">文件服务器</option>
         <option value="install">装依赖</option>
       </select>
       <button class="btn ghost small" @click="loadLog">读取日志尾部</button>
+      <button v-if="!followLog" class="btn ghost small" @click="jumpToLatest">回到最新</button>
     </div>
 
-    <pre v-if="logLines.length" class="log">{{ logLines.join('\n') }}</pre>
+    <pre v-if="logLines.length" ref="logBox" class="log" @scroll="onLogScroll">{{ logLines.join('\n') }}</pre>
     <p v-else class="muted">还没有日志。</p>
   </div>
 </template>
