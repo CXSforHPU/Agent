@@ -48,12 +48,17 @@ INC_DRIVER_AUDIO = os.path.join(INC_ROOT, "driver", "audio")
 src = []
 CPPPATH = []
 
+def module_sources(directory):
+    """Return a module's direct C sources in stable build order."""
+    return [
+        entry.path
+        for entry in sorted(os.scandir(directory), key=lambda entry: entry.name)
+        if entry.name.endswith(".c") and entry.is_file()
+    ]
+
 # ---------------------- Core 核心源码 ----------------------
 # 遍历src/core目录下所有.c文件
-for filename in os.listdir(SRC_CORE):
-    file_fullpath = os.path.join(SRC_CORE, filename)
-    if filename.endswith(".c") and os.path.isfile(file_fullpath):
-        src.append(file_fullpath)
+src.extend(module_sources(SRC_CORE))
 # 添加核心头文件目录
 CPPPATH.append(INC_ROOT)
 CPPPATH.append(INC_CORE)
@@ -63,16 +68,10 @@ if GetDepend(["PKG_USING_AGENT"]):
 
 # ---------------------- Utils 工具模块 ----------------------
 # 按模块拆成多个 c 文件，各自的 Kconfig 开关写在文件里，这里统一全收
-for filename in os.listdir(SRC_UTILS):
-    file_fullpath = os.path.join(SRC_UTILS, filename)
-    if filename.endswith(".c") and os.path.isfile(file_fullpath):
-        src.append(file_fullpath)
+src.extend(module_sources(SRC_UTILS))
 
 # LLM 协议模块：OpenAI 与 Anthropic 各一个文件，统一入口 utils/protocol.h
-for filename in os.listdir(SRC_PROTOCOL):
-    file_fullpath = os.path.join(SRC_PROTOCOL, filename)
-    if filename.endswith(".c") and os.path.isfile(file_fullpath):
-        src.append(file_fullpath)
+src.extend(module_sources(SRC_PROTOCOL))
 
 # ---------------------- Channel 通信通道模块 ----------------------
 # CLI控制台通道
@@ -94,44 +93,29 @@ CPPPATH.append(INC_CHANNELS)
 
 # ---------------------- Tools 工具集模块 ----------------------
 # 基础工具：自动遍历tools目录下所有c文件
-for filename in os.listdir(SRC_TOOLS):
-    file_fullpath = os.path.join(SRC_TOOLS, filename)
-    if filename.endswith(".c") and os.path.isfile(file_fullpath):
-        src.append(file_fullpath)
+src.extend(module_sources(SRC_TOOLS))
 CPPPATH.append(INC_TOOLS)
 
 # MQTT工具（Kconfig开关控制，模块拆分为多个c文件：引擎/订阅生命周期/路由/过滤/业务/工具入口/MSH）
 if GetDepend(["PKG_AGENT_TOOL_MQTT_ENABLE"]):
-    for filename in os.listdir(SRC_TOOL_MQTT):
-        file_fullpath = os.path.join(SRC_TOOL_MQTT, filename)
-        if filename.endswith(".c") and os.path.isfile(file_fullpath):
-            src.append(file_fullpath)
+    src.extend(module_sources(SRC_TOOL_MQTT))
     CPPPATH.append(INC_TOOL_MQTT)
 
 # MCP客户端工具（连接远端 MCP 服务端，把远端工具注册进 agent 工具表）
 if GetDepend(["PKG_AGENT_TOOL_MCP_ENABLE"]):
-    for filename in os.listdir(SRC_TOOL_MCP):
-        file_fullpath = os.path.join(SRC_TOOL_MCP, filename)
-        if filename.endswith(".c") and os.path.isfile(file_fullpath):
-            src.append(file_fullpath)
+    src.extend(module_sources(SRC_TOOL_MCP))
     CPPPATH.append(INC_TOOL_MCP)
 
 # 设备框架工具（总开关收整个目录，每类设备的 PKG_AGENT_TOOL_DEVICE_XXX 开关写在文件里，
 # 关掉即整文件不参与编译，模块自注册宏也就不会执行）
 if GetDepend(["PKG_AGENT_TOOL_DEVICE"]):
-    for filename in os.listdir(SRC_TOOL_DEVICE):
-        file_fullpath = os.path.join(SRC_TOOL_DEVICE, filename)
-        if filename.endswith(".c") and os.path.isfile(file_fullpath):
-            src.append(file_fullpath)
+    src.extend(module_sources(SRC_TOOL_DEVICE))
     CPPPATH.append(SRC_TOOL_DEVICE)
 
 # ---------------------- Test utest 用例 ---------------------- # RT_USING_UTEST 打开时编译包内 utest 测试用例
 SRC_TEST = os.path.join(CWD, "tests")
 if GetDepend(["RT_USING_UTEST"]) and os.path.isdir(SRC_TEST):
-    for filename in os.listdir(SRC_TEST):
-        file_fullpath = os.path.join(SRC_TEST, filename)
-        if filename.endswith(".c") and os.path.isfile(file_fullpath):
-            src.append(file_fullpath)
+    src.extend(module_sources(SRC_TEST))
 
 # ---------------------- Driver 驱动模块 ----------------------
 # Audio音频驱动
