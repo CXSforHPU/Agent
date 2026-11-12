@@ -10,6 +10,8 @@
 resource/file_server/.venv/
 resource/file_server/upload_files/
 resource/file_server/file_db.sqlite
+# 组件依赖探测的缓存，探测一次几十秒，装完依赖会重建
+resource/file_server/.components_cache.json
 # MCP 网关的进程号文件，deploy.bat 启动网关时写
 resource/file_server/mcp_gateway.pid
 

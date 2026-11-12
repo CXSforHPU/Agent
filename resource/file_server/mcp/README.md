@@ -113,7 +113,7 @@ cd packages\Agent-latest\resource\file_server
 deploy.bat
 ```
 
-网关默认听 8765，板端填 `PKG_AGENT_MCP_SERVER_URL=http://PC-IP:8765/mcp`。只想要文件服务器时加 `--no-mcp`，换端口用 `--mcp-port 8766`。
+网关默认听 8765，板端填 `PKG_AGENT_MCP_SERVER_URL=http://PC-IP:8765/mcp`。只想要文件服务器时加 `--no-mcp`，换端口用 `--mcp-port 8766`。用 `--start` 点名组件时，`mcp` 不在名单里网关就不起。
 
 单独起网关用本目录的脚本。
 

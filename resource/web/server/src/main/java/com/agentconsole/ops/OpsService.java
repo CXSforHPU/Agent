@@ -20,9 +20,11 @@ import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -41,6 +43,18 @@ public class OpsService {
     /** 宿主级设置里存端口的那两条。 */
     private static final String KEY_FILE_SERVER_PORT = "fileServerPort";
     private static final String KEY_MCP_PORT = "mcpPort";
+    /** 启动时勾选了哪些组件。 */
+    private static final String KEY_START_COMPONENTS = "startComponents";
+    /**
+     * 组件键。file_server/components.py 里是同一份清单，
+     * 依赖探测以那边为准，这里只管勾选时校验名字。
+     */
+    private static final Set<String> COMPONENTS =
+            new LinkedHashSet<>(List.of("file-server", "mcp", "tts", "stt"));
+    /** 默认全开，跟以前起文件服务器加 MCP 网关的行为一致。 */
+    private static final String DEFAULT_START_COMPONENTS = "file-server,mcp,tts,stt";
+    /** 探测结果的缓存时间。探测本身要几秒，运维页几秒刷一次状态。 */
+    private static final long COMPONENT_CACHE_MS = 15_000L;
 
     private final Path fileServerDir;
     private final Path clientDir;
@@ -58,6 +72,12 @@ public class OpsService {
     private volatile int fileServerPort;
     /** MCP 网关当前的端口。运维页可以改，改完存库。 */
     private volatile int mcpPort;
+    /** 启动时勾选的组件。文件服务器本体一定在里面。 */
+    private volatile List<String> startComponents = List.of();
+    /** 组件依赖明细的缓存。 */
+    private volatile Map<String, Object> componentCache;
+    private volatile long componentCacheAt;
+    private final Object componentLock = new Object();
 
     public OpsService(@Value("${agent.console.file-server-dir:../file_server}") String fileServerDir,
                       @Value("${agent.console.client-dir:../client}") String clientDir,
@@ -84,6 +104,8 @@ public class OpsService {
                 .map(OpsService::parsePort)
                 .filter(p -> p > 0)
                 .orElse(mcpPort);
+        this.startComponents = parseComponents(settings.find(KEY_START_COMPONENTS)
+                .orElse(DEFAULT_START_COMPONENTS));
         // 文件服务器是 uvicorn，只讲 HTTP/1.1。JDK 的 HttpClient 默认 HTTP/2，
         // 明文时会先发 Upgrade: h2c，uvicorn 认不出就把请求体丢了，
         // 回 422「Field required」。
@@ -101,6 +123,26 @@ public class OpsService {
         }
     }
 
+    /**
+     * 组件清单转成去重后的列表。
+     *
+     * <p>存着的值可能来自旧版本或者手改的数据库，只认得上的名字。
+     * 文件服务器本体是其它组件的地基，不管勾没勾都在里面。
+     */
+    private static List<String> parseComponents(String raw) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        if (raw != null) {
+            for (String item : raw.split(",")) {
+                String key = item.trim();
+                if (COMPONENTS.contains(key)) {
+                    out.add(key);
+                }
+            }
+        }
+        out.add("file-server");
+        return List.copyOf(out);
+    }
+
     // ------------------------------------------------------------------ 状态
 
     /** 各组件当前状态。端口探活为准，不依赖是不是本进程起的。 */
@@ -114,6 +156,7 @@ public class OpsService {
         out.put("fileServerPort", fileServerPort);
         out.put("mcpPort", mcpPort);
         out.put("mcpUrl", mcpUrl());
+        out.put("startComponents", startComponents);
         out.put("managed", fileServerProcess != null && fileServerProcess.isAlive());
         return out;
     }
@@ -125,18 +168,22 @@ public class OpsService {
         out.put("defaultPort", defaultPort);
         out.put("mcpPort", mcpPort);
         out.put("defaultMcpPort", defaultMcpPort);
+        out.put("startComponents", startComponents);
+        out.put("allComponents", List.copyOf(COMPONENTS));
         return out;
     }
 
     /**
-     * 改端口。fileServerPort 与 mcpPort 都可空，空的那项不动。
+     * 改端口与启动组件。fileServerPort、mcpPort 与 startComponents 都可空，
+     * 空的那项不动。
      *
-     * <p>服务还在跑的时候不让改：换了端口以后旧进程没人管，会占着旧端口，
+     * <p>服务还在跑的时候不让改端口：换了端口以后旧进程没人管，会占着旧端口，
      * 而按端口反查 pid 的停止逻辑也只会查新端口，旧进程就漏了。
      */
-    public Map<String, Object> updateSettings(Integer fileServerPort, Integer mcpPort) {
-        if (fileServerPort == null && mcpPort == null) {
-            throw new IllegalArgumentException("没给端口");
+    public Map<String, Object> updateSettings(Integer fileServerPort, Integer mcpPort,
+                                              List<String> startComponents) {
+        if (fileServerPort == null && mcpPort == null && startComponents == null) {
+            throw new IllegalArgumentException("没给要改的东西");
         }
         if (fileServerPort != null) {
             checkPort(fileServerPort);
@@ -167,14 +214,40 @@ public class OpsService {
             this.mcpPort = mcpPort;
             changed.add("MCP 网关端口 " + mcpPort);
         }
+        if (startComponents != null) {
+            List<String> wanted = checkComponents(startComponents);
+            if (!wanted.equals(this.startComponents)) {
+                settings.put(KEY_START_COMPONENTS, String.join(",", wanted));
+                this.startComponents = wanted;
+                changed.add("启动组件 " + String.join("、", wanted));
+            }
+        }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("fileServerPort", this.fileServerPort);
         out.put("mcpPort", this.mcpPort);
+        out.put("startComponents", this.startComponents);
         out.put("message", changed.isEmpty()
-                ? "端口没变"
+                ? "设置没变"
                 : String.join("、", changed) + "，下次启动生效");
         return out;
+    }
+
+    /** 校验组件名。文件服务器本体必带，别的按给的来。 */
+    private static List<String> checkComponents(List<String> wanted) {
+        if (wanted == null || wanted.isEmpty()) {
+            throw new IllegalArgumentException("组件清单不能为空");
+        }
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (String item : wanted) {
+            String key = item == null ? "" : item.trim();
+            if (!COMPONENTS.contains(key)) {
+                throw new IllegalArgumentException("不认识的组件：" + key);
+            }
+            out.add(key);
+        }
+        out.add("file-server");
+        return List.copyOf(out);
     }
 
     private static void checkPort(int port) {
@@ -205,11 +278,11 @@ public class OpsService {
     /**
      * 装依赖，跑在后台。前端轮询 job 看进度。
      *
-     * @param target web 表示前端 npm 依赖，file-server 表示文件服务器那套
-     * @param withTts 文件服务器是否连带装 TTS 的 torch 与权重
+     * @param target    web 表示前端 npm 依赖，file-server 表示文件服务器那套
+     * @param components 要装哪些组件的依赖，file-server 本体一定算上
      * @return 任务 id
      */
-    public String install(String target, boolean withTts) {
+    public String install(String target, List<String> components) {
         List<String> command;
         String label;
         if ("web".equals(target)) {
@@ -218,8 +291,11 @@ public class OpsService {
                     ? List.of("cmd.exe", "/c", "npm install --no-fund --no-audit")
                     : List.of("npm", "install", "--no-fund", "--no-audit");
         } else if ("file-server".equals(target)) {
-            label = withTts ? "安装文件服务器依赖（含 TTS）" : "安装文件服务器依赖";
-            command = deployCommand(Deploy.CHECK, withTts);
+            List<String> wanted = installList(components);
+            label = wanted.size() > 1
+                    ? "安装文件服务器依赖（含 " + String.join("、", wanted.subList(1, wanted.size())) + "）"
+                    : "安装文件服务器依赖";
+            command = deployCommand(Deploy.CHECK, wanted);
         } else {
             throw new IllegalArgumentException("不支持的目标：" + target);
         }
@@ -230,6 +306,25 @@ public class OpsService {
         thread.setDaemon(true);
         thread.start();
         return job.id;
+    }
+
+    /**
+     * 装依赖时要装的组件。文件服务器本体是地基，不管勾没勾都要装。
+     *
+     * @param components 页面上勾的组件，可以为空
+     */
+    private static List<String> installList(List<String> components) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        out.add("file-server");
+        if (components != null) {
+            for (String item : components) {
+                String key = item == null ? "" : item.trim();
+                if (COMPONENTS.contains(key)) {
+                    out.add(key);
+                }
+            }
+        }
+        return List.copyOf(out);
     }
 
     private Path workingDir(String target) {
@@ -245,7 +340,7 @@ public class OpsService {
     }
 
     /** 文件服务器部署脚本的参数。Windows 用 bat，其余用 bash。 */
-    private List<String> deployCommand(Deploy mode, boolean withTts) {
+    private List<String> deployCommand(Deploy mode, List<String> components) {
         List<String> cmd = new ArrayList<>();
         if (onWindows()) {
             cmd.add("cmd.exe");
@@ -255,13 +350,16 @@ public class OpsService {
             cmd.add("bash");
             cmd.add("deploy.sh");
         }
-        if (withTts) {
-            cmd.add("--tts");
-        }
         if (mode == Deploy.CHECK) {
+            // 装依赖：--install 后面跟要装的组件，脚本按组件分步走
+            cmd.add("--install");
+            cmd.add(String.join(",", components));
             cmd.add("--check");
         } else if (mode == Deploy.START) {
             cmd.add("--start-only");
+            // 起服务：--start 后面跟勾选的组件，没勾的组件不注册端点
+            cmd.add("--start");
+            cmd.add(String.join(",", startComponents));
             // 端口跟着运维页设的值走，脚本会用它起文件服务器，
             // MCP 网关的 --file-server 地址也跟着变
             cmd.add("--port");
@@ -332,7 +430,7 @@ public class OpsService {
         try {
             Files.createDirectories(runDir);
             Path logFile = runDir.resolve("file-server.log");
-            ProcessBuilder builder = new ProcessBuilder(deployCommand(Deploy.START, false))
+            ProcessBuilder builder = new ProcessBuilder(deployCommand(Deploy.START, startComponents))
                     .directory(fileServerDir.toFile())
                     .redirectErrorStream(true)
                     .redirectOutput(logFile.toFile());
@@ -517,6 +615,78 @@ public class OpsService {
             return;
         }
         pidOnPort(mcpPort).ifPresent(this::killPid);
+    }
+
+    // ------------------------------------------------------------ 组件明细
+
+    /**
+     * 每个组件的依赖明细。
+     *
+     * <p>跑 file_server/components.py status --json。探测要起子进程看包和文件，
+     * 慢的时候要几十秒，所以结果缓一会儿，运维页几秒刷一次状态也不会拖慢。
+     *
+     * @param refresh true 时跳过缓存，重新探测
+     */
+    public Map<String, Object> components(boolean refresh) {
+        Map<String, Object> cached = componentCache;
+        if (!refresh && cached != null && System.currentTimeMillis() - componentCacheAt < COMPONENT_CACHE_MS) {
+            return cached;
+        }
+        synchronized (componentLock) {
+            if (!refresh) {
+                cached = componentCache;
+                if (cached != null && System.currentTimeMillis() - componentCacheAt < COMPONENT_CACHE_MS) {
+                    return cached;
+                }
+            }
+            Map<String, Object> fresh = runComponentProbe();
+            componentCache = fresh;
+            componentCacheAt = System.currentTimeMillis();
+            return fresh;
+        }
+    }
+
+    /** venv 里的 python。Windows 在 Scripts/ 下，其余在 bin/ 下。 */
+    private Path venvPython() {
+        for (String rel : List.of("Scripts/python.exe", "bin/python")) {
+            Path path = fileServerDir.resolve(".venv").resolve(rel);
+            if (Files.isRegularFile(path)) {
+                return path;
+            }
+        }
+        return null;
+    }
+
+    private Map<String, Object> runComponentProbe() {
+        Path python = venvPython();
+        if (python == null) {
+            return Map.of("components", List.of(),
+                    "error", "还没有 .venv，先装文件服务器依赖");
+        }
+        try {
+            ProcessBuilder builder = new ProcessBuilder(
+                    List.of(python.toString(), "components.py", "status", "--json"))
+                    .directory(fileServerDir.toFile())
+                    .redirectErrorStream(true);
+            builder.environment().put("PYTHONIOENCODING", "utf-8");
+            Process process = builder.start();
+            if (!process.waitFor(180, TimeUnit.SECONDS)) {
+                process.destroyForcibly();
+                return Map.of("components", List.of(), "error", "探测超时");
+            }
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            if (process.exitValue() != 0) {
+                return Map.of("components", List.of(), "error", output.trim());
+            }
+            return mapper.readValue(output,
+                    new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {
+                    });
+        } catch (IOException e) {
+            return Map.of("components", List.of(), "error", "跑探测失败：" + e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Map.of("components", List.of(), "error", "被中断");
+        }
     }
 
     // ------------------------------------------------------------ TTS / STT

@@ -9,7 +9,9 @@ cd resource/file_server
 bash deploy.sh --tts      # 装配环境、拉推理资产，再起服务
 ```
 
-Windows 用 `deploy.bat --tts`。环境已经装好、只想起服务，用 `bash deploy.sh --start-only` 或 `deploy.bat --start-only`；全部参数见 [README.md 的第 11 节](./README.md)。
+Windows 用 `deploy.bat --tts`。环境已经装好、只想起服务，用 `bash deploy.sh --start-only` 或 `deploy.bat --start-only`；只起部分组件用 `--start` 点名，参数表见 [README.md 的第 2 节](./README.md)。
+
+服务拆成四个组件：`file-server`、`mcp`、`tts`、`stt`。起服务时装依赖都按组件点名，没选中的组件不注册端点，调用它返回 404。组件清单与依赖探测见 [README.md 的组件清单与依赖探测一节](./README.md)。
 
 不要 TTS 的话直接 `uv run --no-sync main.py`。`--no-sync` 不能省：`uv run` 会按 `uv.lock` 同步环境，而默认依赖组是 `cpu`，会把装好的 GPU 版 torch 换回 CPU 构建。
 
@@ -28,7 +30,7 @@ Windows 用 `deploy.bat --tts`。环境已经装好、只想起服务，用 `bas
 
 ## 语音合成（TTS）
 
-`/tts` 是可选功能，依赖 `third_party/gpt-sovits-infer/` 里的推理代码和 `da_fei_yv` 的权重。没装配时这两个接口返回 503，其余接口照常工作。
+`/tts` 是可选功能，依赖 `third_party/gpt-sovits-infer/` 里的推理代码和 `da_fei_yv` 的权重。没装配时这两个接口返回 503，其余接口照常工作。启动时没选 `tts` 组件，这两个接口返回 404。
 
 装配一条命令，权重从 ModelScope 拉：
 

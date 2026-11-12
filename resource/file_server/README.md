@@ -28,6 +28,15 @@ deploy.bat --tts          # Windows cmd
 
 一条命令跑完四步：按算力装 torch、拉不入库的第三方资产、逐项核对 SHA256、起服务。四步都幂等，已经落地的文件跳过，重跑一遍很便宜。
 
+按组件装依赖用 `--install`，组件名逗号分隔，取值 `file-server`、`mcp`、`tts`、`stt`：
+
+```bash
+bash deploy.sh --install file-server,stt --check   # 只装文件服务器与语音转写的依赖
+deploy.bat --install file-server,tts --check       # Windows cmd
+```
+
+`--install` 只装依赖不起服务，后面带 `--check` 就行。`file-server` 是其它组件的地基，不管点名了哪些都在要装的清单里。`mcp` 没有自己的 Python 依赖，网关只用标准库，装它只是顺带看一眼 Node.js 与 Windows-MCP 在不在。
+
 不想敲命令的话，管理控制台的运维页上有对应的按钮，详情见 [../web/README.md](../web/README.md) 的「运维页」一节。
 
 ### 参数
@@ -37,6 +46,10 @@ deploy.bat --tts          # Windows cmd
 | 参数 | 作用 |
 |---|---|
 | `--tts` | 装 `tts` 依赖组，并拉词表、权重与底模。不带这个参数时，脚本先查 `.venv` 里有没有 `librosa`，装过的环境按 `--tts` 处理 |
+| `--install LIST` | 只装点名组件的依赖，逗号分隔。`file-server` 一定在里面 |
+| `--start LIST` | 只起点名组件，逗号分隔。`file-server` 一定在里面 |
+| `--status` | 打印各组件的依赖清单，不装也不起。需要 `.venv` 在 |
+| `--json` | 配合 `--status` 用，输出机器读的清单 |
 | `--check` | 只装配和自检，不起服务 |
 | `--start-only` | 跳过装配与拉取，直接起服务 |
 | `--print` | 只打印要执行的 `uv` 命令，什么都不改 |
@@ -64,6 +77,8 @@ cu126 的预编译核函数止于 sm_90，50 系显卡装了会在推理时报 n
 - 首次装配要几 GB 磁盘。`--tts` 拉完资产后 `third_party/gpt-sovits-infer/` 占 6.1 GB，`.venv` 占 5.2 GB。
 - `deploy.bat` 必须用 CRLF 行尾保存。cmd 找标签时按 CRLF 断行，文件一大，LF 行尾会让 `goto` 报“系统找不到指定的批处理文件”。本仓库的 `core.autocrlf` 是 true，检出时会是 CRLF，手工改完记得确认。
 - 国内直连 GitHub 的原始文件会被断开，`deploy.bat` 默认走 gh-proxy。实测 80 KB/s ~ 400 KB/s，88 MB 的 zip 要等几分钟。
+- cmd 会把逗号分隔的列表拆成一个个参数，`--install file-server,stt` 到脚本里成了 `%2` 是 `file-server`、`%3` 是 `stt`。脚本把这个列表拼回去，所以人和程序都能这么写。
+- Windows 上文件服务器在跑时装依赖会失败。`uv sync` 换不了 `torch/lib/c10.dll`，报“拒绝访问”（os error 5）。先把文件服务器停掉再装。
 
 ### 为什么不要手工执行 uv sync
 
@@ -97,6 +112,33 @@ uv sync --no-default-groups --group gpu-cu130  # CUDA 13.0（Blackwell）
 
 依赖中包含 `openai-whisper`，它会拉取 torch，体积约 2 GB。只需要文件上传下载、不需要语音转写时，可以自行删除 `pyproject.toml` 里的 `openai-whisper`、`soundfile`、`numpy`、`resampy`，并去掉 `/stt` 接口。
 
+### 组件清单与依赖探测
+
+这套服务拆成四个组件，装依赖与起服务都按组件点名：
+
+| 组件 | 显示名 | 依赖 |
+|---|---|---|
+| `file-server` | 文件服务器 | 虚拟环境，FastAPI、uvicorn、pydantic、starlette 四个包 |
+| `mcp` | MCP 网关 | 网关脚本与网关代码包。网关只用 Python 标准库，没有额外的包 |
+| `tts` | 语音合成 | torch、librosa、transformers、modelscope，GPT-SoVITS 推理代码、预训练模型、音色权重、FFmpeg 运行库 |
+| `stt` | 语音转写 | openai-whisper、soundfile、resampy 三个包，whisper 模型文件 |
+
+`components.py` 回答某个组件的依赖齐了没有。它只看文件和已装的包，不下载任何东西：
+
+```bash
+python components.py status          # 人看的清单
+python components.py status --json   # 机器读的清单
+```
+
+人看的清单里每个依赖给三种标记：必需依赖齐了是 `ok`，缺了是 `缺`，可选依赖两种情况都给 `可选`。部署脚本带 `--status` 走的是同一份探测：
+
+```bash
+bash deploy.sh --status
+deploy.bat --status --json
+```
+
+探测结果缓存在 `.components_cache.json`，有效期一小时。装完依赖脚本会删掉这个文件，下一次探测重新算。
+
 ### 镜像与索引
 
 清华源已是默认索引，`uv.lock` 同时锁定三种 torch 构建，换机器不需要重新解析。非国内网络可以删掉 `pyproject.toml` 中名为 `tuna` 的那段 `[[tool.uv.index]]`，回到 PyPI。
@@ -121,9 +163,18 @@ bash deploy.sh --start-only          # Linux / macOS
 deploy.bat --start-only              # Windows cmd
 ```
 
+只起一部分组件用 `--start`，组件名逗号分隔：
+
+```bash
+bash deploy.sh --start-only --start file-server,stt
+deploy.bat --start-only --start file-server,mcp
+```
+
+没点名的组件不注册端点。`tts` 没选时 `/tts` 返回 404，`stt` 没选时 `/stt` 返回 404，`mcp` 没选时网关端口不监听。`file-server` 是本体，永远在启动清单里。
+
 换端口加 `--port 8001`，想让服务一起来就把模型预热好加 `--autoload`，换默认音色加 `--speaker da_fei_yv`。环境还没装配过时用 `bash deploy.sh --tts`，装完自动接着启动。
 
-管理控制台的运维页上点「启动文件服务器与 MCP 网关」走的是同一个 `--start-only`，点「停止」会连 MCP 网关一起带走。
+管理控制台的运维页上点「按勾选启动」走的是同一个 `--start-only` 加 `--start`，点「停止」会连 MCP 网关一起带走。
 
 直接起解释器也可以，但要绕开 uv 的自动同步：
 
@@ -153,7 +204,7 @@ PKG_AGENT_MCP_SERVER_URL=http://PC-IP:8765/mcp
 
 网关把 PC 上的工具收成一个 MCP 端点：Windows-MCP 的桌面操作、网关自带的文件工具，还有 `mcp/tools/user_tools/` 里的用户工具。工具回包里的图片和音频由网关存到文件服务器，回给板端的只是一句带下载地址的说明，板端的 32 KB 缓冲才装得下。
 
-网关的代码在 `mcp/` 目录，细节见 `mcp/README.md`。只想要文件服务器时加 `--no-mcp`，换端口用 `--mcp-port 8766`。
+网关的代码在 `mcp/` 目录，细节见 `mcp/README.md`。只想要文件服务器时加 `--no-mcp`，换端口用 `--mcp-port 8766`。用 `--start` 点名组件时，`mcp` 不在名单里网关就不起。
 
 ## 4. 接口
 
@@ -332,6 +383,8 @@ menuconfig 中的填写位置：
 | 上传成功，但模型下载不了图片 | 下载 URL 必须公网可达；HTTPS 证书需被公网信任 |
 | 下载返回 404 | `file_id` 不完整或已被删除，可用 `/files` 核对 |
 | `/stt` 返回 500 | 查看服务端日志，确认 whisper 模型已下载、音频文件可读 |
+| `/tts` 或 `/stt` 返回 404 | 启动时没选这个组件。服务只注册选中的组件的端点，用 `--start` 把 `tts` 或 `stt` 点上 |
+| 装依赖报「拒绝访问」（os error 5） | Windows 上文件服务器在跑，torch 的 DLL 被占着。先点停止再装依赖 |
 | 首次语音识别很慢 | 首次请求会加载模型，等待时间取决于模型大小与磁盘速度 |
 | `/stt` 请求超时 | Agent 侧连接后等待 120 s；模型过大或机器太慢时，换 `tiny` 模型 |
 | `/tts` 返回 503 | 没装 GPT-SoVITS 推理链，或权重没落到 `GPT_weights_v2Pro/`。跑 `bash deploy.sh --tts` / `deploy.bat --tts`，再用 `python fetch_tts.py check` 核对 |
@@ -632,7 +685,7 @@ draw.io 源文件：[tts-runtime-flow.drawio](../../docs/diagrams/tts-runtime-fl
 
 ## 12. 第三方与许可
 
-`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及运行时改写的两个文件：上游每次建管线都会把权重绝对路径写回 `GPT_SoVITS/configs/tts_infer.yaml`，G2PW 词典重建后会改写 `GPT_SoVITS/text/g2pw/polyphonic.md5`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`deploy.bat`、`deploy.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 169 个文件。四份权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
+`.gitignore` 只挡体积大或许可受限的第三方资产（`third_party/gpt-sovits-infer/` 下的 `pretrained_models/`、`G2PWModel/`、`runtime/`、`output/`、`GPT_weights_*/`、`SoVITS_weights_*/`、8 个 `dicts` 大文件），以及运行时改写的两个文件：上游每次建管线都会把权重绝对路径写回 `GPT_SoVITS/configs/tts_infer.yaml`，G2PW 词典重建后会改写 `GPT_SoVITS/text/g2pw/polyphonic.md5`。推理代码、参考音频、`manifest.json`、导出记录与音色注册表入库。`git add` 预演带的是自有文件（`.python-version`、`README.md`、`framework.md`、`pyproject.toml`、`uv.lock`、`.gitignore`、`main.py`、`fetch_tts.py`、`extract_infer.py`、`components.py`、`deploy.bat`、`deploy.sh`、`test/`）加 `third_party/gpt-sovits-infer/` 里的 169 个文件。四份权重不在仓库里，由 `fetch_tts.py voice` 从 ModelScope 拉。表里“入库”一列说的就是这个边界。
 
 | 组件 | 来源 | 许可 | 入库 |
 |---|---|---|---|

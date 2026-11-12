@@ -20,6 +20,23 @@ from typing import Dict, Any, Optional, Tuple
 
 app = FastAPI(title="嵌入式流式文件服务", version="1.0")
 
+# 组件开关。运维页勾了哪些组件，部署脚本就把对应的环境变量传进来，
+# 这里只注册开了的端点，关掉的连 /docs 里都看不到。
+_STT_ENABLED = os.getenv("SERVER_ENABLE_STT", "1") != "0"
+_TTS_ENABLED = os.getenv("SERVER_ENABLE_TTS", "1") != "0"
+
+
+def _route(method: str, path: str, enabled: bool, **kwargs):
+    """按开关决定要不要注册这条路由。
+
+    FastAPI 的装饰器拿到 None 会直接报错，所以先把函数收下，再决定挂不挂到 app 上。
+    """
+    def deco(func):
+        if enabled:
+            getattr(app, method)(path, **kwargs)(func)
+        return func
+    return deco
+
 # 上游 GPT-SoVITS 的 TextPreprocessor 里直接 print(text)。中文 Windows 的
 # stdout 默认 GBK，回复带 emoji 时 print 抛 UnicodeEncodeError，/tts 变 500。
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -266,6 +283,9 @@ def _stt_transcribe(tmp_path):
 @app.on_event("startup")
 def _stt_preload():
     """启动时后台加载模型，避免板子第一次 /stt 请求等模型下载/加载数十秒。"""
+    if not _STT_ENABLED:
+        return
+
     def _work():
         try:
             _stt_get_model()
@@ -275,7 +295,7 @@ def _stt_preload():
     threading.Thread(target=_work, daemon=True).start()
 
 
-@app.post("/stt", summary="本地语音转文本")
+@_route("post", "/stt", _STT_ENABLED, summary="本地语音转文本")
 async def stt(file: UploadFile = File(...)):
     tmp_path = os.path.join(UPLOAD_DIR, f"stt_{uuid.uuid4().hex}.wav")
     body = await file.read()
@@ -748,7 +768,7 @@ _TTS_WAV_RESPONSES = {
 }
 
 
-@app.get("/tts/speakers", summary="列出可用音色")
+@_route("get", "/tts/speakers", _TTS_ENABLED, summary="列出可用音色")
 def tts_speakers():
     speakers = _tts_speakers()
     if not speakers:
@@ -764,7 +784,7 @@ def tts_speakers():
     }
 
 
-@app.get("/tts/progress", summary="合成进度")
+@_route("get", "/tts/progress", _TTS_ENABLED, summary="合成进度")
 def tts_progress():
     """最近一次合成的进度。运维页轮询这个接口看跑到第几句了。"""
     with _TTS_PROGRESS_LOCK:
@@ -825,16 +845,16 @@ async def _tts_handle(text: str, speaker: Optional[str], language: str, speed: f
                     headers={"X-Sample-Rate": str(sr), "X-Speaker": name})
 
 
-@app.post("/tts", summary="文本转语音，返回 audio/wav 字节",
-          response_class=Response, responses=_TTS_WAV_RESPONSES)
+@_route("post", "/tts", _TTS_ENABLED, summary="文本转语音，返回 audio/wav 字节",
+        response_class=Response, responses=_TTS_WAV_RESPONSES)
 async def tts(req: TTSRequest):
     return await _tts_handle(req.text, req.speaker, req.language, req.speed,
                              req.sample_rate, req.channels, req.stream,
                              req.block_seconds)
 
 
-@app.get("/tts", summary="文本转语音（GET 版，供浏览器与 audio 标签直接用）",
-         response_class=Response, responses=_TTS_WAV_RESPONSES)
+@_route("get", "/tts", _TTS_ENABLED, summary="文本转语音（GET 版，供浏览器与 audio 标签直接用）",
+        response_class=Response, responses=_TTS_WAV_RESPONSES)
 async def tts_get(text: str, speaker: Optional[str] = None, language: str = "zh",
                   speed: float = 1.0, sample_rate: Optional[int] = None,
                   channels: int = 1):
@@ -932,8 +952,8 @@ $("go").onclick = async () => {
 """
 
 
-@app.get("/tts/play", summary="浏览器试听页（/docs 里播不出声音，试听走这条）",
-         response_class=HTMLResponse)
+@_route("get", "/tts/play", _TTS_ENABLED, summary="浏览器试听页（/docs 里播不出声音，试听走这条）",
+        response_class=HTMLResponse)
 def tts_play():
     return HTMLResponse(_TTS_PLAYER_HTML)
 
@@ -941,6 +961,8 @@ def tts_play():
 @app.on_event("startup")
 def _tts_preload():
     """TTS_AUTOLOAD=1 时启动就热一遍推理链路，否则第一条真实请求要等 50 s 上下。"""
+    if not _TTS_ENABLED:
+        return
     if os.getenv("TTS_AUTOLOAD", "0") != "1":
         return
     speakers = _tts_speakers()
@@ -967,6 +989,17 @@ def _tts_preload():
             print(f"[tts] preload failed: {e}", flush=True)
 
     threading.Thread(target=_work, daemon=True).start()
+
+
+@app.on_event("startup")
+def _log_components():
+    """启动时把开了哪些组件说清楚，省得对着 404 猜。"""
+    on = ["file-server"]
+    if _STT_ENABLED:
+        on.append("stt")
+    if _TTS_ENABLED:
+        on.append("tts")
+    print("[server] 组件：" + "、".join(on), flush=True)
 
 
 if __name__ == "__main__":

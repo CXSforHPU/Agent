@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Deploy the file server and the MCP gateway, then start both.
 #   bash deploy.sh                   # environment + start
+#   bash deploy.sh --start LIST      # start only these components
+#   bash deploy.sh --install LIST    # install only these components' dependencies
+#   bash deploy.sh --status          # show each component's dependency status
 #   bash deploy.sh --tts             # also fetch the GPT-SoVITS pieces
 #   bash deploy.sh --tts --check     # deploy only, do not start the server
 #   bash deploy.sh --start-only      # skip the deploy steps, just start
@@ -11,16 +14,24 @@
 #   bash deploy.sh --speaker NAME    # default voice for /tts requests
 #   bash deploy.sh --mirror          # route github.com downloads through gh-proxy
 #   bash deploy.sh --cpu             # force the CPU torch build
-#   bash deploy.sh --no-mcp          # start the file server only
+#   bash deploy.sh --no-mcp          # do not start the MCP gateway
 #   bash deploy.sh --mcp-port 8765   # MCP gateway port (default 8765)
+#   bash deploy.sh --json            # --status prints JSON instead of text
+#
+# Components: file-server, mcp, tts, stt
+#   --start and --install take a comma separated list of those names.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+ALL_COMPONENTS="file-server,mcp,tts,stt"
 
 tts=false
 deploy_only=false
 start_only=false
 print_only=false
 autoload=false
+status_only=false
+json_out=false
 speaker=""
 mirror=false
 backend=""
@@ -28,9 +39,11 @@ port=""
 host=""
 mcp=true
 mcp_port=8765
+start_list=""
+install_list=""
 
 usage() {
-    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '/^#   bash/,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -40,6 +53,10 @@ while [[ $# -gt 0 ]]; do
         --start-only) start_only=true; shift ;;
         --print) print_only=true; shift ;;
         --autoload) autoload=true; shift ;;
+        --status) status_only=true; shift ;;
+        --json) json_out=true; shift ;;
+        --start) start_list="${2:-}"; [[ -n "$start_list" ]] || { echo "--start needs a value" >&2; exit 2; }; shift 2 ;;
+        --install) install_list="${2:-}"; [[ -n "$install_list" ]] || { echo "--install needs a value" >&2; exit 2; }; shift 2 ;;
         --speaker) speaker="${2:-}"; [[ -n "$speaker" ]] || { echo "--speaker needs a value" >&2; exit 2; }; shift 2 ;;
         --mirror) mirror=true; shift ;;
         --cpu | --cu126 | --cu130) backend="${1#--}"; shift ;;
@@ -56,6 +73,85 @@ if [[ "$start_only" == true && "$deploy_only" == true ]]; then
     echo "--start-only and --check contradict each other" >&2
     exit 2
 fi
+
+has_component() {
+    [[ ",$1," == *",$2,"* ]]
+}
+
+drop_component() {
+    local list="$1" name="$2" out="" item
+    local IFS=','
+    for item in $list; do
+        if [[ -z "$item" ]]; then
+            continue
+        fi
+        if [[ "$item" == "$name" ]]; then
+            continue
+        fi
+        if [[ -z "$out" ]]; then out="$item"; else out="$out,$item"; fi
+    done
+    printf '%s' "$out"
+}
+
+validate_components() {
+    local list="$1" flag="$2" comp
+    local IFS=','
+    for comp in $list; do
+        case "$comp" in
+            file-server | mcp | tts | stt) ;;
+            *) echo "$flag: unknown component '$comp' (file-server, mcp, tts, stt)" >&2; exit 2 ;;
+        esac
+    done
+}
+
+# What to install: --install wins, --tts keeps the old meaning, otherwise just
+# the file server itself.
+if [[ -n "$install_list" ]]; then
+    install_components="$install_list"
+elif [[ "$tts" == true ]]; then
+    install_components="file-server,tts"
+else
+    install_components="file-server"
+fi
+validate_components "$install_components" "--install"
+
+# What to start: --start wins, otherwise everything. --no-mcp drops the gateway.
+if [[ -n "$start_list" ]]; then
+    start_components="$start_list"
+else
+    start_components="$ALL_COMPONENTS"
+fi
+validate_components "$start_components" "--start"
+if [[ "$mcp" == false ]]; then
+    start_components="$(drop_component "$start_components" mcp)"
+fi
+
+# The file server is the ground the other components stand on, it is always in.
+if ! has_component "$install_components" file-server; then
+    install_components="file-server,$install_components"
+fi
+if ! has_component "$start_components" file-server; then
+    start_components="file-server,$start_components"
+fi
+
+install_tts=false
+install_stt=false
+install_mcp=false
+if has_component "$install_components" tts; then install_tts=true; fi
+if has_component "$install_components" stt; then install_stt=true; fi
+if has_component "$install_components" mcp; then install_mcp=true; fi
+
+start_tts=false
+start_stt=false
+start_mcp=false
+if has_component "$start_components" tts; then start_tts=true; fi
+if has_component "$start_components" stt; then start_stt=true; fi
+if has_component "$start_components" mcp; then start_mcp=true; fi
+
+# The probe caches its findings, so a finished install has to drop the stale file.
+clear_probe_cache() {
+    rm -f .components_cache.json
+}
 
 # uv cannot resolve hardware, so the choice happens here: compute capability
 # decides which dependency group is synced. cu126 wheels stop at sm_90,
@@ -109,7 +205,7 @@ sync_env() {
     # uv sync prunes every package the selected groups do not mention, so a bare
     # deploy would strip an assembled TTS environment. librosa only enters the venv
     # through the tts group, so ask the venv whether that group was installed.
-    if [[ "$tts" != true ]]; then
+    if [[ "$install_tts" != true ]]; then
         local probe
         if [[ -x .venv/Scripts/python.exe ]]; then
             probe=.venv/Scripts/python.exe
@@ -118,11 +214,11 @@ sync_env() {
         fi
         if [[ -x "$probe" ]] &&
             "$probe" -c "import sys, os; sys.stdout = sys.stderr = open(os.devnull, 'w'); import importlib.metadata as m; m.version('librosa')" 2>/dev/null; then
-            tts=true
+            install_tts=true
             echo "==> tts group already installed, keeping it. Remove it with a hand-run uv sync."
         fi
     fi
-    if [[ "$tts" == true ]]; then
+    if [[ "$install_tts" == true ]]; then
         argv+=(--group tts)
         group="$group+tts"
     fi
@@ -148,7 +244,27 @@ PY
 }
 
 if [[ "$print_only" == true ]]; then
+    echo "components to install: $install_components"
+    echo "components to start: $start_components"
     sync_env
+    exit 0
+fi
+
+# The status report stands on its own, it needs no install step.
+if [[ "$status_only" == true ]]; then
+    if [[ -x .venv/Scripts/python.exe ]]; then
+        status_python=.venv/Scripts/python.exe
+    elif [[ -x .venv/bin/python ]]; then
+        status_python=.venv/bin/python
+    else
+        echo "no virtualenv here; run deploy.sh without --start-only" >&2
+        exit 1
+    fi
+    if [[ "$json_out" == true ]]; then
+        "$status_python" components.py status --json
+    else
+        "$status_python" components.py status
+    fi
     exit 0
 fi
 
@@ -167,20 +283,46 @@ else
 fi
 
 # Step 2: the blobs that stay out of git. Idempotent, so re-running is cheap.
-if [[ "$tts" == true && "$start_only" == false ]]; then
-    echo "==> third-party pieces"
-    fetch_args=()
-    [[ "$mirror" == true ]] && fetch_args+=(--mirror)
-    "$python" fetch_tts.py dicts voice assets "${fetch_args[@]+${fetch_args[@]}}"
-    "$python" fetch_tts.py check
+# Every component has its own step, so one broken piece does not take the rest down.
+if [[ "$start_only" == false ]]; then
+    if [[ "$install_tts" == true ]]; then
+        echo "==> tts pieces"
+        fetch_args=()
+        [[ "$mirror" == true ]] && fetch_args+=(--mirror)
+        "$python" fetch_tts.py dicts voice assets "${fetch_args[@]+${fetch_args[@]}}"
+        "$python" fetch_tts.py check
 
-    # uv sync prunes whatever the lock does not mention. g2pk2's Korean path needs
-    # eunjeon, and eunjeon imports pkg_resources, which setuptools 84 dropped.
-    # The directory can survive the prune as an empty namespace package, so ask the
-    # metadata, not the import machinery.
-    if ! "$python" -c "import importlib.metadata as m; m.version('eunjeon')" >/dev/null 2>&1; then
-        echo "==> restoring the Korean extras (eunjeon, setuptools<81)"
-        uv pip install --python "$python" eunjeon "setuptools<81"
+        # uv sync prunes whatever the lock does not mention. g2pk2's Korean path needs
+        # eunjeon, and eunjeon imports pkg_resources, which setuptools 84 dropped.
+        # The directory can survive the prune as an empty namespace package, so ask the
+        # metadata, not the import machinery.
+        if ! "$python" -c "import importlib.metadata as m; m.version('eunjeon')" >/dev/null 2>&1; then
+            echo "==> restoring the Korean extras (eunjeon, setuptools<81)"
+            uv pip install --python "$python" eunjeon "setuptools<81"
+        fi
+        clear_probe_cache
+    fi
+
+    if [[ "$install_stt" == true ]]; then
+        echo "==> stt pieces"
+        # whisper itself comes with the core dependencies, only the model file has
+        # to be fetched, and it lands in the user cache.
+        "$python" -c "import os, whisper; whisper.load_model(os.getenv('STT_MODEL', 'tiny')); print('whisper model ready:', os.getenv('STT_MODEL', 'tiny'))"
+        clear_probe_cache
+    fi
+
+    if [[ "$install_mcp" == true ]]; then
+        echo "==> mcp pieces"
+        if command -v node >/dev/null 2>&1; then
+            echo "node $(node --version) -> $(command -v node)"
+        else
+            echo "node not found, the MCP gateway needs Node.js 18 or newer" >&2
+        fi
+        if command -v windows-mcp >/dev/null 2>&1; then
+            echo "windows-mcp -> $(command -v windows-mcp)"
+        else
+            echo "windows-mcp not on PATH, run mcp/setup_windows_mcp.bat on Windows" >&2
+        fi
     fi
 fi
 
@@ -196,7 +338,14 @@ fi
 [[ "$autoload" == true ]] && export TTS_AUTOLOAD=1
 [[ -n "$speaker" ]] && export TTS_SPEAKER="$speaker"
 
-if [[ "$mcp" == true ]]; then
+# The server registers the endpoints of the components that are on, so an
+# unselected component answers 404 instead of failing halfway through a request.
+if [[ "$start_tts" == true ]]; then export SERVER_ENABLE_TTS=1; else export SERVER_ENABLE_TTS=0; fi
+if [[ "$start_stt" == true ]]; then export SERVER_ENABLE_STT=1; else export SERVER_ENABLE_STT=0; fi
+
+echo "==> components: $start_components"
+
+if [[ "$start_mcp" == true ]]; then
     echo "==> starting the MCP gateway on port $mcp_port"
     # pid 文件跟 bat 那份对齐，控制台停网关时按 pid 找进程
     mcp_pid_file="$PWD/mcp_gateway.pid"

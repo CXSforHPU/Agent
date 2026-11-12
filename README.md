@@ -291,7 +291,7 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 远端工具算得慢，截屏要 10 秒左右，所以请求分两段发：先连上，设好收发超时，再发请求体。超时由 `src/utils/webclient_util.c` 统一设置，聊天、TTS、STT、文件上传下载四条链路也用它。
 
-服务端部署与启动脚本在 `resource/file_server/mcp/` 目录：HTTP 网关加内置文件工具，Windows 11 上把 ODR 注册的 MCP 服务器桥接成 HTTP。`resource/file_server/mcp/start_mcp_gateway.bat` 会顺带接入 [Windows-MCP](https://github.com/CursorTouch/Windows-MCP)，机器上没有 uv 或没有 windows-mcp 包时脚本自己装上，设备就能控制本机桌面。文件服务器的 `deploy.bat` 与 `deploy.sh` 默认把网关和文件服务器一起起起来，网关端口 8765，只想要文件服务器时加 `--no-mcp`。想加自己的工具，写一个继承 `Tool` 基类的类放进 `resource/file_server/mcp/tools/user_tools/`，一个模块一个工具类，网关启动时自动注册。工具要返回图片或音频，用 `to_content` 的 `image` 和 `audio` 参数，文件会存到文件服务器，回包里给的是下载地址。设备端的地址由 `PKG_AGENT_MCP_SERVER_URL` 配置。完整说明见 [MCP 工具说明](./docs/tool_mcp.md)。
+服务端部署与启动脚本在 `resource/file_server/mcp/` 目录：HTTP 网关加内置文件工具，Windows 11 上把 ODR 注册的 MCP 服务器桥接成 HTTP。`resource/file_server/mcp/start_mcp_gateway.bat` 会顺带接入 [Windows-MCP](https://github.com/CursorTouch/Windows-MCP)，机器上没有 uv 或没有 windows-mcp 包时脚本自己装上，设备就能控制本机桌面。文件服务器的 `deploy.bat` 与 `deploy.sh` 默认把网关和文件服务器一起起起来，网关端口 8765，只想要文件服务器时加 `--no-mcp`。起哪几个组件用 `--start` 点名，装哪几个组件的依赖用 `--install` 点名，组件名逗号分隔，取值 `file-server`、`mcp`、`tts`、`stt`。想加自己的工具，写一个继承 `Tool` 基类的类放进 `resource/file_server/mcp/tools/user_tools/`，一个模块一个工具类，网关启动时自动注册。工具要返回图片或音频，用 `to_content` 的 `image` 和 `audio` 参数，文件会存到文件服务器，回包里给的是下载地址。设备端的地址由 `PKG_AGENT_MCP_SERVER_URL` 配置。完整说明见 [MCP 工具说明](./docs/tool_mcp.md)。
 
 工具回包里的图片和音频由网关存到文件服务器，板子不碰原始数据。网关默认接 `http://127.0.0.1:8000`，也就是包里的 `resource/file_server`。回包里换成一句带下载地址的说明，模型和用户拿到的都是这个地址。文件服务器在内网、模型在云上时，网关加 `--file-server-url` 换成公网地址。
 
@@ -321,7 +321,7 @@ resource/web/
 └── README.md              控制台自己的完整说明
 ```
 
-运维页 `/ops` 管的是文件服务器（`resource/file_server` 那套 FastAPI）和它带的 MCP 网关：装依赖、启动、停止都做成按钮，两个服务的端口也能在页面上改，语音合成与语音转写能在页面上试，日志能读尾部并自动跟随最新一行。按钮背后的接口是 `/api/ops/*`。
+运维页 `/ops` 管的是文件服务器（`resource/file_server` 那套 FastAPI）和它带的 MCP 网关：装依赖按组件分开装，启动时可以勾选要起哪些组件，停止与端口设置也做成按钮，语音合成与语音转写能在页面上试，日志能读尾部并自动跟随最新一行。四个组件各缺什么依赖，页面上一项项列出来。按钮背后的接口是 `/api/ops/*`。
 
 启动方式、接口清单与环境变量见 [resource/web/README.md](./resource/web/README.md)。
 
@@ -424,6 +424,7 @@ python -B build/skill_qemu/run_llm_live.py
 | 未启动 MQTT 时查询报 `mqtt state busy` | 状态锁只在客户端启动时创建，未启动就取不到 | 锁为幂等懒创建，未启动也能读订阅表和历史 |
 | STT 转写失败 | 地址错误、服务未启动、模型未下载 | 检查 `PKG_AGENT_WEB_SERVER_URL`，确认拼出来的 `<地址>/stt` 可用 |
 | TTS 合成返回 503 | 服务端没装配推理链，音色权重也没拉下来 | 在文件服务器目录跑 `bash deploy.sh --tts`（Windows 用 `deploy.bat --tts`），再用 `python fetch_tts.py check` 核对 |
+| TTS 或 STT 返回 404 | 启动时没选这个组件，服务只注册选中的端点 | 用 `--start` 点上 `tts` 或 `stt`，或者在运维页的勾选框里选中后重新启动 |
 
 ## 依赖
 

@@ -112,6 +112,12 @@ cd packages\Agent-latest\resource\file_server
 deploy.bat
 ```
 
+只起文件服务器不起网关，用 `--start` 点名：
+
+```bat
+deploy.bat --start-only --start file-server
+```
+
 网关的分层、路由和回包裁剪规则见
 [../resource/file_server/mcp/docs/architecture.md](../resource/file_server/mcp/docs/architecture.md)，
 架构图如下：
@@ -153,7 +159,7 @@ start_mcp_gateway.bat 8765 C:\Users\me
 
 ```bat
 cd packages\Agent-latest\resource\file_server
-deploy.bat --start-only
+deploy.bat --start-only --start file-server,mcp
 ```
 
 网关默认听 8765。只想要文件服务器时加 `--no-mcp`，换端口用 `--mcp-port 8766`。

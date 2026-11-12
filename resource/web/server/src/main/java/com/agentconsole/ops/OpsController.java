@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -43,8 +44,8 @@ public class OpsController {
     }
 
     /**
-     * 改端口。body 里可以带 fileServerPort 与 mcpPort，两项都可选，
-     * 比如 {"fileServerPort": 8001, "mcpPort": 8766}。
+     * 改端口与启动组件。body 里可以带 fileServerPort、mcpPort 与 startComponents，
+     * 三项都可选，比如 {"fileServerPort": 8001, "startComponents": ["file-server", "mcp"]}。
      */
     @PutMapping("/settings")
     public ResponseEntity<ApiResponse<Map<String, Object>>> updateSettings(
@@ -58,8 +59,10 @@ public class OpsController {
         } catch (NumberFormatException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("端口要填数字"));
         }
+        List<String> startComponents = componentsOf(body.get("startComponents"));
         try {
-            return ResponseEntity.ok(ApiResponse.ok(ops.updateSettings(fileServerPort, mcpPort)));
+            return ResponseEntity.ok(ApiResponse.ok(
+                    ops.updateSettings(fileServerPort, mcpPort, startComponents)));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
         } catch (IllegalStateException e) {
@@ -78,14 +81,45 @@ public class OpsController {
         return Integer.valueOf(raw.toString().trim());
     }
 
-    /** 装依赖。返回任务 id，前端轮询 /jobs/{id} 看进度。 */
+    /** 组件清单。数组或者逗号分隔的串都行，键不在就是没这项。 */
+    private static List<String> componentsOf(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        List<String> out = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                out.add(String.valueOf(item).trim());
+            }
+        } else {
+            for (String item : raw.toString().split(",")) {
+                out.add(item.trim());
+            }
+        }
+        out.removeIf(String::isEmpty);
+        return out;
+    }
+
+    /**
+     * 每个组件的依赖明细。refresh=true 时跳过缓存重新探测。
+     */
+    @GetMapping("/components")
+    public ApiResponse<Map<String, Object>> components(@RequestParam(defaultValue = "false") boolean refresh,
+                                                       JwtService.Claims claims) {
+        return ApiResponse.ok(ops.components(refresh));
+    }
+
+    /**
+     * 装依赖。返回任务 id，前端轮询 /jobs/{id} 看进度。
+     * components 是要装的组件，逗号分隔，比如 tts 或 tts,stt。
+     */
     @PostMapping("/install")
     public ResponseEntity<ApiResponse<Map<String, String>>> install(
             @RequestParam(defaultValue = "file-server") String target,
-            @RequestParam(defaultValue = "false") boolean withTts,
+            @RequestParam(required = false) String components,
             JwtService.Claims claims) {
         try {
-            String id = ops.install(target, withTts);
+            String id = ops.install(target, componentsOf(components));
             return ResponseEntity.ok(ApiResponse.ok(Map.of("jobId", id)));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));

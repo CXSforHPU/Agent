@@ -120,9 +120,15 @@ export const api = {
   opsStatus: () => request('/ops/status'),
   opsSettings: () => request('/ops/settings'),
   opsSaveSettings: (data) => request('/ops/settings', { method: 'PUT', body: data }),
-  opsInstall: (target, withTts) =>
-    request(`/ops/install?target=${encodeURIComponent(target)}&withTts=${withTts ? 'true' : 'false'}`,
-      { method: 'POST' }),
+  opsComponents: (refresh = false) =>
+    request(`/ops/components?refresh=${refresh ? 'true' : 'false'}`),
+  opsInstall: (target, components) => {
+    const query = new URLSearchParams({ target })
+    if (components && components.length) {
+      query.set('components', components.join(','))
+    }
+    return request(`/ops/install?${query.toString()}`, { method: 'POST' })
+  },
   opsJobs: () => request('/ops/jobs'),
   opsJob: (id) => request(`/ops/jobs/${encodeURIComponent(id)}`),
   opsStart: () => request('/ops/start', { method: 'POST' }),

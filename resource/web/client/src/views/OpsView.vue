@@ -27,10 +27,37 @@ const mcpPortInput = ref('')
 const mcpPortDirty = ref(false)
 const portBusy = ref(false)
 
+// 组件明细。探测要几秒，所以单独拉，不跟着状态一起轮询。
+const components = ref([])
+const componentsError = ref('')
+const componentsBusy = ref(false)
+// 勾选要启动哪些组件。file-server 是本体，不给取消。
+const startSelection = ref(['file-server'])
+const selectionDirty = ref(false)
+const selectionBusy = ref(false)
+
 const sttFile = ref(null)
 const sttText = ref('')
 const sttBusy = ref(false)
 const sttError = ref('')
+
+// 探测没跑起来时的兜底清单，保证勾选框一直在。
+const FALLBACK_COMPONENTS = [
+  { key: 'file-server', name: '文件服务器', required: true },
+  { key: 'mcp', name: 'MCP 网关' },
+  { key: 'tts', name: '语音合成' },
+  { key: 'stt', name: '语音转写' },
+]
+
+const componentList = computed(() =>
+  components.value.length ? components.value : FALLBACK_COMPONENTS,
+)
+
+const startComponentNames = computed(() =>
+  componentList.value
+    .filter((c) => startSelection.value.includes(c.key))
+    .map((c) => c.name),
+)
 
 let timer = null
 let progressTimer = null
@@ -53,6 +80,11 @@ const statusRows = computed(() => [
   },
   { key: 'Python 环境', on: status.value.venvReady, note: '文件服务器的 .venv' },
   { key: 'TTS 权重', on: status.value.ttsReady, note: 'GPT-SoVITS 推理代码与音色权重' },
+  {
+    key: '启动组件',
+    on: true,
+    note: startComponentNames.value.join('、') || '（还没选）',
+  },
 ])
 
 const running = computed(() => jobs.value.filter((j) => j.status === 'running'))
@@ -105,6 +137,7 @@ onMounted(() => {
   refreshStatus()
   refreshJobs()
   loadLog()
+  loadComponents()
   timer = setInterval(refreshStatus, 5000)
   logTimer = setInterval(refreshLog, 3000)
 })
@@ -131,8 +164,46 @@ async function refreshStatus() {
     if (!mcpPortDirty.value && status.value.mcpPort) {
       mcpPortInput.value = String(status.value.mcpPort)
     }
+    // 同理，勾选没保存之前也不刷回去
+    if (!selectionDirty.value && Array.isArray(status.value.startComponents)) {
+      startSelection.value = [...status.value.startComponents]
+    }
   } catch (e) {
     error.value = e.message
+  }
+}
+
+// 组件依赖明细。探测要几秒到几十秒，单独一个按钮触发。
+async function loadComponents(refresh = false) {
+  componentsBusy.value = true
+  componentsError.value = ''
+  try {
+    const data = await api.opsComponents(refresh)
+    components.value = data.components || []
+    if (data.error) {
+      componentsError.value = data.error
+    }
+  } catch (e) {
+    componentsError.value = e.message
+  } finally {
+    componentsBusy.value = false
+  }
+}
+
+// 勾选要启动的组件，存到宿主级设置里，下次启动生效。
+async function saveComponents() {
+  error.value = ''
+  notice.value = ''
+  selectionBusy.value = true
+  try {
+    const data = await api.opsSaveSettings({ startComponents: [...startSelection.value] })
+    selectionDirty.value = false
+    notice.value = data.message || '启动组件已保存'
+    await refreshStatus()
+  } catch (e) {
+    report(e)
+  } finally {
+    selectionBusy.value = false
   }
 }
 
@@ -144,12 +215,12 @@ async function refreshJobs() {
   }
 }
 
-async function install(target, withTts, label) {
+async function install(target, components, label) {
   error.value = ''
   notice.value = ''
   busy.value = label
   try {
-    const data = await api.opsInstall(target, withTts)
+    const data = await api.opsInstall(target, components)
     notice.value = `${label}已开始，日志写到 .run/install.log`
     await refreshJobs()
     pollJob(data.jobId)
@@ -182,6 +253,8 @@ async function pollJob(id) {
         ? `${job.label}完成`
         : `${job.label}失败：${job.message}`
       refreshStatus()
+      // 装完依赖依赖明细变了，重新探一次
+      loadComponents(true)
       return
     }
   }
@@ -433,19 +506,25 @@ function jumpToLatest() {
   <div class="panel">
     <h3>安装依赖</h3>
     <p class="muted">
-      装依赖是后台任务，进度写到 .run/install.log。TTS 那条会拉 GPT-SoVITS 的推理代码、
-      预训练模型和音色权重，第一次要下载几个 GB。
+      装依赖是后台任务，进度写到 .run/install.log。按组件分开装：语音合成那一条会拉
+      GPT-SoVITS 的推理代码、预训练模型和音色权重，第一次要下载几个 GB。
     </p>
 
     <div class="row-actions">
-      <button class="btn" :disabled="Boolean(busy)" @click="install('web', false, '安装前端依赖')">
+      <button class="btn" :disabled="Boolean(busy)" @click="install('web', [], '安装前端依赖')">
         {{ busy === '安装前端依赖' ? '安装中……' : '安装前端依赖' }}
       </button>
-      <button class="btn" :disabled="Boolean(busy)" @click="install('file-server', false, '安装文件服务器依赖')">
+      <button class="btn" :disabled="Boolean(busy)" @click="install('file-server', [], '安装文件服务器依赖')">
         {{ busy === '安装文件服务器依赖' ? '安装中……' : '安装文件服务器依赖' }}
       </button>
-      <button class="btn ghost" :disabled="Boolean(busy)" @click="install('file-server', true, '安装文件服务器依赖（含 TTS）')">
-        {{ busy === '安装文件服务器依赖（含 TTS）' ? '安装中……' : '安装文件服务器依赖（含 TTS）' }}
+      <button class="btn ghost" :disabled="Boolean(busy)" @click="install('file-server', ['mcp'], '安装 MCP 网关依赖')">
+        {{ busy === '安装 MCP 网关依赖' ? '安装中……' : '安装 MCP 网关依赖' }}
+      </button>
+      <button class="btn ghost" :disabled="Boolean(busy)" @click="install('file-server', ['tts'], '安装语音合成依赖')">
+        {{ busy === '安装语音合成依赖' ? '安装中……' : '安装语音合成依赖' }}
+      </button>
+      <button class="btn ghost" :disabled="Boolean(busy)" @click="install('file-server', ['stt'], '安装语音转写依赖')">
+        {{ busy === '安装语音转写依赖' ? '安装中……' : '安装语音转写依赖' }}
       </button>
     </div>
 
@@ -465,15 +544,83 @@ function jumpToLatest() {
   </div>
 
   <div class="panel">
+    <h3>组件依赖明细</h3>
+    <p class="muted">
+      探测 file_server/components.py 的结果，只看文件和已装的包，不下载任何东西。
+      探测要起子进程，第一次可能要几十秒。
+    </p>
+    <p v-if="componentsError" class="error">{{ componentsError }}</p>
+
+    <div class="row-actions">
+      <button class="btn ghost small" :disabled="componentsBusy" @click="loadComponents(true)">
+        {{ componentsBusy ? '探测中……' : '重新探测' }}
+      </button>
+    </div>
+
+    <table class="deps">
+      <thead>
+        <tr><th>组件</th><th>状态</th><th>依赖</th></tr>
+      </thead>
+      <tbody>
+        <tr v-for="c in componentList" :key="c.key">
+          <td>{{ c.name }}</td>
+          <td>
+            <span class="dot" :class="{ on: c.ready }"></span>
+            {{ c.ready ? '就绪' : '缺依赖' }}
+          </td>
+          <td>
+            <ul v-if="c.deps && c.deps.length" class="dep-list">
+              <li
+                v-for="d in c.deps"
+                :key="d.name"
+                :class="{ missing: !d.ok, optional: !d.required }"
+              >
+                <span class="dep-mark">{{ d.ok ? '✓' : (d.required ? '✗' : '○') }}</span>
+                <span class="dep-name">{{ d.name }}</span>
+                <span class="mono muted">{{ d.detail }}</span>
+              </li>
+            </ul>
+            <span v-else class="muted">没有可探测的依赖。</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
     <h3>文件服务器与 MCP 网关</h3>
     <p class="muted">
-      启动走 file_server/deploy 脚本，会连带把 MCP 网关拉起来。停止会先杀本控制台起的进程，
-      还占着端口的话按端口反查 pid 再杀一次，连 MCP 网关一起带走。
+      启动走 file_server/deploy 脚本，只起勾选的组件：没勾的组件不注册端点，调用它会返回 404。
+      停止会先杀本控制台起的进程，还占着端口的话按端口反查 pid 再杀一次，连 MCP 网关一起带走。
     </p>
+
+    <div class="field">
+      <label>启动哪些组件</label>
+      <div class="row-actions">
+        <label v-for="c in componentList" :key="c.key" class="check">
+          <input
+            type="checkbox"
+            :value="c.key"
+            v-model="startSelection"
+            :disabled="c.required"
+            @change="selectionDirty = true"
+          />
+          {{ c.name }}
+        </label>
+      </div>
+      <p class="muted">
+        文件服务器是本体，不能关。勾选保存后，下次启动生效。
+      </p>
+      <div class="row-actions">
+        <button class="btn ghost small" :disabled="selectionBusy || !selectionDirty" @click="saveComponents">
+          {{ selectionBusy ? '保存中……' : '保存勾选' }}
+        </button>
+      </div>
+    </div>
 
     <div class="row-actions">
       <button class="btn" :disabled="Boolean(busy)" @click="startServer">
-        {{ busy === 'start' ? '启动中……' : '启动文件服务器与 MCP 网关' }}
+        {{ busy === 'start' ? '启动中……' : '按勾选启动' }}
       </button>
       <button class="btn danger" :disabled="Boolean(busy)" @click="stopServer">
         {{ busy === 'stop' ? '停止中……' : '停止' }}
@@ -668,6 +815,43 @@ function jumpToLatest() {
 
 .jobs {
   margin-top: 14px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.deps {
+  margin-top: 12px;
+}
+
+.dep-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dep-list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 13px;
+  padding: 2px 0;
+}
+
+.dep-list li.missing .dep-mark {
+  color: var(--danger, #e06c75);
+}
+
+.dep-list li.optional .dep-mark {
+  color: var(--muted);
+}
+
+.dep-name {
+  min-width: 150px;
 }
 
 .player {
