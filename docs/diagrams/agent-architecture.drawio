@@ -58,25 +58,30 @@
                 vertex="1" parent="1">
           <mxGeometry x="180" y="60" width="790" height="110" as="geometry" />
         </mxCell>
-        <mxCell id="channel-debug" value="Debug 通道&#xa;（当前启用）"
+        <mxCell id="channel-lvgl" value="LVGL 通道"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="265" y="85" width="140" height="60" as="geometry" />
-        </mxCell>
-        <mxCell id="channel-lvgl" value="LVGL 通道&#xa;（暂时停用）"
-                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
-                vertex="1" parent="1">
-          <mxGeometry x="425" y="85" width="140" height="60" as="geometry" />
+          <mxGeometry x="185" y="85" width="140" height="60" as="geometry" />
         </mxCell>
         <mxCell id="channel-cli" value="CLI 通道"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="585" y="85" width="140" height="60" as="geometry" />
+          <mxGeometry x="345" y="85" width="140" height="60" as="geometry" />
         </mxCell>
         <mxCell id="channel-webnet" value="WebNet 通道"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
                 vertex="1" parent="1">
-          <mxGeometry x="745" y="85" width="140" height="60" as="geometry" />
+          <mxGeometry x="505" y="85" width="140" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="channel-a2a" value="A2A 通道&#xa;（当前启用）"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;"
+                vertex="1" parent="1">
+          <mxGeometry x="665" y="85" width="140" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="channel-debug" value="Debug 通道"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                vertex="1" parent="1">
+          <mxGeometry x="825" y="85" width="140" height="60" as="geometry" />
         </mxCell>
 
         <mxCell id="layer-core" value="智能体&#xa;核心"
@@ -167,18 +172,18 @@
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;
                        fontSize=18;fontStyle=1;verticalAlign=middle;align=center;"
                 vertex="1" parent="1">
-          <mxGeometry x="60" y="380" width="100" height="170" as="geometry" />
+          <mxGeometry x="60" y="380" width="100" height="180" as="geometry" />
         </mxCell>
         <mxCell id="skill-container" value=""
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=60;"
                 vertex="1" parent="1">
-          <mxGeometry x="180" y="380" width="790" height="170" as="geometry" />
+          <mxGeometry x="180" y="380" width="790" height="180" as="geometry" />
         </mxCell>
         <mxCell id="skill-tools-group" value="工具模块 src/tools"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;
                        fontSize=16;verticalAlign=top;align=center;spacingTop=8;"
                 vertex="1" parent="1">
-          <mxGeometry x="200" y="400" width="330" height="130" as="geometry" />
+          <mxGeometry x="200" y="400" width="330" height="140" as="geometry" />
         </mxCell>
         <mxCell id="tool-device" value="设备工具 29 个"
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
@@ -204,27 +209,32 @@
                 style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;
                        fontSize=16;verticalAlign=top;align=center;spacingTop=8;"
                 vertex="1" parent="1">
-          <mxGeometry x="550" y="400" width="400" height="130" as="geometry" />
+          <mxGeometry x="550" y="400" width="400" height="140" as="geometry" />
         </mxCell>
         <mxCell id="skill-md-device" value="device 技能"
-                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
                 vertex="1" parent="1">
-          <mxGeometry x="602" y="440" width="140" height="35" as="geometry" />
+          <mxGeometry x="602" y="436" width="140" height="29" as="geometry" />
         </mxCell>
         <mxCell id="skill-md-commands" value="device-commands"
-                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
                 vertex="1" parent="1">
-          <mxGeometry x="757" y="440" width="140" height="35" as="geometry" />
+          <mxGeometry x="757" y="436" width="140" height="29" as="geometry" />
         </mxCell>
         <mxCell id="skill-md-mqtt" value="mqtt 技能"
-                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
                 vertex="1" parent="1">
-          <mxGeometry x="602" y="485" width="140" height="35" as="geometry" />
+          <mxGeometry x="602" y="473" width="140" height="29" as="geometry" />
         </mxCell>
         <mxCell id="skill-md-math" value="math 技能"
-                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=14;"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
                 vertex="1" parent="1">
-          <mxGeometry x="757" y="485" width="140" height="35" as="geometry" />
+          <mxGeometry x="757" y="473" width="140" height="29" as="geometry" />
+        </mxCell>
+        <mxCell id="skill-md-mcp" value="mcp 技能"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;fontSize=13;"
+                vertex="1" parent="1">
+          <mxGeometry x="602" y="510" width="140" height="29" as="geometry" />
         </mxCell>
 
         <mxCell id="layer-platform" value="平台&#xa;层"

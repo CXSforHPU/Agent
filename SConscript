@@ -81,6 +81,11 @@ if GetDepend(["PKG_AGENT_CLI_CHANNEL"]):
 # Web网络通道
 if GetDepend(["PKG_AGENT_WEBNET_CHANNEL"]):
     src.append(os.path.join(SRC_CHANNELS, "AgentWebChannel.c"))
+# A2A 通道（跑在 WebNet 上，共用 webnet 助手）
+if GetDepend(["PKG_AGENT_A2A_CHANNEL"]):
+    src.append(os.path.join(SRC_CHANNELS, "AgentA2aChannel.c"))
+if GetDepend(["PKG_AGENT_WEBNET_CHANNEL"]) or GetDepend(["PKG_AGENT_A2A_CHANNEL"]):
+    src.append(os.path.join(SRC_CHANNELS, "webnet_util.c"))
 # Debug调试通道
 if GetDepend(["PKG_AGENT_DEBUG_CHANNEL"]):
     src.append(os.path.join(SRC_CHANNELS, "AgentDebugChannel.c"))

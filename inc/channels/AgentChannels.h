@@ -19,6 +19,9 @@
 #elif defined(PKG_AGENT_WEBNET_CHANNEL)
     #include "AgentWebChannel.h"
     #define AGENT_CHANNEL_OPS  (&agent_webnet_ops)
+#elif defined(PKG_AGENT_A2A_CHANNEL)
+    #include "AgentA2aChannel.h"
+    #define AGENT_CHANNEL_OPS  (&agent_a2a_ops)
 #elif defined(PKG_AGENT_DEBUG_CHANNEL)
     #include "AgentDebugChannel.h"
     #define AGENT_CHANNEL_OPS  (&agent_debug_ops)
