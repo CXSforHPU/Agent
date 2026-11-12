@@ -41,7 +41,8 @@
 #endif
 
 
-#define MQTT_SERVER_URI         PKG_AGENT_TOOL_MQTT_BROKER_URL
+#include "utils/agent_endpoint.h"
+#define MQTT_SERVER_URI         agent_endpoint_emqx()
 #define MQTT_CLIENTID           PKG_AGENT_TOOL_MQTT_CLIENT_ID
 #define MQTT_USERNAME           PKG_AGENT_TOOL_MQTT_USERNAME
 #define MQTT_PASSWORD           PKG_AGENT_TOOL_MQTT_PASSWORD

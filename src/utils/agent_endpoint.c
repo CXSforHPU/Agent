@@ -7,6 +7,7 @@
 /* 自动模式下向控制台要来的地址 */
 static char g_file_server_url[AGENT_ENDPOINT_URL_MAX];
 static char g_mcp_url[AGENT_ENDPOINT_URL_MAX];
+static char g_emqx_url[AGENT_ENDPOINT_URL_MAX];
 
 const char *agent_endpoint_file_server(void)
 {
@@ -16,6 +17,11 @@ const char *agent_endpoint_file_server(void)
 const char *agent_endpoint_mcp(void)
 {
     return g_mcp_url[0] ? g_mcp_url : PKG_AGENT_MCP_SERVER_URL;
+}
+
+const char *agent_endpoint_emqx(void)
+{
+    return g_emqx_url[0] ? g_emqx_url : PKG_AGENT_TOOL_MQTT_BROKER_URL;
 }
 
 #ifdef PKG_AGENT_EXT_SERVER_AUTO
@@ -57,8 +63,8 @@ static rt_err_t endpoint_fetch(void)
     struct webclient_session *session;
     char url[AGENT_ENDPOINT_URL_MAX + 64];
     char body[AGENT_ENDPOINT_BODY_MAX];
-    char file_server[AGENT_ENDPOINT_URL_MAX];
-    char mcp[AGENT_ENDPOINT_URL_MAX];
+    char endpoint[AGENT_ENDPOINT_URL_MAX];
+    rt_err_t result = RT_EOK;
     cJSON *root;
     int status, total = 0, len, n;
 
@@ -106,21 +112,47 @@ static rt_err_t endpoint_fetch(void)
         return -RT_ERROR;
     }
 
-    if (endpoint_pick(root, "fileServerUrl", file_server, sizeof(file_server)) != RT_EOK ||
-        endpoint_pick(root, "mcpUrl", mcp, sizeof(mcp)) != RT_EOK)
+#ifdef PKG_AGENT_FILE_AUTO
+    if (endpoint_pick(root, "fileServerUrl", endpoint, sizeof(endpoint)) == RT_EOK &&
+        (rt_strncmp(endpoint, "http://", 7) == 0 ||
+         rt_strncmp(endpoint, "https://", 8) == 0))
     {
-        cJSON_Delete(root);
-        return -RT_ERROR;
+        rt_strncpy(g_file_server_url, endpoint, sizeof(g_file_server_url) - 1);
+        g_file_server_url[sizeof(g_file_server_url) - 1] = '\0';
     }
+    else
+    {
+        result = -RT_ERROR;
+    }
+#endif
+#ifdef PKG_AGENT_MCP_AUTO
+    if (endpoint_pick(root, "mcpUrl", endpoint, sizeof(endpoint)) == RT_EOK &&
+        (rt_strncmp(endpoint, "http://", 7) == 0 ||
+         rt_strncmp(endpoint, "https://", 8) == 0))
+    {
+        rt_strncpy(g_mcp_url, endpoint, sizeof(g_mcp_url) - 1);
+        g_mcp_url[sizeof(g_mcp_url) - 1] = '\0';
+    }
+    else
+    {
+        result = -RT_ERROR;
+    }
+#endif
+#ifdef PKG_AGENT_EMQX_AUTO
+    if (endpoint_pick(root, "emqxUrl", endpoint, sizeof(endpoint)) == RT_EOK &&
+        (rt_strncmp(endpoint, "tcp://", 6) == 0 ||
+         rt_strncmp(endpoint, "ssl://", 6) == 0))
+    {
+        rt_strncpy(g_emqx_url, endpoint, sizeof(g_emqx_url) - 1);
+        g_emqx_url[sizeof(g_emqx_url) - 1] = '\0';
+    }
+    else
+    {
+        result = -RT_ERROR;
+    }
+#endif
     cJSON_Delete(root);
-
-    rt_strncpy(g_file_server_url, file_server, sizeof(g_file_server_url) - 1);
-    g_file_server_url[sizeof(g_file_server_url) - 1] = '\0';
-    rt_strncpy(g_mcp_url, mcp, sizeof(g_mcp_url) - 1);
-    g_mcp_url[sizeof(g_mcp_url) - 1] = '\0';
-
-    LOG_I("[endpoint] file server %s, mcp %s", g_file_server_url, g_mcp_url);
-    return RT_EOK;
+    return result;
 }
 
 #endif /* PKG_AGENT_EXT_SERVER_AUTO */
@@ -130,7 +162,7 @@ void agent_endpoint_init(void)
 #ifdef PKG_AGENT_EXT_SERVER_AUTO
     if (agent_endpoint_refresh() != RT_EOK)
     {
-        LOG_W("[endpoint] console unreachable, use the address built into the firmware");
+        LOG_W("[endpoint] endpoint refresh incomplete; failed entries keep previous or fallback addresses");
     }
 #endif
 }
@@ -152,28 +184,23 @@ rt_err_t agent_endpoint_refresh(void)
  */
 static int msh_agent_endpoint(int argc, char *argv[])
 {
-    rt_kprintf("mode       : %s\n",
-#ifdef PKG_AGENT_EXT_SERVER_AUTO
-               "auto (ask the console for the file server and MCP)"
-#else
-               "manual (all three addresses from Kconfig)"
-#endif
-    );
     rt_kprintf("console    : %s\n", PKG_AGENT_CONSOLE_URL);
     rt_kprintf("file server: %s\n", agent_endpoint_file_server());
     rt_kprintf("mcp        : %s\n", agent_endpoint_mcp());
+    rt_kprintf("emqx       : %s\n", agent_endpoint_emqx());
 
     if (argc > 1 && (rt_strcmp(argv[1], "refresh") == 0 || rt_strcmp(argv[1], "reload") == 0))
     {
         rt_err_t rc = agent_endpoint_refresh();
         if (rc != RT_EOK)
         {
-            rt_kprintf("refresh failed: %d\n", rc);
+            LOG_E("endpoint refresh failed: %d", rc);
             return -1;
         }
         rt_kprintf("refreshed\n");
         rt_kprintf("file server: %s\n", agent_endpoint_file_server());
         rt_kprintf("mcp        : %s\n", agent_endpoint_mcp());
+        rt_kprintf("emqx       : %s\n", agent_endpoint_emqx());
     }
     return 0;
 }

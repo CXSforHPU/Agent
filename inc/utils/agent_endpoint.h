@@ -4,23 +4,12 @@
 #include <rtthread.h>
 
 /*
- * 外部服务器地址。文件服务器、MCP 网关、管理控制台都在板子外面，
- * 地址有两个来源：
- *
- *   手动  三个地址都在 Kconfig 里填死，板端启动时不问控制台
- *   自动  只填控制台地址，板端启动时问一次，
- *         拿控制台报的文件服务器与 MCP 网关地址
- *
- * 自动模式拿不到控制台时回退到下面编译进固件的默认地址，
- * 所以控制台没开只是地址旧一点，不会让上传下载与 MCP 直接瘫掉。
+ * File server, MCP and EMQX each choose manual or Web discovery.
+ * Automatic endpoints share PKG_AGENT_CONSOLE_URL. Manual endpoints are
+ * never overwritten by discovery. A failed refresh preserves the previous
+ * automatic address, or falls back to the configured default on first boot.
  */
 
-/*
- * 工程 .config 比包里的 Kconfig 旧时还没有这些选项，用默认地址兜底。
- * 自动获取模式下文件服务器与 MCP 的地址不在 menuconfig 里出现，
- * 固件编译时就是下面这个默认值，控制台连不上时当回退用。
- * 默认值按 QEMU 走 TAP 网桥接宿主机算，宿主机在共享网段上是 192.168.137.1。
- */
 #ifndef PKG_AGENT_WEB_SERVER_URL
 #define PKG_AGENT_WEB_SERVER_URL "http://192.168.137.1:8000"
 #endif
@@ -42,9 +31,16 @@
 #define PKG_AGENT_ENDPOINT_TIMEOUT_MS 3000
 #endif
 
+/* Compatibility with firmware configuration generated before per-URL choices. */
+#if defined(PKG_AGENT_EXT_SERVER_AUTO) && !defined(PKG_AGENT_ENDPOINT_INDEPENDENT)
+#define PKG_AGENT_FILE_AUTO
+#define PKG_AGENT_MCP_AUTO
+#define PKG_AGENT_EMQX_AUTO
+#endif
+
 /* 运行时地址缓冲区与控制台响应体上限 */
 #define AGENT_ENDPOINT_URL_MAX  128
-#define AGENT_ENDPOINT_BODY_MAX 512
+#define AGENT_ENDPOINT_BODY_MAX 768
 
 /*
  * @brief 初始化外部地址。自动模式下在这里向控制台问一次
@@ -67,5 +63,11 @@ const char *agent_endpoint_file_server(void);
  * @brief MCP 网关地址，含 /mcp 路径
  */
 const char *agent_endpoint_mcp(void);
+
+/* Paho broker URI (tcp:// or ssl://). */
+#ifndef PKG_AGENT_TOOL_MQTT_BROKER_URL
+#define PKG_AGENT_TOOL_MQTT_BROKER_URL "tcp://broker.emqx.io:1883"
+#endif
+const char *agent_endpoint_emqx(void);
 
 #endif /* __AGENT_UTILS_AGENT_ENDPOINT_H__ */
