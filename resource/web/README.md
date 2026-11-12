@@ -173,7 +173,7 @@ Windows 上文件服务器在跑时装依赖会失败，`uv sync` 换不了 `tor
 
 ### 板端地址
 
-「板端地址」填板子访问文件服务器和 MCP 网关用的主机名，只填主机名或 IP，不带协议和端口。QEMU 里的板子填 `10.0.2.2`，真板子填它在局域网里的 IP。
+「板端地址」填板子访问文件服务器和 MCP 网关用的主机名，只填主机名或 IP，不带协议和端口。QEMU 走 TAP 网桥接宿主机时填 `192.168.137.1`，真板子填它在局域网里的 IP。
 
 存的值放在 `ops_setting` 表的 `deviceHost` 键里。默认值取 `agent.console.device-host`，没配就用 `agent.console.file-server-host`，再没有就用 `127.0.0.1`。
 
@@ -186,10 +186,10 @@ Windows 上文件服务器在跑时装依赖会失败，`uv sync` 换不了 `tor
   "success": true,
   "message": "ok",
   "data": {
-    "deviceHost": "10.0.2.2",
-    "fileServerUrl": "http://10.0.2.2:8000",
+    "deviceHost": "192.168.137.1",
+    "fileServerUrl": "http://192.168.137.1:8000",
     "fileServerPort": 8000,
-    "mcpUrl": "http://10.0.2.2:8765/mcp",
+    "mcpUrl": "http://192.168.137.1:8765/mcp",
     "mcpPort": 8765
   }
 }
@@ -264,7 +264,7 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 | POST | `/api/settings/{key}/reset` | 把某一项恢复成环境变量默认值 |
 | GET | `/api/ops/status` | 各组件状态，含当前启动组件清单 |
 | GET | `/api/ops/settings` | 读运维设置，含两个服务的当前端口、板端地址、默认值与启动组件清单 |
-| PUT | `/api/ops/settings` | 改运维设置，body 是 `{"fileServerPort": N, "mcpPort": M, "deviceHost": "10.0.2.2", "startComponents": ["mcp"]}`，四项都可选 |
+| PUT | `/api/ops/settings` | 改运维设置，body 是 `{"fileServerPort": N, "mcpPort": M, "deviceHost": "192.168.137.1", "startComponents": ["mcp"]}`，四项都可选 |
 | GET | `/api/ops/endpoints` | 板端用的文件服务器与 MCP 地址。免登录，固件启动时来问 |
 | GET | `/api/ops/components?refresh=` | 各组件的依赖明细，`refresh=true` 时跳过缓存重新探测 |
 | POST | `/api/ops/install?target=&components=` | 后台装依赖，返回任务 id。`target` 取 `web` 或 `file-server`，`components` 是要装的组件，逗号分隔 |
@@ -322,7 +322,7 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 
 控制台与端侧 agent 的链路要四步走通，缺一步都会表现成「对话没反应」：
 
-1. **板子在跑**：QEMU 起来后串口里能看到 `A2A channel up on port 80`。板子用的是 QEMU 的 user 网络，宿主机一般只能通过 `hostfwd` 连进去，比如 `-net user,...,hostfwd=tcp::8081-:80`，设备地址就填 `http://127.0.0.1:8081`。
+1. **板子在跑**：QEMU 起来后串口里能看到 `A2A channel up on port 80`。板子走 TAP 网桥接宿主机，地址固定 `192.168.137.100`，宿主机直接用 `http://192.168.137.100` 连板子，设备地址就填这个。
 2. **服务端起来了**：日志里有 `读到 rtconfig.h：...`，说明默认配置来源对了；没有这一行就检查工作目录，或者用 `AGENT_RTCONFIG_H` 直接指定路径。
 3. **探活通过**：设备管理页点探活，拿到能力卡算在线。拿不到就是地址或端口不对。
 4. **三条对话链路**：

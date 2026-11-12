@@ -172,7 +172,7 @@ python3 mcp_gateway.py --host 0.0.0.0 --port 8765 --root "$HOME"
 ## 3. 设备端配置
 
 设备端的地址由 Kconfig 选项 `PKG_AGENT_MCP_SERVER_URL` 决定，默认值是
-`http://10.0.2.2:8765/mcp`。把它改成网关所在机器的 IP：
+`http://192.168.137.1:8765/mcp`。把它改成网关所在机器的 IP：
 
 ```
 CONFIG_PKG_AGENT_TOOL_MCP_ENABLE=y
@@ -633,11 +633,11 @@ python build/skill_qemu/run_live.py
 1. 起文件服务器，端口 8000，工具回包里的图片存在这里。
 2. 起主机侧网关，带 `--windows-mcp`，端口 8765。
 3. 起本地搜索服务的替身，端口 8799，网关的 `web_search` 调它。
-4. 起 QEMU，带 SLIRP 网卡。宿主在 `10.0.2.2`，板子 DHCP 拿到 `10.0.2.10`。
+4. 起 QEMU，带 TAP 网卡。板子接 Windows 共享出来的那张 TAP 网卡，固定地址 `192.168.137.100`，宿主在共享网段上是 `192.168.137.1`。
 5. 在板子上跑 `mcp_live_qemu_test`，把结果写进 `build/skill_qemu/result_live.json`。
 
-板子的 `PKG_AGENT_MCP_SERVER_URL` 要指向 `http://10.0.2.2:8765/mcp`。
-用 SLIRP 时宿主地址固定是 `10.0.2.2`，不是 PC 的真实 IP。
+板子的 `PKG_AGENT_MCP_SERVER_URL` 要指向 `http://192.168.137.1:8765/mcp`。
+走 TAP 网桥时宿主地址固定是 `192.168.137.1`，不是 PC 的真实 IP。
 
 用例里的第一条检查是「替身放行」。离线回归启动时，`mock_chat` 会拦下
 `PKG_AGENT_MCP_SERVER_URL` 上的所有请求。`mcp_live_qemu_test` 先调

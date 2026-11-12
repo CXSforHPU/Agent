@@ -218,10 +218,10 @@ python build/skill_qemu/run_live.py
 1. 起文件服务器，端口 8000，用的是 `packages/Agent-latest/resource/file_server/.venv` 里的 Python。工具回包里的图片存在这里。
 2. 起本地的搜索服务替身，端口 8799，形状是 SearXNG 的 JSON 接口。联网搜索的判据靠它，替身的返回里带一个固定的标记。
 3. 起主机侧网关，参数是 `--windows-mcp --host 0.0.0.0 --port 8765 --root <用户目录> --file-server http://127.0.0.1:8000 --web-search-url http://127.0.0.1:8799/search --web-search-mode searxng`。网关另一头是 Windows-MCP，端口能连上说明它已经握手完。
-4. 起 QEMU，带 SLIRP 网卡：`-net nic,model=lan9118 -net user,host=10.0.2.2,net=10.0.2.0/24,dhcpstart=10.0.2.10`。板子 DHCP 拿到 `10.0.2.10`，宿主别名固定是 `10.0.2.2`。
+4. 起 QEMU，带 TAP 网卡：`-net nic,model=lan9118,netdev=net0 -netdev tap,id=net0,ifname=qemu`。板子接 Windows 共享出来的那张 TAP 网卡，固定地址 `192.168.137.100`，宿主在共享网段上是 `192.168.137.1`。
 5. 在板子上跑 `mcp_live_qemu_test`，结果写进 `build/skill_qemu/result_live.json`。
 
-固件的 `PKG_AGENT_MCP_SERVER_URL` 要配成 `http://10.0.2.2:8765/mcp`。用 SLIRP 时宿主地址是 `10.0.2.2`，不是 PC 的真实 IP。开了自动获取地址就以控制台报的为准，这条回归要对着控制台回包里的 `mcpUrl` 核对。
+固件的 `PKG_AGENT_MCP_SERVER_URL` 要配成 `http://192.168.137.1:8765/mcp`。走 TAP 网桥时宿主地址是 `192.168.137.1`，不是 PC 的真实 IP。开了自动获取地址就以控制台报的为准，这条回归要对着控制台回包里的 `mcpUrl` 核对。
 
 离线回归启动时 `mock_chat` 会拦下这个地址上的所有 MCP 请求。`mcp_live_qemu_test` 第一步调 `mock_mcp_release()` 放行，后面的握手、取工具表、调桌面工具都走真链路。
 

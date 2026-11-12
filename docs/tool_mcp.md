@@ -74,7 +74,7 @@ SSE 解析按 `data:` 行取报文，优先挑 id 匹配的那一条。
 | 选项 | 默认值 | 说明 |
 |---|---|---|
 | `PKG_AGENT_TOOL_MCP_ENABLE` | `n` | 打开后编译 MCP 客户端与工具模块 |
-| `PKG_AGENT_MCP_SERVER_URL` | `http://10.0.2.2:8765/mcp` | 服务端完整地址。只有手动模式下显示，自动模式下这个地址由控制台下发 |
+| `PKG_AGENT_MCP_SERVER_URL` | `http://192.168.137.1:8765/mcp` | 服务端完整地址。只有手动模式下显示，自动模式下这个地址由控制台下发 |
 | `PKG_AGENT_MCP_MAX_TOOLS` | `40` | 最多注册多少个远端工具，范围 1 到 64 |
 | `PKG_AGENT_MCP_TIMEOUT_MS` | `30000` | 单次 HTTP 请求超时，范围 1000 到 120000 |
 | `PKG_AGENT_MCP_RESP_BUFSZ` | `32768` | 单个响应体的上限，范围 2048 到 65536 |
@@ -293,9 +293,9 @@ mcp_qemu_test
 python build/skill_qemu/run_live.py
 ```
 
-脚本起文件服务器、带 `--windows-mcp` 的网关和一个本地的搜索服务替身，再起带 SLIRP
-网卡的 QEMU，宿主地址是 `10.0.2.2`，所以板子的 `PKG_AGENT_MCP_SERVER_URL` 要配成
-`http://10.0.2.2:8765/mcp`。离线回归启动时 `mock_chat` 会拦下这个地址上的请求，
+脚本起文件服务器、带 `--windows-mcp` 的网关和一个本地的搜索服务替身，再起带 TAP
+网卡的 QEMU，宿主地址是 `192.168.137.1`，所以板子的 `PKG_AGENT_MCP_SERVER_URL` 要配成
+`http://192.168.137.1:8765/mcp`。离线回归启动时 `mock_chat` 会拦下这个地址上的请求，
 `mcp_live_qemu_test` 先放行，后面的握手、取工具表、调桌面工具都走真链路。
 判据是 22 项检查全部通过：工具表要有 35 项，里面要有 `win__` 桌面工具和
 `read_text_file`，`win__displayinventory` 要回得出本机的显示器信息，

@@ -396,7 +396,7 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 | 手动（默认） | 三个地址都在 Kconfig 里填死，启动时不发任何请求 |
 | 自动 | 只填控制台地址，启动时向控制台问一次，用控制台报的地址；问不到就用固件内置的默认地址 |
 
-自动模式下板端请求 `GET <PKG_AGENT_CONSOLE_URL><PKG_AGENT_CONSOLE_API>`，默认是 `http://10.0.2.2:8080/api/ops/endpoints`。回包里读 `data.fileServerUrl` 与 `data.mcpUrl` 两个字段。
+自动模式下板端请求 `GET <PKG_AGENT_CONSOLE_URL><PKG_AGENT_CONSOLE_API>`，默认是 `http://192.168.137.1:8080/api/ops/endpoints`。回包里读 `data.fileServerUrl` 与 `data.mcpUrl` 两个字段。
 
 调用关系：
 
@@ -575,9 +575,9 @@ sequenceDiagram
 | 宏 | 说明 |
 |---|---|
 | `PKG_AGENT_EXT_SERVER_MANUAL` / `PKG_AGENT_EXT_SERVER_AUTO` | 地址来源，三个都自己填，还是只填控制台地址、另两个向控制台要，默认自己填 |
-| `PKG_AGENT_CONSOLE_URL` | 控制台地址，默认 `http://10.0.2.2:8080`。自动模式下板端靠它问地址，手动模式下板端不问控制台 |
-| `PKG_AGENT_WEB_SERVER_URL` | 文件服务器根地址，默认 `http://10.0.2.2:8000`，不含路径。只有手动模式下显示 |
-| `PKG_AGENT_MCP_SERVER_URL` | MCP 网关地址，默认 `http://10.0.2.2:8765/mcp`。只有手动模式下显示 |
+| `PKG_AGENT_CONSOLE_URL` | 控制台地址，默认 `http://192.168.137.1:8080`。自动模式下板端靠它问地址，手动模式下板端不问控制台 |
+| `PKG_AGENT_WEB_SERVER_URL` | 文件服务器根地址，默认 `http://192.168.137.1:8000`，不含路径。只有手动模式下显示 |
+| `PKG_AGENT_MCP_SERVER_URL` | MCP 网关地址，默认 `http://192.168.137.1:8765/mcp`。只有手动模式下显示 |
 | `PKG_AGENT_CONSOLE_API` | 控制台上报地址的接口路径，默认 `/api/ops/endpoints`，只有自动模式下显示 |
 | `PKG_AGENT_ENDPOINT_TIMEOUT_MS` | 读控制台响应体的超时，默认 3000 毫秒，只有自动模式下显示 |
 
