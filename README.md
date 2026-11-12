@@ -317,7 +317,7 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 resource/web/
 ├── setup.sh / setup.bat   一键安装与启动
 ├── server/                Spring Boot 后端，内嵌 SQLite
-├── client/                Vue3 前端，Vite
+├── client/                Vue3 前端，Vite 加 naive-ui 组件库
 └── README.md              控制台自己的完整说明
 ```
 

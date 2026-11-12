@@ -26,9 +26,39 @@ resource/web/
 │       └── resources/
 │           ├── application.yml
 │           └── schema.sql     建表语句
-├── client/           Vue3 前端
+├── client/           Vue3 前端，naive-ui 组件库
+│   ├── src/
+│   │   ├── App.vue       后台外壳：侧边菜单、页头
+│   │   ├── theme.js      品牌色与组件主题改写
+│   │   ├── style.css     全局基础样式与通用类
+│   │   ├── api.js        后端接口封装
+│   │   └── views/        六个页面
+│   └── vite.config.js
 └── .run/             日志与运行产物，不进版本库
 ```
+
+## 前端
+
+Vue 3 加 Vite，组件库用 [naive-ui](https://www.naiveui.com/)，图标用 `@vicons/ionicons5`。naive-ui 按需引入，`<script setup>` 里直接 import 组件，不装额外的解析插件。
+
+页面骨架是一个左侧菜单加右侧内容区。登录页不套这个外壳，单独渲染。菜单五项对应五个页面：
+
+| 页面 | 路径 | 内容 |
+|---|---|---|
+| 设备管理 | `/devices` | 设备增删改查、探活、配置下发。列表用表格，上面三块统计数字 |
+| 对话 | `/chat` | 选对话对象与会话，底下是消息气泡 |
+| 会话历史 | `/history` | 左边会话列表，右边消息详情 |
+| 设置 | `/settings` | 网站侧 agent 的五个配置项 |
+| 运维 | `/ops` | 文件服务器与 MCP 网关的七个面板 |
+
+主题集中在 `client/src/theme.js` 一个文件里。品牌色、圆角、字体、表格与卡片的样式都在这儿改，`App.vue` 用 `NConfigProvider` 挂上去。想换品牌色改 `brandColor` 一个值就行，不用翻各个页面。
+
+侧边菜单与页头在 `App.vue` 里，中文用 naive-ui 自带的 `zhCN` 语言包。
+
+交互上的两个约定：
+
+- 用户没改过的输入框不会被状态轮询刷回去。运维页的端口和组件勾选都靠这个，改过的项在用户保存前保持原样。
+- 组件勾选的「未保存」标记挂在 `NCheckboxGroup` 的 `update:value` 上，不挂在单个 `NCheckbox` 上。naive-ui 的子复选框在组里不发 `update:checked`，挂错地方「保存勾选」会一直是灰的。
 
 ## 启动
 
@@ -303,3 +333,4 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 - 测试时 curl 发中文会被按 GBK 编码，服务端按 UTF-8 解析会报 `Invalid UTF-8 start byte`。命令行测接口用英文，或用文件传 UTF-8 请求体。
 - 运维页的路径相对 `resource/web/server/`。从别的目录直接 `java -jar` 起后端，文件服务器目录、日志目录都会指错。
 - 停止按钮在本实例没有进程时按端口反查 pid。占着文件服务器或 MCP 网关端口的别的进程会被一起杀掉。
+- 换过 torch 的版本号之后，`site-packages` 里可能留下旧版本的 `torch-*.dist-info` 空壳目录。`importlib.metadata` 扫到它就取不到版本号，`transformers` 导入时会报 `InvalidVersion: Invalid version: None`，合成直接 500。查一下 `resource/file_server/.venv/Lib/site-packages/` 里有没有多余的 `torch-*.dist-info`，把没内容的那个挪走，再重启文件服务器。

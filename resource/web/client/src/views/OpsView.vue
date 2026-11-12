@@ -1,6 +1,37 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, computed, nextTick } from 'vue'
+import {
+  NCard,
+  NButton,
+  NIcon,
+  NTag,
+  NAlert,
+  NSpace,
+  NSelect,
+  NInput,
+  NInputNumber,
+  NCheckbox,
+  NCheckboxGroup,
+  NProgress,
+  NTable,
+  NText,
+  useMessage,
+} from 'naive-ui'
+import {
+  RefreshOutline,
+  PlayOutline,
+  StopOutline,
+  DownloadOutline,
+  BuildOutline,
+  TerminalOutline,
+  SaveOutline,
+  CheckmarkCircleOutline,
+  CloseCircleOutline,
+  ArrowDownOutline,
+} from '@vicons/ionicons5'
 import { api } from '../api.js'
+
+const message = useMessage()
 
 const status = ref({})
 const jobs = ref([])
@@ -21,9 +52,9 @@ const ttsBusy = ref(false)
 const ttsError = ref('')
 const ttsProgress = ref(null)
 
-const fileServerPortInput = ref('')
+const fileServerPortInput = ref(null)
 const fileServerPortDirty = ref(false)
-const mcpPortInput = ref('')
+const mcpPortInput = ref(null)
 const mcpPortDirty = ref(false)
 const portBusy = ref(false)
 
@@ -58,6 +89,16 @@ const startComponentNames = computed(() =>
     .filter((c) => startSelection.value.includes(c.key))
     .map((c) => c.name),
 )
+
+const speakerOptions = computed(() => [
+  { label: '（用默认音色）', value: '' },
+  ...speakers.value.map((s) => ({ label: s, value: s })),
+])
+
+const logOptions = [
+  { label: '文件服务器', value: 'file-server' },
+  { label: '装依赖', value: 'install' },
+]
 
 let timer = null
 let progressTimer = null
@@ -152,6 +193,7 @@ onBeforeUnmount(() => {
 function report(e) {
   error.value = e.message
   notice.value = ''
+  message.error(e.message)
 }
 
 async function refreshStatus() {
@@ -159,10 +201,10 @@ async function refreshStatus() {
     status.value = await api.opsStatus()
     // 用户正在改端口的时候不要被轮询刷回去
     if (!fileServerPortDirty.value && status.value.fileServerPort) {
-      fileServerPortInput.value = String(status.value.fileServerPort)
+      fileServerPortInput.value = status.value.fileServerPort
     }
     if (!mcpPortDirty.value && status.value.mcpPort) {
-      mcpPortInput.value = String(status.value.mcpPort)
+      mcpPortInput.value = status.value.mcpPort
     }
     // 同理，勾选没保存之前也不刷回去
     if (!selectionDirty.value && Array.isArray(status.value.startComponents)) {
@@ -199,6 +241,7 @@ async function saveComponents() {
     const data = await api.opsSaveSettings({ startComponents: [...startSelection.value] })
     selectionDirty.value = false
     notice.value = data.message || '启动组件已保存'
+    message.success(notice.value)
     await refreshStatus()
   } catch (e) {
     report(e)
@@ -267,6 +310,7 @@ async function startServer() {
   try {
     const data = await api.opsStart()
     notice.value = data.message
+    message.success(data.message)
     await refreshStatus()
   } catch (e) {
     report(e)
@@ -279,6 +323,7 @@ function checkPort(value, label) {
   const port = Number(value)
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     error.value = `${label}要填 1~65535 之间的整数`
+    message.error(error.value)
     return null
   }
   return port
@@ -310,11 +355,12 @@ async function savePorts() {
   portBusy.value = true
   try {
     const data = await api.opsSaveSettings(body)
-    fileServerPortInput.value = String(data.fileServerPort)
-    mcpPortInput.value = String(data.mcpPort)
+    fileServerPortInput.value = data.fileServerPort
+    mcpPortInput.value = data.mcpPort
     fileServerPortDirty.value = false
     mcpPortDirty.value = false
     notice.value = data.message || '端口已保存'
+    message.success(notice.value)
     await refreshStatus()
   } catch (e) {
     report(e)
@@ -330,6 +376,7 @@ async function stopServer() {
   try {
     const data = await api.opsStop()
     notice.value = data.message
+    message.success(data.message)
     await refreshStatus()
   } catch (e) {
     report(e)
@@ -400,6 +447,7 @@ async function transcribe() {
   sttError.value = ''
   if (!sttFile.value) {
     sttError.value = '先选一个音频文件'
+    message.warning(sttError.value)
     return
   }
   sttBusy.value = true
@@ -474,358 +522,449 @@ function jumpToLatest() {
 </script>
 
 <template>
-  <div class="panel">
-    <h3>组件状态</h3>
-    <p class="muted">
-      端口探活为准，不看是不是本控制台起的进程。装了依赖、起了服务，这里会立刻变。
-    </p>
-    <p v-if="error" class="error">{{ error }}</p>
-    <p v-if="notice" class="ok">{{ notice }}</p>
-
-    <table>
-      <thead>
-        <tr><th>组件</th><th>状态</th><th>说明</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in statusRows" :key="row.key">
-          <td>{{ row.key }}</td>
-          <td>
-            <span class="dot" :class="{ on: row.on }"></span>
-            {{ row.on ? '就绪' : '未就绪' }}
-          </td>
-          <td class="mono muted">{{ row.note }}</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="row-actions">
-      <button class="btn ghost small" @click="refreshStatus">刷新状态</button>
-    </div>
-  </div>
-
-  <div class="panel">
-    <h3>安装依赖</h3>
-    <p class="muted">
-      装依赖是后台任务，进度写到 .run/install.log。按组件分开装：语音合成那一条会拉
-      GPT-SoVITS 的推理代码、预训练模型和音色权重，第一次要下载几个 GB。
-    </p>
-
-    <div class="row-actions">
-      <button class="btn" :disabled="Boolean(busy)" @click="install('web', [], '安装前端依赖')">
-        {{ busy === '安装前端依赖' ? '安装中……' : '安装前端依赖' }}
-      </button>
-      <button class="btn" :disabled="Boolean(busy)" @click="install('file-server', [], '安装文件服务器依赖')">
-        {{ busy === '安装文件服务器依赖' ? '安装中……' : '安装文件服务器依赖' }}
-      </button>
-      <button class="btn ghost" :disabled="Boolean(busy)" @click="install('file-server', ['mcp'], '安装 MCP 网关依赖')">
-        {{ busy === '安装 MCP 网关依赖' ? '安装中……' : '安装 MCP 网关依赖' }}
-      </button>
-      <button class="btn ghost" :disabled="Boolean(busy)" @click="install('file-server', ['tts'], '安装语音合成依赖')">
-        {{ busy === '安装语音合成依赖' ? '安装中……' : '安装语音合成依赖' }}
-      </button>
-      <button class="btn ghost" :disabled="Boolean(busy)" @click="install('file-server', ['stt'], '安装语音转写依赖')">
-        {{ busy === '安装语音转写依赖' ? '安装中……' : '安装语音转写依赖' }}
-      </button>
+  <div>
+    <div class="page-head">
+      <div>
+        <h2>运维</h2>
+        <div class="muted">端口探活为准，不看是不是本控制台起的进程。</div>
+      </div>
+      <div class="spacer"></div>
+      <NSpace>
+        <NButton secondary @click="refreshStatus">
+          <template #icon>
+            <NIcon><RefreshOutline /></NIcon>
+          </template>
+          刷新状态
+        </NButton>
+        <NButton
+          type="primary"
+          :loading="busy === 'start'"
+          :disabled="Boolean(busy)"
+          @click="startServer"
+        >
+          <template #icon>
+            <NIcon><PlayOutline /></NIcon>
+          </template>
+          按勾选启动
+        </NButton>
+        <NButton
+          type="error"
+          secondary
+          :loading="busy === 'stop'"
+          :disabled="Boolean(busy)"
+          @click="stopServer"
+        >
+          <template #icon>
+            <NIcon><StopOutline /></NIcon>
+          </template>
+          停止
+        </NButton>
+      </NSpace>
     </div>
 
-    <table v-if="jobs.length" class="jobs">
-      <thead>
-        <tr><th>任务</th><th>状态</th><th>说明</th><th>退出码</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="job in jobs" :key="job.id">
-          <td>{{ job.label }}</td>
-          <td>{{ job.status }}</td>
-          <td class="muted">{{ job.message }}</td>
-          <td class="mono">{{ job.exitCode === null ? '—' : job.exitCode }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
+    <NAlert v-if="error" type="error" class="alert" closable @close="error = ''">
+      {{ error }}
+    </NAlert>
+    <NAlert v-if="notice" type="success" class="alert" closable @close="notice = ''">
+      {{ notice }}
+    </NAlert>
 
-  <div class="panel">
-    <h3>组件依赖明细</h3>
-    <p class="muted">
-      探测 file_server/components.py 的结果，只看文件和已装的包，不下载任何东西。
-      探测要起子进程，第一次可能要几十秒。
-    </p>
-    <p v-if="componentsError" class="error">{{ componentsError }}</p>
+    <NCard title="组件状态" size="small" class="block">
+      <div class="stat-grid">
+        <div v-for="row in statusRows" :key="row.key" class="stat">
+          <div class="stat-head">
+            <NIcon v-if="row.on" :size="16" class="ok"><CheckmarkCircleOutline /></NIcon>
+            <NIcon v-else :size="16" class="off"><CloseCircleOutline /></NIcon>
+            <span class="stat-name">{{ row.key }}</span>
+            <NTag size="small" :bordered="false" :type="row.on ? 'success' : 'default'">
+              {{ row.on ? '就绪' : '未就绪' }}
+            </NTag>
+          </div>
+          <div class="stat-note mono">{{ row.note }}</div>
+        </div>
+      </div>
+    </NCard>
 
-    <div class="row-actions">
-      <button class="btn ghost small" :disabled="componentsBusy" @click="loadComponents(true)">
-        {{ componentsBusy ? '探测中……' : '重新探测' }}
-      </button>
-    </div>
+    <NCard title="安装依赖" size="small" class="block">
+      <NText depth="3" class="tip">
+        装依赖是后台任务，进度写到 .run/install.log。按组件分开装：语音合成那一条会拉
+        GPT-SoVITS 的推理代码、预训练模型和音色权重，第一次要下载几个 GB。
+      </NText>
 
-    <table class="deps">
-      <thead>
-        <tr><th>组件</th><th>状态</th><th>依赖</th></tr>
-      </thead>
-      <tbody>
-        <tr v-for="c in componentList" :key="c.key">
-          <td>{{ c.name }}</td>
-          <td>
-            <span class="dot" :class="{ on: c.ready }"></span>
-            {{ c.ready ? '就绪' : '缺依赖' }}
-          </td>
-          <td>
-            <ul v-if="c.deps && c.deps.length" class="dep-list">
-              <li
-                v-for="d in c.deps"
-                :key="d.name"
-                :class="{ missing: !d.ok, optional: !d.required }"
+      <NSpace>
+        <NButton
+          type="primary"
+          :disabled="Boolean(busy)"
+          :loading="busy === '安装前端依赖'"
+          @click="install('web', [], '安装前端依赖')"
+        >
+          <template #icon>
+            <NIcon><DownloadOutline /></NIcon>
+          </template>
+          安装前端依赖
+        </NButton>
+        <NButton
+          :disabled="Boolean(busy)"
+          :loading="busy === '安装文件服务器依赖'"
+          @click="install('file-server', [], '安装文件服务器依赖')"
+        >
+          <template #icon>
+            <NIcon><DownloadOutline /></NIcon>
+          </template>
+          安装文件服务器依赖
+        </NButton>
+        <NButton
+          secondary
+          :disabled="Boolean(busy)"
+          :loading="busy === '安装 MCP 网关依赖'"
+          @click="install('file-server', ['mcp'], '安装 MCP 网关依赖')"
+        >
+          安装 MCP 网关依赖
+        </NButton>
+        <NButton
+          secondary
+          :disabled="Boolean(busy)"
+          :loading="busy === '安装语音合成依赖'"
+          @click="install('file-server', ['tts'], '安装语音合成依赖')"
+        >
+          安装语音合成依赖
+        </NButton>
+        <NButton
+          secondary
+          :disabled="Boolean(busy)"
+          :loading="busy === '安装语音转写依赖'"
+          @click="install('file-server', ['stt'], '安装语音转写依赖')"
+        >
+          安装语音转写依赖
+        </NButton>
+      </NSpace>
+
+      <NTable v-if="jobs.length" :bordered="false" size="small" class="jobs">
+        <thead>
+          <tr>
+            <th>任务</th>
+            <th style="width: 100px">状态</th>
+            <th>说明</th>
+            <th style="width: 90px">退出码</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="job in jobs" :key="job.id">
+            <td>{{ job.label }}</td>
+            <td>
+              <NTag
+                size="small"
+                :bordered="false"
+                :type="job.status === 'done' ? 'success' : (job.status === 'failed' ? 'error' : 'warning')"
               >
-                <span class="dep-mark">{{ d.ok ? '✓' : (d.required ? '✗' : '○') }}</span>
-                <span class="dep-name">{{ d.name }}</span>
-                <span class="mono muted">{{ d.detail }}</span>
-              </li>
-            </ul>
-            <span v-else class="muted">没有可探测的依赖。</span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
+                {{ job.status }}
+              </NTag>
+            </td>
+            <td class="muted">{{ job.message }}</td>
+            <td class="mono">{{ job.exitCode === null ? '—' : job.exitCode }}</td>
+          </tr>
+        </tbody>
+      </NTable>
+    </NCard>
 
-  <div class="panel">
-    <h3>文件服务器与 MCP 网关</h3>
-    <p class="muted">
-      启动走 file_server/deploy 脚本，只起勾选的组件：没勾的组件不注册端点，调用它会返回 404。
-      停止会先杀本控制台起的进程，还占着端口的话按端口反查 pid 再杀一次，连 MCP 网关一起带走。
-    </p>
+    <NCard title="组件依赖明细" size="small" class="block">
+      <template #header-extra>
+        <NButton size="small" secondary :loading="componentsBusy" @click="loadComponents(true)">
+          <template #icon>
+            <NIcon><RefreshOutline /></NIcon>
+          </template>
+          重新探测
+        </NButton>
+      </template>
 
-    <div class="field">
-      <label>启动哪些组件</label>
-      <div class="row-actions">
-        <label v-for="c in componentList" :key="c.key" class="check">
-          <input
-            type="checkbox"
+      <NText depth="3" class="tip">
+        探测 file_server/components.py 的结果，只看文件和已装的包，不下载任何东西。
+        探测要起子进程，第一次可能要几十秒。
+      </NText>
+
+      <NAlert v-if="componentsError" type="warning" class="alert" :show-icon="false">
+        {{ componentsError }}
+      </NAlert>
+
+      <div v-for="c in componentList" :key="c.key" class="comp">
+        <div class="comp-head">
+          <span class="comp-name">{{ c.name }}</span>
+          <NTag size="small" :bordered="false" :type="c.ready ? 'success' : 'error'">
+            {{ c.ready ? '就绪' : '缺依赖' }}
+          </NTag>
+        </div>
+        <ul v-if="c.deps && c.deps.length" class="dep-list">
+          <li
+            v-for="d in c.deps"
+            :key="d.name"
+            :class="{ missing: !d.ok, optional: !d.required }"
+          >
+            <span class="dep-mark">{{ d.ok ? '✓' : (d.required ? '✗' : '○') }}</span>
+            <span class="dep-name">{{ d.name }}</span>
+            <span class="mono muted">{{ d.detail }}</span>
+          </li>
+        </ul>
+        <div v-else class="muted">没有可探测的依赖。</div>
+      </div>
+    </NCard>
+
+    <NCard title="文件服务器与 MCP 网关" size="small" class="block">
+      <NText depth="3" class="tip">
+        启动走 file_server/deploy 脚本，只起勾选的组件：没勾的组件不注册端点，调用它会返回 404。
+        停止会先杀本控制台起的进程，还占着端口的话按端口反查 pid 再杀一次，连 MCP 网关一起带走。
+      </NText>
+
+      <div class="section">
+        <div class="section-label">启动哪些组件</div>
+        <NCheckboxGroup
+          v-model:value="startSelection"
+          class="checks"
+          @update:value="selectionDirty = true"
+        >
+          <NCheckbox
+            v-for="c in componentList"
+            :key="c.key"
             :value="c.key"
-            v-model="startSelection"
             :disabled="c.required"
-            @change="selectionDirty = true"
+          >
+            {{ c.name }}
+          </NCheckbox>
+        </NCheckboxGroup>
+        <div class="row-actions">
+          <span class="muted">文件服务器是本体，不能关。勾选保存后，下次启动生效。</span>
+          <div class="spacer"></div>
+          <NButton
+            size="small"
+            type="primary"
+            secondary
+            :loading="selectionBusy"
+            :disabled="!selectionDirty"
+            @click="saveComponents"
+          >
+            <template #icon>
+              <NIcon><SaveOutline /></NIcon>
+            </template>
+            保存勾选
+          </NButton>
+        </div>
+      </div>
+
+      <div class="grid-2 section">
+        <div>
+          <div class="section-label">文件服务器端口</div>
+          <NInputNumber
+            v-model:value="fileServerPortInput"
+            :min="1"
+            :max="65535"
+            :show-button="false"
+            style="width: 140px"
+            @update:value="fileServerPortDirty = true"
           />
-          {{ c.name }}
-        </label>
+          <div class="muted">
+            改端口前要先停掉文件服务器，保存后下次启动生效。MCP 网关会自动跟着指向新端口。
+          </div>
+        </div>
+        <div>
+          <div class="section-label">MCP 网关端口</div>
+          <NInputNumber
+            v-model:value="mcpPortInput"
+            :min="1"
+            :max="65535"
+            :show-button="false"
+            style="width: 140px"
+            @update:value="mcpPortDirty = true"
+          />
+          <div class="muted">
+            板端用这个端口连网关。改完保存，下次启动文件服务器时连带生效，两个端口不能填一样。
+          </div>
+        </div>
       </div>
-      <p class="muted">
-        文件服务器是本体，不能关。勾选保存后，下次启动生效。
-      </p>
+
       <div class="row-actions">
-        <button class="btn ghost small" :disabled="selectionBusy || !selectionDirty" @click="saveComponents">
-          {{ selectionBusy ? '保存中……' : '保存勾选' }}
-        </button>
+        <NButton size="small" secondary :loading="portBusy" @click="savePorts">
+          <template #icon>
+            <NIcon><SaveOutline /></NIcon>
+          </template>
+          保存端口
+        </NButton>
       </div>
-    </div>
+    </NCard>
 
-    <div class="row-actions">
-      <button class="btn" :disabled="Boolean(busy)" @click="startServer">
-        {{ busy === 'start' ? '启动中……' : '按勾选启动' }}
-      </button>
-      <button class="btn danger" :disabled="Boolean(busy)" @click="stopServer">
-        {{ busy === 'stop' ? '停止中……' : '停止' }}
-      </button>
-    </div>
+    <NCard title="语音合成试听" size="small" class="block">
+      <NText depth="3" class="tip">
+        需要文件服务器在跑，并且装过 TTS 依赖与权重。没装的话合成会返回 503。
+      </NText>
+      <NAlert v-if="ttsError" type="error" class="alert" :show-icon="false">
+        {{ ttsError }}
+      </NAlert>
 
-    <div class="field">
-      <label for="ops-port">文件服务器端口</label>
+      <div class="section">
+        <div class="section-label">文本</div>
+        <NInput v-model:value="ttsText" type="textarea" :rows="3" />
+      </div>
+
+      <div class="section">
+        <div class="section-label">音色</div>
+        <NSpace align="center">
+          <NSelect
+            v-model:value="ttsSpeaker"
+            :options="speakerOptions"
+            style="width: 240px"
+          />
+          <NButton size="small" secondary @click="loadSpeakers">读取音色列表</NButton>
+        </NSpace>
+      </div>
+
       <div class="row-actions">
-        <input
-          id="ops-port"
-          v-model="fileServerPortInput"
-          class="input inline port"
-          type="number"
-          min="1"
-          max="65535"
-          @input="fileServerPortDirty = true"
+        <NButton type="primary" :loading="ttsBusy" @click="synthesize">
+          <template #icon>
+            <NIcon><PlayOutline /></NIcon>
+          </template>
+          合成并播放
+        </NButton>
+      </div>
+
+      <div v-if="ttsProgress" class="section">
+        <NProgress
+          type="line"
+          :percentage="ttsPercent"
+          :indeterminate="ttsIndeterminate"
+          :status="ttsProgress.stage === 'error' ? 'error' : (ttsProgress.stage === 'done' ? 'success' : 'default')"
+          :processing="ttsProgress.stage === 'running' || ttsProgress.stage === 'loading'"
         />
+        <div class="muted">{{ ttsProgressText }}</div>
       </div>
-      <p class="muted">
-        改端口前要先停掉文件服务器，保存后下次启动生效。MCP 网关会自动跟着指向新端口。
-      </p>
-    </div>
 
-    <div class="field">
-      <label for="ops-mcp-port">MCP 网关端口</label>
+      <audio v-if="audioUrl" :src="audioUrl" controls class="player"></audio>
+    </NCard>
+
+    <NCard title="语音转写" size="small" class="block">
+      <NText depth="3" class="tip">
+        选一个音频文件丢过来，服务端转成文本。依赖文件服务器上的 ASR 能力。
+      </NText>
+      <NAlert v-if="sttError" type="error" class="alert" :show-icon="false">
+        {{ sttError }}
+      </NAlert>
+
+      <div class="section">
+        <div class="section-label">音频文件</div>
+        <input class="file-input" type="file" accept="audio/*" @change="pickFile" />
+      </div>
+
       <div class="row-actions">
-        <input
-          id="ops-mcp-port"
-          v-model="mcpPortInput"
-          class="input inline port"
-          type="number"
-          min="1"
-          max="65535"
-          @input="mcpPortDirty = true"
-        />
+        <NButton type="primary" :loading="sttBusy" @click="transcribe">转写</NButton>
       </div>
-      <p class="muted">
-        板端用这个端口连网关。改完保存，下次启动文件服务器时连带生效，两个端口不能填一样。
-      </p>
-    </div>
 
-    <div class="row-actions">
-      <button class="btn ghost small" :disabled="portBusy" @click="savePorts">
-        {{ portBusy ? '保存中……' : '保存端口' }}
-      </button>
-    </div>
-  </div>
+      <div v-if="sttText" class="result">{{ sttText }}</div>
+    </NCard>
 
-  <div class="panel">
-    <h3>语音合成试听</h3>
-    <p class="muted">
-      需要文件服务器在跑，并且装过 TTS 依赖与权重。没装的话合成会返回 503。
-    </p>
-    <p v-if="ttsError" class="error">{{ ttsError }}</p>
+    <NCard title="日志" size="small" class="block">
+      <template #header-extra>
+        <NSpace align="center">
+          <NSelect v-model:value="logName" :options="logOptions" style="width: 150px" @update:value="loadLog" />
+          <NButton size="small" secondary @click="loadLog">
+            <template #icon>
+              <NIcon><TerminalOutline /></NIcon>
+            </template>
+            读取日志尾部
+          </NButton>
+          <NButton v-if="!followLog" size="small" secondary @click="jumpToLatest">
+            <template #icon>
+              <NIcon><ArrowDownOutline /></NIcon>
+            </template>
+            回到最新
+          </NButton>
+        </NSpace>
+      </template>
 
-    <div class="field">
-      <label for="tts-text">文本</label>
-      <textarea id="tts-text" v-model="ttsText" class="input" rows="3"></textarea>
-    </div>
+      <NText depth="3" class="tip">
+        每 3 秒拉一次尾部，有新行就自动滚到底。往上翻过就停跟随，滚回底部或者点「回到最新」再跟上。
+      </NText>
 
-    <div class="field">
-      <label for="tts-speaker">音色</label>
-      <div class="row-actions">
-        <select id="tts-speaker" v-model="ttsSpeaker" class="input inline">
-          <option value="">（用默认音色）</option>
-          <option v-for="s in speakers" :key="s" :value="s">{{ s }}</option>
-        </select>
-        <button class="btn ghost small" @click="loadSpeakers">读取音色列表</button>
-      </div>
-    </div>
-
-    <div class="row-actions">
-      <button class="btn" :disabled="ttsBusy" @click="synthesize">
-        {{ ttsBusy ? '合成中……' : '合成并播放' }}
-      </button>
-    </div>
-
-    <div v-if="ttsProgress" class="progress-wrap">
-      <div class="progress-bar">
-        <div
-          class="progress-fill"
-          :class="{ indeterminate: ttsIndeterminate }"
-          :style="ttsIndeterminate ? {} : { width: ttsPercent + '%' }"
-        ></div>
-      </div>
-      <p class="muted">{{ ttsProgressText }}</p>
-    </div>
-
-    <audio v-if="audioUrl" :src="audioUrl" controls class="player"></audio>
-  </div>
-
-  <div class="panel">
-    <h3>语音转写</h3>
-    <p class="muted">
-      选一个音频文件丢过来，服务端转成文本。依赖文件服务器上的 ASR 能力。
-    </p>
-    <p v-if="sttError" class="error">{{ sttError }}</p>
-
-    <div class="field">
-      <label for="stt-file">音频文件</label>
-      <input id="stt-file" class="input" type="file" accept="audio/*" @change="pickFile" />
-    </div>
-
-    <div class="row-actions">
-      <button class="btn" :disabled="sttBusy" @click="transcribe">
-        {{ sttBusy ? '转写中……' : '转写' }}
-      </button>
-    </div>
-
-    <p v-if="sttText" class="result">{{ sttText }}</p>
-  </div>
-
-  <div class="panel">
-    <h3>日志</h3>
-    <p class="muted">
-      每 3 秒拉一次尾部，有新行就自动滚到底。往上翻过就停跟随，滚回底部或者点「回到最新」再跟上。
-    </p>
-    <div class="row-actions">
-      <select v-model="logName" class="input inline" @change="loadLog">
-        <option value="file-server">文件服务器</option>
-        <option value="install">装依赖</option>
-      </select>
-      <button class="btn ghost small" @click="loadLog">读取日志尾部</button>
-      <button v-if="!followLog" class="btn ghost small" @click="jumpToLatest">回到最新</button>
-    </div>
-
-    <pre v-if="logLines.length" ref="logBox" class="log" @scroll="onLogScroll">{{ logLines.join('\n') }}</pre>
-    <p v-else class="muted">还没有日志。</p>
+      <pre v-if="logLines.length" ref="logBox" class="log" @scroll="onLogScroll">{{ logLines.join('\n') }}</pre>
+      <div v-else class="muted">还没有日志。</div>
+    </NCard>
   </div>
 </template>
 
 <style scoped>
-.muted {
-  color: var(--muted);
-  font-size: 13px;
+.block {
+  margin-bottom: 16px;
 }
 
-.mono {
-  font-family: Consolas, monospace;
-  font-size: 13px;
+.alert {
+  margin-bottom: 16px;
 }
 
-.row-actions {
+.tip {
+  display: block;
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #fafbfd;
+}
+
+.stat-head {
   display: flex;
-  gap: 8px;
   align-items: center;
-  margin-top: 8px;
-  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
-.input.inline {
-  width: auto;
-  min-width: 220px;
+.stat-head .ok {
+  color: #12a150;
 }
 
-.input.port {
-  min-width: 120px;
-  width: 120px;
+.stat-head .off {
+  color: #b0b6c3;
 }
 
-.progress-wrap {
-  margin-top: 12px;
+.stat-name {
+  font-weight: 500;
+  flex: 1;
 }
 
-.progress-bar {
-  height: 8px;
-  border-radius: 4px;
-  background: var(--bg);
-  overflow: hidden;
-}
-
-.progress-fill {
-  height: 100%;
-  background: var(--primary);
-  transition: width 0.25s ease;
-}
-
-.progress-fill.indeterminate {
-  width: 35%;
-  animation: progress-slide 1.4s ease-in-out infinite;
-}
-
-@keyframes progress-slide {
-  0% {
-    margin-left: -35%;
-  }
-  100% {
-    margin-left: 100%;
-  }
+.stat-note {
+  color: #8a93a6;
+  font-size: 12px;
+  word-break: break-all;
 }
 
 .jobs {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
-.check {
-  display: inline-flex;
+.comp {
+  border-top: 1px solid #eef0f4;
+  padding: 12px 0;
+}
+
+.comp:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.comp-head {
+  display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
-.deps {
-  margin-top: 12px;
+.comp-name {
+  font-weight: 500;
 }
 
 .dep-list {
@@ -843,42 +982,77 @@ function jumpToLatest() {
 }
 
 .dep-list li.missing .dep-mark {
-  color: var(--danger, #e06c75);
+  color: #e5484d;
 }
 
 .dep-list li.optional .dep-mark {
-  color: var(--muted);
+  color: #8a93a6;
 }
 
 .dep-name {
   min-width: 150px;
 }
 
+.section {
+  margin-top: 16px;
+}
+
+.section-label {
+  font-size: 13px;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.checks {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.row-actions .spacer {
+  flex: 1;
+}
+
+.file-input {
+  font-size: 13px;
+  color: #6b7280;
+}
+
 .player {
   display: block;
-  margin-top: 12px;
+  margin-top: 16px;
   width: 100%;
 }
 
 .result {
   margin-top: 12px;
-  padding: 10px;
-  background: var(--bg);
-  border-radius: 6px;
+  padding: 12px;
+  background: #f7f8fa;
+  border: 1px solid #eef0f4;
+  border-radius: 8px;
   white-space: pre-wrap;
+  line-height: 1.6;
 }
 
 .log {
   margin-top: 12px;
-  padding: 10px;
-  max-height: 320px;
+  padding: 12px;
+  max-height: 340px;
   overflow: auto;
-  background: #1f2430;
-  color: #e3e6ea;
-  border-radius: 6px;
+  background: #1b2130;
+  color: #d5dae4;
+  border-radius: 8px;
   font-family: Consolas, monospace;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 </style>

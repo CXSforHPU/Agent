@@ -1,252 +1,446 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, h } from 'vue'
+import {
+  NCard,
+  NButton,
+  NIcon,
+  NTag,
+  NSpace,
+  NInput,
+  NSelect,
+  NModal,
+  NForm,
+  NFormItem,
+  NSwitch,
+  NDataTable,
+  NPopconfirm,
+  NStatistic,
+  NEmpty,
+  NText,
+  useMessage,
+} from 'naive-ui'
+import {
+  AddOutline,
+  RefreshOutline,
+  SearchOutline,
+  CloudUploadOutline,
+  CreateOutline,
+  TrashOutline,
+  PulseOutline,
+} from '@vicons/ionicons5'
 import { api } from '../api.js'
 
+const message = useMessage()
+
 const devices = ref([])
-const error = ref('')
-const notice = ref('')
-const busy = ref(false)
+const loading = ref(false)
+const keyword = ref('')
+const groupFilter = ref(null)
 
 const empty = { id: 0, name: '', address: '', groupName: '', note: '', enabled: true }
 const form = ref({ ...empty })
 const editing = ref(false)
+const formOpen = ref(false)
+const saving = ref(false)
 
 const configForm = ref({ id: 0, name: '', apiKey: '', modelName: '', baseUrl: '' })
 const configOpen = ref(false)
+const configSaving = ref(false)
 
-const groups = computed(() => {
-  const map = new Map()
+const formRules = {
+  name: [{ required: true, message: '请填设备名', trigger: ['blur', 'input'] }],
+  address: [{ required: true, message: '请填地址', trigger: ['blur', 'input'] }],
+}
+
+const groupOptions = computed(() => {
+  const set = new Set()
   for (const d of devices.value) {
-    const key = d.groupName || '未分组'
-    if (!map.has(key)) map.set(key, [])
-    map.get(key).push(d)
+    if (d.groupName) set.add(d.groupName)
   }
-  return [...map.entries()]
+  return [...set].map((g) => ({ label: g, value: g }))
 })
 
+const filtered = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return devices.value.filter((d) => {
+    if (groupFilter.value && d.groupName !== groupFilter.value) return false
+    if (!kw) return true
+    return [d.name, d.address, d.groupName, d.note]
+      .filter(Boolean)
+      .some((v) => String(v).toLowerCase().includes(kw))
+  })
+})
+
+const onlineCount = computed(() => devices.value.filter((d) => d.online).length)
+
 async function load() {
-  error.value = ''
+  loading.value = true
   try {
     devices.value = await api.listDevices()
   } catch (e) {
-    error.value = e.message
+    message.error(e.message)
+  } finally {
+    loading.value = false
   }
 }
 
 onMounted(load)
 
-function resetForm() {
+function openCreate() {
   form.value = { ...empty }
   editing.value = false
+  formOpen.value = true
 }
 
-function edit(d) {
-  form.value = { id: d.id, name: d.name, address: d.address, groupName: d.groupName,
-                 note: d.note, enabled: d.enabled }
+function openEdit(d) {
+  form.value = {
+    id: d.id,
+    name: d.name,
+    address: d.address,
+    groupName: d.groupName,
+    note: d.note,
+    enabled: d.enabled,
+  }
   editing.value = true
+  formOpen.value = true
 }
 
 async function save() {
-  error.value = ''
-  notice.value = ''
-  if (!form.value.name.trim() || !form.value.address.trim()) {
-    error.value = '设备名和地址都要填'
-    return
-  }
-  busy.value = true
+  saving.value = true
   try {
-    const body = { name: form.value.name, address: form.value.address,
-                   groupName: form.value.groupName, note: form.value.note,
-                   enabled: form.value.enabled }
+    const body = {
+      name: form.value.name.trim(),
+      address: form.value.address.trim(),
+      groupName: form.value.groupName,
+      note: form.value.note,
+      enabled: form.value.enabled,
+    }
     if (editing.value) {
       await api.updateDevice(form.value.id, body)
-      notice.value = '已保存'
+      message.success('已保存')
     } else {
       await api.createDevice(body)
-      notice.value = '已新增'
+      message.success('已新增')
     }
-    resetForm()
+    formOpen.value = false
     await load()
   } catch (e) {
-    error.value = e.message
+    message.error(e.message)
   } finally {
-    busy.value = false
+    saving.value = false
   }
 }
 
 async function remove(d) {
-  if (!confirm(`删除设备「${d.name}」？关联的会话不会一并删除。`)) return
-  error.value = ''
   try {
     await api.deleteDevice(d.id)
-    if (form.value.id === d.id) resetForm()
+    message.success(`已删除「${d.name}」`)
     await load()
   } catch (e) {
-    error.value = e.message
+    message.error(e.message)
   }
 }
 
 async function probe(d) {
-  error.value = ''
-  notice.value = `正在探活 ${d.name}……`
   try {
     const result = await api.probeDevice(d.id)
-    notice.value = result.online
-      ? `${d.name} 在线，能力卡：${result.card ? result.card.name : '（空）'}`
-      : `${d.name} 不在线：${result.error || '未知原因'}`
+    if (result.online) {
+      message.success(`${d.name} 在线，能力卡：${result.card ? result.card.name : '（空）'}`)
+    } else {
+      message.warning(`${d.name} 不在线：${result.error || '未知原因'}`)
+    }
     await load()
   } catch (e) {
-    error.value = e.message
-    notice.value = ''
+    message.error(e.message)
   }
 }
 
 function openConfig(d) {
   configForm.value = { id: d.id, name: d.name, apiKey: '', modelName: '', baseUrl: '' }
   configOpen.value = true
-  error.value = ''
-  notice.value = ''
 }
 
 async function sendConfig() {
-  error.value = ''
+  const body = {}
+  if (configForm.value.apiKey) body.apiKey = configForm.value.apiKey
+  if (configForm.value.modelName) body.modelName = configForm.value.modelName
+  if (configForm.value.baseUrl) body.baseUrl = configForm.value.baseUrl
+  if (!Object.keys(body).length) {
+    message.warning('至少填一项')
+    return
+  }
+  configSaving.value = true
   try {
-    const body = {}
-    if (configForm.value.apiKey) body.apiKey = configForm.value.apiKey
-    if (configForm.value.modelName) body.modelName = configForm.value.modelName
-    if (configForm.value.baseUrl) body.baseUrl = configForm.value.baseUrl
-    if (!Object.keys(body).length) {
-      error.value = '至少填一项'
-      return
-    }
     await api.pushDeviceConfig(configForm.value.id, body)
-    notice.value = `已下发到 ${configForm.value.name}`
+    message.success(`已下发到 ${configForm.value.name}`)
     configOpen.value = false
   } catch (e) {
-    error.value = e.message
+    message.error(e.message)
+  } finally {
+    configSaving.value = false
   }
 }
+
+const columns = computed(() => [
+  {
+    title: '设备',
+    key: 'name',
+    minWidth: 120,
+    render: (row) =>
+      h('div', { style: 'display:flex;flex-direction:column;gap:2px' }, [
+        h('span', { style: 'font-weight:500' }, row.name),
+        row.note
+          ? h('span', { style: 'color:#8a93a6;font-size:12px' }, row.note)
+          : null,
+      ]),
+  },
+  {
+    title: '地址',
+    key: 'address',
+    minWidth: 140,
+    render: (row) =>
+      h('span', { style: 'font-family:Consolas,monospace;font-size:13px' }, row.address),
+  },
+  {
+    title: '分组',
+    key: 'groupName',
+    width: 100,
+    render: (row) =>
+      row.groupName
+        ? h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => row.groupName })
+        : h('span', { style: 'color:#a0a7b5' }, '未分组'),
+  },
+  {
+    title: '状态',
+    key: 'online',
+    width: 120,
+    render: (row) =>
+      h('div', { style: 'display:flex;flex-direction:column;gap:2px' }, [
+        h(
+          NTag,
+          { size: 'small', type: row.online ? 'success' : 'default', bordered: false },
+          { default: () => (row.online ? '在线' : '离线') },
+        ),
+        h(
+          'span',
+          { style: 'color:#8a93a6;font-size:12px' },
+          row.lastSeenAt || '从未探活',
+        ),
+      ]),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 172,
+    render: (row) =>
+      h(NSpace, { size: 4, wrap: false }, {
+        default: () => [
+          h(
+            NButton,
+            { size: 'small', secondary: true, title: '探活', onClick: () => probe(row) },
+            { icon: () => h(NIcon, null, { default: () => h(PulseOutline) }) },
+          ),
+          h(
+            NButton,
+            { size: 'small', secondary: true, title: '下发配置', onClick: () => openConfig(row) },
+            { icon: () => h(NIcon, null, { default: () => h(CloudUploadOutline) }) },
+          ),
+          h(
+            NButton,
+            { size: 'small', secondary: true, title: '编辑', onClick: () => openEdit(row) },
+            { icon: () => h(NIcon, null, { default: () => h(CreateOutline) }) },
+          ),
+          h(
+            NPopconfirm,
+            {
+              positiveText: '删除',
+              negativeText: '取消',
+              onPositiveClick: () => remove(row),
+            },
+            {
+              trigger: () =>
+                h(
+                  NButton,
+                  { size: 'small', quaternary: true, type: 'error', title: '删除' },
+                  { icon: () => h(NIcon, null, { default: () => h(TrashOutline) }) },
+                ),
+              default: () => `删除设备「${row.name}」？关联的会话不会一并删除。`,
+            },
+          ),
+        ],
+      }),
+  },
+])
 </script>
 
 <template>
-  <div class="panel">
-    <h3>{{ editing ? '编辑设备' : '新建设备' }}</h3>
-    <div class="grid">
-      <div class="field">
-        <label>设备名</label>
-        <input v-model="form.name" class="input" placeholder="例如：实验室 A 板" />
+  <div>
+    <div class="page-head">
+      <div>
+        <h2>设备管理</h2>
+        <div class="muted">登记端侧板子，探活在线状态，把 LLM 配置下发到设备。</div>
       </div>
-      <div class="field">
-        <label>地址</label>
-        <input v-model="form.address" class="input" placeholder="http://192.168.1.10 或 192.168.1.10" />
-      </div>
-      <div class="field">
-        <label>分组</label>
-        <input v-model="form.groupName" class="input" placeholder="可留空" />
-      </div>
-      <div class="field">
-        <label>备注</label>
-        <input v-model="form.note" class="input" placeholder="可留空" />
-      </div>
+      <div class="spacer"></div>
+      <NSpace>
+        <NButton secondary :loading="loading" @click="load">
+          <template #icon>
+            <NIcon><RefreshOutline /></NIcon>
+          </template>
+          刷新
+        </NButton>
+        <NButton type="primary" @click="openCreate">
+          <template #icon>
+            <NIcon><AddOutline /></NIcon>
+          </template>
+          新建设备
+        </NButton>
+      </NSpace>
     </div>
-    <p v-if="error" class="error">{{ error }}</p>
-    <p v-if="notice" class="ok">{{ notice }}</p>
-    <div class="row-actions">
-      <button class="btn" :disabled="busy" @click="save">
-        {{ editing ? '保存' : '新增' }}
-      </button>
-      <button v-if="editing" class="btn ghost" @click="resetForm">取消</button>
-      <button v-if="!editing" class="btn ghost" @click="load">刷新</button>
-    </div>
-  </div>
 
-  <div class="panel">
-    <h3>设备列表</h3>
-    <p v-if="!devices.length" class="empty">还没有设备，先在上面新增一个。</p>
-    <template v-else>
-      <div v-for="[group, list] in groups" :key="group" class="group">
-        <div class="group-name">{{ group }}</div>
-        <table>
-          <thead>
-            <tr>
-              <th style="width: 22%">名称</th>
-              <th style="width: 30%">地址</th>
-              <th style="width: 12%">状态</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="d in list" :key="d.id">
-              <td>
-                {{ d.name }}
-                <div class="muted">{{ d.note }}</div>
-              </td>
-              <td class="mono">{{ d.address }}</td>
-              <td>
-                <span class="dot" :class="{ on: d.online }"></span>{{ d.online ? '在线' : '离线' }}
-                <div class="muted">{{ d.lastSeenAt || '从未探活' }}</div>
-              </td>
-              <td>
-                <div class="row-actions">
-                  <button class="btn small" @click="probe(d)">探活</button>
-                  <button class="btn small ghost" @click="openConfig(d)">下发配置</button>
-                  <button class="btn small ghost" @click="edit(d)">编辑</button>
-                  <button class="btn small danger" @click="remove(d)">删除</button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </template>
-  </div>
+    <div class="grid-3" style="margin-bottom: 16px">
+      <NCard size="small">
+        <NStatistic label="设备总数">
+          <span class="stat-value">{{ devices.length }}</span>
+        </NStatistic>
+      </NCard>
+      <NCard size="small">
+        <NStatistic label="在线">
+          <span class="stat-value ok">{{ onlineCount }}</span>
+        </NStatistic>
+      </NCard>
+      <NCard size="small">
+        <NStatistic label="离线">
+          <span class="stat-value muted">{{ devices.length - onlineCount }}</span>
+        </NStatistic>
+      </NCard>
+    </div>
 
-  <div v-if="configOpen" class="panel">
-    <h3>下发配置到 {{ configForm.name }}</h3>
-    <p class="muted">走设备的 WebNet 通道 <code>POST /config</code>。只开了 A2A 通道的设备没有这个端点，会返回 502。</p>
-    <div class="field">
-      <label>API Key</label>
-      <input v-model="configForm.apiKey" class="input" placeholder="留空则不改" />
-    </div>
-    <div class="field">
-      <label>模型名</label>
-      <input v-model="configForm.modelName" class="input" placeholder="留空则不改" />
-    </div>
-    <div class="field">
-      <label>base URL</label>
-      <input v-model="configForm.baseUrl" class="input" placeholder="留空则不改" />
-    </div>
-    <p v-if="error" class="error">{{ error }}</p>
-    <div class="row-actions">
-      <button class="btn" @click="sendConfig">下发</button>
-      <button class="btn ghost" @click="configOpen = false">取消</button>
-    </div>
+    <NCard title="设备列表" size="small">
+      <template #header-extra>
+        <NSpace align="center">
+          <NInput
+            v-model:value="keyword"
+            placeholder="搜名称、地址、备注"
+            clearable
+            style="width: 180px"
+          >
+            <template #prefix>
+              <NIcon :size="16"><SearchOutline /></NIcon>
+            </template>
+          </NInput>
+          <NSelect
+            v-model:value="groupFilter"
+            :options="groupOptions"
+            placeholder="全部分组"
+            clearable
+            style="width: 150px"
+          />
+        </NSpace>
+      </template>
+
+      <NEmpty v-if="!filtered.length" description="没有匹配的设备">
+        <template #extra>
+          <NButton size="small" secondary @click="openCreate">新建设备</NButton>
+        </template>
+      </NEmpty>
+      <NDataTable
+        v-else
+        :columns="columns"
+        :data="filtered"
+        :loading="loading"
+        :row-key="(row) => row.id"
+        :bordered="false"
+        size="small"
+      />
+    </NCard>
+
+    <NModal
+      v-model:show="formOpen"
+      preset="card"
+      :title="editing ? '编辑设备' : '新建设备'"
+      style="width: 520px"
+      :mask-closable="!saving"
+    >
+      <NForm :rules="formRules" label-placement="top">
+        <div class="grid-2">
+          <NFormItem label="设备名" path="name">
+            <NInput v-model:value="form.name" placeholder="例如：实验室 A 板" />
+          </NFormItem>
+          <NFormItem label="分组" path="groupName">
+            <NInput v-model:value="form.groupName" placeholder="可留空" />
+          </NFormItem>
+        </div>
+        <NFormItem label="地址" path="address">
+          <NInput
+            v-model:value="form.address"
+            placeholder="http://192.168.1.10 或 192.168.1.10"
+          />
+        </NFormItem>
+        <NFormItem label="备注" path="note">
+          <NInput v-model:value="form.note" type="textarea" placeholder="可留空" :rows="2" />
+        </NFormItem>
+        <NFormItem label="启用" path="enabled">
+          <NSwitch v-model:value="form.enabled" />
+        </NFormItem>
+      </NForm>
+
+      <template #footer>
+        <NSpace justify="end">
+          <NButton :disabled="saving" @click="formOpen = false">取消</NButton>
+          <NButton type="primary" :loading="saving" @click="save">
+            {{ editing ? '保存' : '新增' }}
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="configOpen"
+      preset="card"
+      :title="`下发配置到 ${configForm.name}`"
+      style="width: 520px"
+      :mask-closable="!configSaving"
+    >
+      <NText depth="3" class="tip">
+        走设备的 WebNet 通道 POST /config。只开了 A2A 通道的设备没有这个端点，会返回 502。留空表示不改。
+      </NText>
+      <NForm label-placement="top">
+        <NFormItem label="API Key">
+          <NInput
+            v-model:value="configForm.apiKey"
+            type="password"
+            show-password-on="click"
+            placeholder="留空则不改"
+          />
+        </NFormItem>
+        <NFormItem label="模型名">
+          <NInput v-model:value="configForm.modelName" placeholder="留空则不改" />
+        </NFormItem>
+        <NFormItem label="base URL">
+          <NInput v-model:value="configForm.baseUrl" placeholder="留空则不改" />
+        </NFormItem>
+      </NForm>
+
+      <template #footer>
+        <NSpace justify="end">
+          <NButton :disabled="configSaving" @click="configOpen = false">取消</NButton>
+          <NButton type="primary" :loading="configSaving" @click="sendConfig">下发</NButton>
+        </NSpace>
+      </template>
+    </NModal>
   </div>
 </template>
 
 <style scoped>
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 0 16px;
-}
-
-.group {
-  margin-bottom: 18px;
-}
-
-.group-name {
+.stat-value {
+  font-size: 26px;
   font-weight: 600;
-  margin-bottom: 6px;
 }
 
-.muted {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.mono {
-  font-family: Consolas, monospace;
+.tip {
+  display: block;
+  margin-bottom: 16px;
   font-size: 13px;
+  line-height: 1.6;
 }
 </style>

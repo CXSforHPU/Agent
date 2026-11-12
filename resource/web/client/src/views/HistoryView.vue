@@ -1,70 +1,98 @@
 <script setup>
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
+import {
+  NCard,
+  NButton,
+  NIcon,
+  NSelect,
+  NTag,
+  NEmpty,
+  NPopconfirm,
+  useMessage,
+} from 'naive-ui'
+import { RefreshOutline, TrashBinOutline } from '@vicons/ionicons5'
 import { api } from '../api.js'
+
+const message = useMessage()
 
 const conversations = ref([])
 const devices = ref([])
 const filterDeviceId = ref(0)
 const currentId = ref(0)
 const messages = ref([])
-const error = ref('')
+const loading = ref(false)
 const logRef = ref(null)
 
 const current = computed(() =>
   conversations.value.find((c) => c.id === currentId.value) || null,
 )
 
+const filterOptions = computed(() => [
+  { label: '全部', value: 0 },
+  { label: '网站侧', value: -1 },
+  ...devices.value.map((d) => ({ label: `端侧：${d.name}`, value: d.id })),
+])
+
+// 后端只按 deviceId 过滤，网站侧会话的 deviceId 为空，这里在前端一并筛
+const visible = computed(() => {
+  if (filterDeviceId.value === 0) return conversations.value
+  if (filterDeviceId.value === -1) {
+    return conversations.value.filter((c) => c.agentKind !== 'edge')
+  }
+  return conversations.value.filter((c) => c.deviceId === filterDeviceId.value)
+})
+
 onMounted(async () => {
   try {
     devices.value = await api.listDevices()
     await load()
   } catch (e) {
-    error.value = e.message
+    message.error(e.message)
   }
 })
 
-watch(filterDeviceId, load)
+watch(filterDeviceId, () => {
+  if (currentId.value && !visible.value.some((c) => c.id === currentId.value)) {
+    currentId.value = 0
+    messages.value = []
+  }
+})
 
 async function load() {
-  error.value = ''
+  loading.value = true
   try {
-    conversations.value = await api.listConversations(
-      filterDeviceId.value ? filterDeviceId.value : undefined,
-    )
-    if (currentId.value && !conversations.value.some((c) => c.id === currentId.value)) {
-      currentId.value = 0
-      messages.value = []
-    }
+    conversations.value = await api.listConversations()
   } catch (e) {
-    error.value = e.message
+    message.error(e.message)
+  } finally {
+    loading.value = false
   }
 }
 
 async function open(c) {
-  error.value = ''
-  currentId.value = c.id
   try {
     const detail = await api.getConversation(c.id)
+    currentId.value = c.id
     messages.value = detail.messages
     nextTick(() => {
       if (logRef.value) logRef.value.scrollTop = logRef.value.scrollHeight
     })
   } catch (e) {
-    error.value = e.message
+    message.error(e.message)
   }
 }
 
 async function remove(c) {
-  if (!confirm(`删除会话 #${c.id}「${c.title}」？消息会一并删除。`)) return
   try {
     await api.deleteConversation(c.id)
+    message.success(`已删除会话 #${c.id}`)
     if (currentId.value === c.id) {
       currentId.value = 0
       messages.value = []
     }
     await load()
   } catch (e) {
-    error.value = e.message
+    message.error(e.message)
   }
 }
 
@@ -76,49 +104,81 @@ function agentLabel(c) {
 </script>
 
 <template>
-  <p v-if="error" class="error">{{ error }}</p>
-
-  <div class="wrap">
-    <div class="panel list">
-      <div class="list-head">
-        <h3>会话</h3>
-        <select v-model.number="filterDeviceId" class="input small-select">
-          <option :value="0">全部</option>
-          <option :value="-1">网站侧</option>
-          <option v-for="d in devices" :key="d.id" :value="d.id">端侧：{{ d.name }}</option>
-        </select>
-        <button class="btn ghost small" @click="load">刷新</button>
+  <div>
+    <div class="page-head">
+      <div>
+        <h2>会话历史</h2>
+        <div class="muted">网站侧 agent 与端侧设备的全部对话记录，按对象筛选。</div>
       </div>
-
-      <p v-if="!conversations.length" class="empty">没有会话。</p>
-      <div v-else class="items">
-        <div v-for="c in conversations" :key="c.id"
-             class="item" :class="{ active: c.id === currentId }"
-             @click="open(c)">
-          <div class="line1">
-            <span class="title">#{{ c.id }} {{ c.title }}</span>
-            <span class="badge">{{ agentLabel(c) }}</span>
-          </div>
-          <div class="line2">
-            <span>{{ c.updatedAt }}</span>
-            <button class="btn small danger" @click.stop="remove(c)">删除</button>
-          </div>
-        </div>
-      </div>
+      <div class="spacer"></div>
+      <NSelect
+        v-model:value="filterDeviceId"
+        :options="filterOptions"
+        style="width: 200px"
+      />
+      <NButton secondary :loading="loading" @click="load">
+        <template #icon>
+          <NIcon><RefreshOutline /></NIcon>
+        </template>
+        刷新
+      </NButton>
     </div>
 
-    <div class="panel detail">
-      <h3>{{ current ? `#${current.id} ${current.title}` : '详情' }}</h3>
-      <div ref="logRef" class="log">
-        <p v-if="!messages.length" class="empty">从左边选一个会话查看消息。</p>
-        <div v-for="m in messages" :key="m.id" class="msg" :class="m.role">
-          <div class="who">
-            {{ m.role === 'user' ? '用户' : '助手' }}
-            <span class="time">{{ m.createdAt }}</span>
+    <div class="wrap">
+      <NCard size="small" title="会话列表">
+        <NEmpty v-if="!visible.length" description="没有会话" />
+        <div v-else class="items">
+          <div
+            v-for="c in visible"
+            :key="c.id"
+            class="item"
+            :class="{ active: c.id === currentId }"
+            @click="open(c)"
+          >
+            <div class="line1">
+              <span class="title">#{{ c.id }} {{ c.title }}</span>
+              <NTag size="small" :bordered="false" type="info">
+                {{ agentLabel(c) }}
+              </NTag>
+            </div>
+            <div class="line2">
+              <span>{{ c.updatedAt }}</span>
+              <NPopconfirm
+                positive-text="删除"
+                negative-text="取消"
+                @positive-click="remove(c)"
+              >
+                <template #trigger>
+                  <NButton
+                    quaternary
+                    size="tiny"
+                    type="error"
+                    @click.stop
+                  >
+                    <template #icon>
+                      <NIcon :size="14"><TrashBinOutline /></NIcon>
+                    </template>
+                  </NButton>
+                </template>
+                删除会话 #{{ c.id }}？消息会一并删除。
+              </NPopconfirm>
+            </div>
           </div>
-          <div class="text">{{ m.content }}</div>
         </div>
-      </div>
+      </NCard>
+
+      <NCard size="small" :title="current ? `#${current.id} ${current.title}` : '详情'">
+        <div ref="logRef" class="log">
+          <NEmpty v-if="!messages.length" description="从左边选一个会话查看消息" />
+          <div v-for="m in messages" :key="m.id" class="msg" :class="m.role">
+            <div class="who">
+              {{ m.role === 'user' ? '用户' : '助手' }}
+              <span class="time">{{ m.createdAt }}</span>
+            </div>
+            <div class="text">{{ m.content }}</div>
+          </div>
+        </div>
+      </NCard>
     </div>
   </div>
 </template>
@@ -131,38 +191,27 @@ function agentLabel(c) {
   align-items: start;
 }
 
-.list-head {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.list-head h3 {
-  margin: 0;
-  flex: 1;
-}
-
-.small-select {
-  width: auto;
-  padding: 5px 8px;
+.items {
+  max-height: 560px;
+  overflow-y: auto;
 }
 
 .item {
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  padding: 10px 12px;
+  border: 1px solid #eef0f4;
+  border-radius: 10px;
   margin-bottom: 8px;
   cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .item:hover {
-  border-color: var(--primary);
+  border-color: #2f6bff;
 }
 
 .item.active {
-  border-color: var(--primary);
-  background: #eff6ff;
+  border-color: #2f6bff;
+  background: #eef3ff;
 }
 
 .line1,
@@ -174,31 +223,25 @@ function agentLabel(c) {
 }
 
 .line1 .title {
-  font-weight: 600;
-}
-
-.line2 {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.badge {
-  font-size: 12px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 1px 8px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.line2 {
+  margin-top: 4px;
+  color: #8a93a6;
+  font-size: 12px;
+}
+
 .log {
-  height: 520px;
+  height: 560px;
   overflow-y: auto;
 }
 
 .msg {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
   max-width: 85%;
 }
 
@@ -208,7 +251,7 @@ function agentLabel(c) {
 
 .who {
   font-size: 12px;
-  color: var(--muted);
+  color: #6b7280;
   margin-bottom: 4px;
 }
 
@@ -222,21 +265,22 @@ function agentLabel(c) {
 }
 
 .text {
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--bg);
-  border: 1px solid var(--line);
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: #f2f4f8;
+  border: 1px solid #e6e9ef;
   white-space: pre-wrap;
   word-break: break-word;
+  line-height: 1.6;
 }
 
 .msg.user .text {
-  background: var(--primary);
+  background: #2f6bff;
   color: #fff;
-  border-color: var(--primary);
+  border-color: #2f6bff;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   .wrap {
     grid-template-columns: 1fr;
   }
