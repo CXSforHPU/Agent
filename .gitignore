@@ -36,3 +36,14 @@ __pycache__/
 
 # kconfig
 Kconfig
+
+# web 控制台：工具链、依赖与产物全部不进版本库
+/resource/web/server/.jdk/
+/resource/web/server/.maven/
+/resource/web/server/target/
+/resource/web/server/data/
+/resource/web/client/node_modules/
+/resource/web/client/dist/
+/resource/web/client/.vite/
+/resource/web/*.zip
+/resource/web/.run/

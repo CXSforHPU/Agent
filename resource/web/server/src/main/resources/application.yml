@@ -1,0 +1,62 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: agent-console-server
+  datasource:
+    # 内置 SQLite：文件落在 data/ 下，随 jar 一起走，不需要装数据库服务
+    url: jdbc:sqlite:${AGENT_CONSOLE_DB:./data/agent-console.db}
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 4
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
+  jackson:
+    default-property-inclusion: non_null
+
+agent:
+  # 网站侧 agent：协议、地址、模型名、API Key 默认取工程 rtconfig.h，
+  # 也就是编译进端侧固件的那份配置。下面的环境变量只在默认之上做覆盖。
+  website-agent:
+    # rtconfig.h 的路径。留空就从工作目录往上找带 Agent 包的工程根。
+    rtconfig: ${AGENT_RTCONFIG_H:}
+    # 留空表示用 rtconfig.h 里对应的值
+    base-url: ${AGENT_LLM_BASE_URL:}
+    api-key: ${AGENT_LLM_API_KEY:}
+    model: ${AGENT_LLM_MODEL:}
+    # openai 或 anthropic，留空用 rtconfig.h 里选中的那个
+    protocol: ${AGENT_LLM_PROTOCOL:}
+    # 0 表示用 rtconfig.h 里的 PKG_AGENT_ANTHROPIC_MAX_TOKENS
+    max-tokens: 0
+    timeout-seconds: 60
+    # 网站侧 agent 的系统提示词，可在设置页覆盖
+    system-prompt: ""
+  # A2A：端侧 agent 的能力卡地址，设备表里每台设备各自覆盖
+  a2a:
+    connect-timeout-seconds: 5
+    read-timeout-seconds: 60
+    # 间隔多少毫秒轮询一次能力卡判断在线
+    probe-interval-ms: 15000
+  # 运维面板要管的文件服务器与 MCP 网关。路径相对后端运行目录（server/），
+  # 也就是要用 setup.sh 启后端；从别的目录起 java -jar 的话这些路径会指错。
+  console:
+    # 文件服务器在 resource/file_server 下，从 server/ 往上两级
+    file-server-dir: ../../file_server
+    client-dir: ../client
+    run-dir: ../.run
+    file-server-host: 127.0.0.1
+    file-server-port: 8000
+    mcp-port: 8765
+    # 合成请求的超时秒数。冷启动要装权重、编译 CUDA graph，整机要跑十分钟上下，别调小
+    tts-timeout-seconds: 900
+  jwt:
+    # 生产环境必须用环境变量覆盖，别用默认值
+    secret: ${AGENT_JWT_SECRET:change-me-in-production-please-use-a-long-random-string}
+    ttl-hours: 24
+
+logging:
+  level:
+    com.agentconsole: info
