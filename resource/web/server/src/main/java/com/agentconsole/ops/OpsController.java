@@ -44,8 +44,20 @@ public class OpsController {
     }
 
     /**
-     * 改端口与启动组件。body 里可以带 fileServerPort、mcpPort 与 startComponents，
-     * 三项都可选，比如 {"fileServerPort": 8001, "startComponents": ["file-server", "mcp"]}。
+     * 板端启动时来要的地址。
+     *
+     * <p>板子手上没有登录令牌，所以这个接口不走鉴权。报的是板端该用的主机名与
+     * 端口，主机名由运维页的「板端地址」决定。
+     */
+    @GetMapping("/endpoints")
+    public ApiResponse<Map<String, Object>> endpoints() {
+        return ApiResponse.ok(ops.endpoints());
+    }
+
+    /**
+     * 改端口与启动组件。body 里可以带 fileServerPort、mcpPort、deviceHost
+     * 与 startComponents，四项都可选，比如
+     * {"fileServerPort": 8001, "deviceHost": "10.0.2.2"}。
      */
     @PutMapping("/settings")
     public ResponseEntity<ApiResponse<Map<String, Object>>> updateSettings(
@@ -59,10 +71,12 @@ public class OpsController {
         } catch (NumberFormatException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail("端口要填数字"));
         }
+        String deviceHost = body.get("deviceHost") == null
+                ? null : String.valueOf(body.get("deviceHost"));
         List<String> startComponents = componentsOf(body.get("startComponents"));
         try {
             return ResponseEntity.ok(ApiResponse.ok(
-                    ops.updateSettings(fileServerPort, mcpPort, startComponents)));
+                    ops.updateSettings(fileServerPort, mcpPort, deviceHost, startComponents)));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
         } catch (IllegalStateException e) {

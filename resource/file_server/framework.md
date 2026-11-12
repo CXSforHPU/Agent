@@ -58,6 +58,8 @@ Windows 用 `deploy.bat --tts`。手动分步时是先 `python fetch_tts.py dict
   `file_op.c::agent_multi_get_file` 和 `agent_upload_file` 会自己拼路径，拼成
   `{PKG_AGENT_WEB_SERVER_URL}/download/{file_id}` 和 `{PKG_AGENT_WEB_SERVER_URL}/upload`，
   不要在宏里带 `/download`。
+- 固件开了自动获取地址时，这两个宏是回退值，实际地址由 `agent_endpoint_file_server()`
+  给出，见固件包的 [docs/framework.md](../../docs/framework.md) 的 3.14。
 
 ## 多模态（LLM 抓取图片 URL）注意事项
 

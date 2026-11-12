@@ -27,6 +27,8 @@ public class AuthFilter extends OncePerRequestFilter {
             "/api/auth/register",
             "/api/auth/login",
             "/api/health",
+            // 板端启动时来要文件服务器与 MCP 地址，手上没有登录令牌
+            "/api/ops/endpoints",
             "/error");
 
     private final JwtService jwt;

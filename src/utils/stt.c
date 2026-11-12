@@ -53,7 +53,7 @@ const char *agent_stt_transcribe(const char *path)
     char boundary[60];
     rt_snprintf(boundary, sizeof(boundary), "----------------------------%012d", rt_tick_get());
     char uri[128] = {0};
-    int uri_len = rt_snprintf(uri, sizeof(uri), "%s/stt", PKG_AGENT_WEB_SERVER_URL);
+    int uri_len = rt_snprintf(uri, sizeof(uri), "%s/stt", agent_endpoint_file_server());
     if (uri_len < 0 || uri_len >= (int)sizeof(uri))
     {
         LOG_W("[stt] url too long");

@@ -192,7 +192,7 @@ static rt_err_t agent_multi_get_file(const char *file_id, const char *path)
 {
     char url[128] = {0};
     int n = rt_snprintf(url, sizeof(url), "%s/download/%s",
-                        PKG_AGENT_WEB_SERVER_URL, file_id);
+                        agent_endpoint_file_server(), file_id);
     if (n < 0 || n >= (int)sizeof(url))
     {
         LOG_E("[download] url too long");
@@ -232,7 +232,7 @@ static rt_err_t agent_upload_file(const char *path, char *out_url, size_t out_ur
     rt_snprintf(form_data, sizeof(form_data), "name=\"file\";filename=\"%s\"", filename);
 
     int url_len = rt_snprintf(upload_url, sizeof(upload_url), "%s/upload",
-                              PKG_AGENT_WEB_SERVER_URL);
+                              agent_endpoint_file_server());
     if (url_len < 0 || url_len >= (int)sizeof(upload_url))
     {
         LOG_E("upload url too long");
@@ -270,7 +270,7 @@ static rt_err_t agent_upload_file(const char *path, char *out_url, size_t out_ur
     }
 
     int sn = rt_snprintf(out_url, out_url_len, "%s/download/%s",
-                         PKG_AGENT_WEB_SERVER_URL, file_id_json->valuestring);
+                         agent_endpoint_file_server(), file_id_json->valuestring);
     if (sn < 0 || sn >= (int)out_url_len)
     {
         LOG_E("url buffer overflow");

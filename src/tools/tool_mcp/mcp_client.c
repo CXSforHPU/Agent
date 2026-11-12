@@ -8,6 +8,7 @@
 
 #include <webclient.h>
 #include "utils/webclient_util.h"
+#include "utils/agent_endpoint.h"
 
 #define LOG_TAG "Agent.mcp"
 #define LOG_LVL LOG_LVL_INFO
@@ -165,6 +166,7 @@ static cJSON *parse_rpc_response(const char *body, int id)
 static rt_err_t mcp_transact(const char *payload, int id, cJSON **resp)
 {
     struct webclient_session *session;
+    const char *url = agent_endpoint_mcp();
     int status;
     int len = 0;
     char *body = RT_NULL;
@@ -191,10 +193,10 @@ static rt_err_t mcp_transact(const char *payload, int id, cJSON **resp)
      * 已经连上的 socket 上，连之前设会被丢掉，所以这里分成两段：
      * 连接 → 设超时 → 发请求体 → 收响应。
      */
-    status = webclient_post(session, PKG_AGENT_MCP_SERVER_URL, RT_NULL, 0);
+    status = webclient_post(session, url, RT_NULL, 0);
     if (status < 0)
     {
-        LOG_E("mcp: cannot reach %s, status %d", PKG_AGENT_MCP_SERVER_URL, status);
+        LOG_E("mcp: cannot reach %s, status %d", url, status);
         goto __exit;
     }
     agent_webclient_set_timeout(session, PKG_AGENT_MCP_TIMEOUT_MS);
@@ -213,7 +215,7 @@ static rt_err_t mcp_transact(const char *payload, int id, cJSON **resp)
     }
     if (status != 200)
     {
-        LOG_E("mcp: HTTP status %d from %s", status, PKG_AGENT_MCP_SERVER_URL);
+        LOG_E("mcp: HTTP status %d from %s", status, url);
         goto __exit;
     }
     save_session_id(session);
@@ -414,7 +416,7 @@ rt_err_t mcp_client_connect(void)
     }
     remote_tools = tools;
     connected = RT_TRUE;
-    LOG_I("mcp: connected to %s, %d remote tools", PKG_AGENT_MCP_SERVER_URL,
+    LOG_I("mcp: connected to %s, %d remote tools", agent_endpoint_mcp(),
           cJSON_GetArraySize(tools));
     return RT_EOK;
 }

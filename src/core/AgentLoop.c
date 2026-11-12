@@ -141,6 +141,9 @@ static void init_agent(void)
 {
     g_channel_ops = AGENT_CHANNEL_OPS;
 
+    /* 先定下外部服务器地址，MCP 客户端握手要用 */
+    agent_endpoint_init();
+
     init_tools();
     g_message_hub = message_hub_create();
     g_context = agent_context_create();

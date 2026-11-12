@@ -43,6 +43,8 @@ public class OpsService {
     /** 宿主级设置里存端口的那两条。 */
     private static final String KEY_FILE_SERVER_PORT = "fileServerPort";
     private static final String KEY_MCP_PORT = "mcpPort";
+    /** 板端用的主机名。控制台自己连文件服务器用 fileServerHost，板端在板子外面，得另填。 */
+    private static final String KEY_DEVICE_HOST = "deviceHost";
     /** 启动时勾选了哪些组件。 */
     private static final String KEY_START_COMPONENTS = "startComponents";
     /**
@@ -60,6 +62,7 @@ public class OpsService {
     private final Path clientDir;
     private final Path runDir;
     private final String fileServerHost;
+    private final String defaultDeviceHost;
     private final int defaultPort;
     private final int defaultMcpPort;
     private final int ttsTimeoutSeconds;
@@ -72,6 +75,8 @@ public class OpsService {
     private volatile int fileServerPort;
     /** MCP 网关当前的端口。运维页可以改，改完存库。 */
     private volatile int mcpPort;
+    /** 板端用的主机名。板子在控制台外面，这个主机名跟控制台自己用的不是一回事。 */
+    private volatile String deviceHost;
     /** 启动时勾选的组件。文件服务器本体一定在里面。 */
     private volatile List<String> startComponents = List.of();
     /** 组件依赖明细的缓存。 */
@@ -83,6 +88,7 @@ public class OpsService {
                       @Value("${agent.console.client-dir:../client}") String clientDir,
                       @Value("${agent.console.run-dir:../.run}") String runDir,
                       @Value("${agent.console.file-server-host:127.0.0.1}") String host,
+                      @Value("${agent.console.device-host:}") String deviceHost,
                       @Value("${agent.console.file-server-port:8000}") int port,
                       @Value("${agent.console.mcp-port:8765}") int mcpPort,
                       @Value("${agent.console.tts-timeout-seconds:900}") int ttsTimeoutSeconds,
@@ -91,6 +97,7 @@ public class OpsService {
         this.clientDir = Paths.get(clientDir).toAbsolutePath().normalize();
         this.runDir = Paths.get(runDir).toAbsolutePath().normalize();
         this.fileServerHost = host;
+        this.defaultDeviceHost = deviceHost == null ? "" : deviceHost.trim();
         this.defaultPort = port;
         this.defaultMcpPort = mcpPort;
         this.ttsTimeoutSeconds = ttsTimeoutSeconds;
@@ -104,6 +111,14 @@ public class OpsService {
                 .map(OpsService::parsePort)
                 .filter(p -> p > 0)
                 .orElse(mcpPort);
+        // 板端主机名没配就用配置文件里的，再没有就退回控制台自己用的那个
+        this.deviceHost = settings.find(KEY_DEVICE_HOST)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .orElse(this.defaultDeviceHost);
+        if (this.deviceHost.isEmpty()) {
+            this.deviceHost = host;
+        }
         this.startComponents = parseComponents(settings.find(KEY_START_COMPONENTS)
                 .orElse(DEFAULT_START_COMPONENTS));
         // 文件服务器是 uvicorn，只讲 HTTP/1.1。JDK 的 HttpClient 默认 HTTP/2，
@@ -156,6 +171,9 @@ public class OpsService {
         out.put("fileServerPort", fileServerPort);
         out.put("mcpPort", mcpPort);
         out.put("mcpUrl", mcpUrl());
+        out.put("deviceHost", deviceHost);
+        out.put("deviceFileServerUrl", deviceFileServerUrl());
+        out.put("deviceMcpUrl", deviceMcpUrl());
         out.put("startComponents", startComponents);
         out.put("managed", fileServerProcess != null && fileServerProcess.isAlive());
         return out;
@@ -168,21 +186,41 @@ public class OpsService {
         out.put("defaultPort", defaultPort);
         out.put("mcpPort", mcpPort);
         out.put("defaultMcpPort", defaultMcpPort);
+        out.put("deviceHost", deviceHost);
+        out.put("defaultDeviceHost", defaultDeviceHost);
         out.put("startComponents", startComponents);
         out.put("allComponents", List.copyOf(COMPONENTS));
         return out;
     }
 
     /**
-     * 改端口与启动组件。fileServerPort、mcpPort 与 startComponents 都可空，
-     * 空的那项不动。
+     * 板端启动时来要的地址。
+     *
+     * <p>控制台自己连文件服务器用 fileServerHost，板子在控制台外面，
+     * 得用 deviceHost，两边的主机名经常不一样：控制台是 127.0.0.1，
+     * 板子那边可能是 10.0.2.2 或者局域网的 IP。
+     */
+    public Map<String, Object> endpoints() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("deviceHost", deviceHost);
+        out.put("fileServerUrl", deviceFileServerUrl());
+        out.put("fileServerPort", fileServerPort);
+        out.put("mcpUrl", deviceMcpUrl());
+        out.put("mcpPort", mcpPort);
+        return out;
+    }
+
+    /**
+     * 改端口、板端地址与启动组件。fileServerPort、mcpPort、deviceHost 与
+     * startComponents 都可空，空的那项不动。
      *
      * <p>服务还在跑的时候不让改端口：换了端口以后旧进程没人管，会占着旧端口，
      * 而按端口反查 pid 的停止逻辑也只会查新端口，旧进程就漏了。
      */
     public Map<String, Object> updateSettings(Integer fileServerPort, Integer mcpPort,
-                                              List<String> startComponents) {
-        if (fileServerPort == null && mcpPort == null && startComponents == null) {
+                                              String deviceHost, List<String> startComponents) {
+        if (fileServerPort == null && mcpPort == null && deviceHost == null
+                && startComponents == null) {
             throw new IllegalArgumentException("没给要改的东西");
         }
         if (fileServerPort != null) {
@@ -202,6 +240,7 @@ public class OpsService {
         if (newFileServerPort == newMcpPort) {
             throw new IllegalArgumentException("文件服务器和 MCP 网关不能用同一个端口");
         }
+        String newDeviceHost = deviceHost == null ? null : checkDeviceHost(deviceHost);
 
         List<String> changed = new ArrayList<>();
         if (fileServerPort != null && fileServerPort != this.fileServerPort) {
@@ -213,6 +252,11 @@ public class OpsService {
             settings.put(KEY_MCP_PORT, String.valueOf(mcpPort));
             this.mcpPort = mcpPort;
             changed.add("MCP 网关端口 " + mcpPort);
+        }
+        if (newDeviceHost != null && !newDeviceHost.equals(this.deviceHost)) {
+            settings.put(KEY_DEVICE_HOST, newDeviceHost);
+            this.deviceHost = newDeviceHost;
+            changed.add("板端地址 " + newDeviceHost);
         }
         if (startComponents != null) {
             List<String> wanted = checkComponents(startComponents);
@@ -226,6 +270,9 @@ public class OpsService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("fileServerPort", this.fileServerPort);
         out.put("mcpPort", this.mcpPort);
+        out.put("deviceHost", this.deviceHost);
+        out.put("fileServerUrl", deviceFileServerUrl());
+        out.put("mcpUrl", deviceMcpUrl());
         out.put("startComponents", this.startComponents);
         out.put("message", changed.isEmpty()
                 ? "设置没变"
@@ -256,12 +303,35 @@ public class OpsService {
         }
     }
 
+    /** 板端主机名。只收主机名或 IP，协议、路径和端口都不在这一项里。 */
+    private static String checkDeviceHost(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        if (value.isEmpty()) {
+            throw new IllegalArgumentException("板端地址不能为空");
+        }
+        if (value.contains("://") || value.contains("/") || value.contains(":")
+                || value.contains(" ")) {
+            throw new IllegalArgumentException("板端地址只填主机名或 IP，不要带协议、端口和路径");
+        }
+        return value;
+    }
+
     private String baseUrl() {
         return "http://" + fileServerHost + ":" + fileServerPort;
     }
 
     private String mcpUrl() {
         return "http://" + fileServerHost + ":" + mcpPort + "/mcp";
+    }
+
+    /** 板端用的文件服务器地址。主机名跟控制台自己用的不是同一个。 */
+    private String deviceFileServerUrl() {
+        return "http://" + deviceHost + ":" + fileServerPort;
+    }
+
+    /** 板端用的 MCP 网关地址。 */
+    private String deviceMcpUrl() {
+        return "http://" + deviceHost + ":" + mcpPort + "/mcp";
     }
 
     private boolean portOpen(String host, int port) {

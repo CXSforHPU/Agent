@@ -169,7 +169,33 @@ Windows 上文件服务器在跑时装依赖会失败，`uv sync` 换不了 `tor
 3. 两个端口不能填一样，会回 400。
 4. 没保存过就用 `agent.console.file-server-port` 和 `agent.console.mcp-port` 的默认值。
 
-板端连网关的地址是 `http://PC-IP:<MCP 网关端口>/mcp`，也就是固件里的 `PKG_AGENT_MCP_SERVER_URL`。改了 MCP 端口，板端那台固件要重新配一遍。
+板端连网关的地址是 `http://PC-IP:<MCP 网关端口>/mcp`，也就是固件里的 `PKG_AGENT_MCP_SERVER_URL`。改了 MCP 端口，板端那台固件要重新配一遍。开了固件的自动获取地址就不用重新配，板端启动时自己来问，见下面「板端地址」。
+
+### 板端地址
+
+「板端地址」填板子访问文件服务器和 MCP 网关用的主机名，只填主机名或 IP，不带协议和端口。QEMU 里的板子填 `10.0.2.2`，真板子填它在局域网里的 IP。
+
+存的值放在 `ops_setting` 表的 `deviceHost` 键里。默认值取 `agent.console.device-host`，没配就用 `agent.console.file-server-host`，再没有就用 `127.0.0.1`。
+
+这个值和控制台自己用的 `fileServerHost` 是两回事。控制台在板上，能用 `127.0.0.1` 连本机的文件服务器；板子在控制台外面，只能用板子够得着的地址。所以控制台报给板端的地址是 `http://<deviceHost>:<端口>`。
+
+固件在 `External Server` 菜单里选了自动模式，启动时请求 `GET /api/ops/endpoints`，拿回板端该用的两个地址。这个接口免登录，板手上没有令牌。回包里是：
+
+```json
+{
+  "success": true,
+  "message": "ok",
+  "data": {
+    "deviceHost": "10.0.2.2",
+    "fileServerUrl": "http://10.0.2.2:8000",
+    "fileServerPort": 8000,
+    "mcpUrl": "http://10.0.2.2:8765/mcp",
+    "mcpPort": 8765
+  }
+}
+```
+
+改端口或者改板端地址，板端下次启动就能拿到新地址，不用重新烧固件。板端启动时控制台连不上，它用固件里手填的地址继续跑。
 
 ### 合成进度
 
@@ -237,8 +263,9 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 | PUT | `/api/settings` | 保存设置，body 是 `{key: value}` |
 | POST | `/api/settings/{key}/reset` | 把某一项恢复成环境变量默认值 |
 | GET | `/api/ops/status` | 各组件状态，含当前启动组件清单 |
-| GET | `/api/ops/settings` | 读运维设置，含两个服务的当前端口、默认值与启动组件清单 |
-| PUT | `/api/ops/settings` | 改运维设置，body 是 `{"fileServerPort": N, "mcpPort": M, "startComponents": ["mcp"]}`，三项都可选 |
+| GET | `/api/ops/settings` | 读运维设置，含两个服务的当前端口、板端地址、默认值与启动组件清单 |
+| PUT | `/api/ops/settings` | 改运维设置，body 是 `{"fileServerPort": N, "mcpPort": M, "deviceHost": "10.0.2.2", "startComponents": ["mcp"]}`，四项都可选 |
+| GET | `/api/ops/endpoints` | 板端用的文件服务器与 MCP 地址。免登录，固件启动时来问 |
 | GET | `/api/ops/components?refresh=` | 各组件的依赖明细，`refresh=true` 时跳过缓存重新探测 |
 | POST | `/api/ops/install?target=&components=` | 后台装依赖，返回任务 id。`target` 取 `web` 或 `file-server`，`components` 是要装的组件，逗号分隔 |
 | GET | `/api/ops/jobs` | 装依赖的任务列表 |

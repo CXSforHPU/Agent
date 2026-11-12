@@ -172,7 +172,7 @@ python3 mcp_gateway.py --host 0.0.0.0 --port 8765 --root "$HOME"
 ## 3. 设备端配置
 
 设备端的地址由 Kconfig 选项 `PKG_AGENT_MCP_SERVER_URL` 决定，默认值是
-`http://192.168.1.100:8765/mcp`。把它改成网关所在机器的 IP：
+`http://10.0.2.2:8765/mcp`。把它改成网关所在机器的 IP：
 
 ```
 CONFIG_PKG_AGENT_TOOL_MCP_ENABLE=y
@@ -180,6 +180,8 @@ CONFIG_PKG_AGENT_MCP_SERVER_URL="http://192.168.1.100:8765/mcp"
 ```
 
 改完重新编译固件。网关的 IP 用 `ipconfig` 查，设备要和它在同一网段。
+
+这个选项在固件的 `External Server` 菜单里。菜单里还有一个来源选择：手动填死，或者启动时向管理控制台问一次。选自动模式时，上面填的地址是控制台连不上时的回退值，端口改了不用重新烧固件。控制台那边在运维页的「板端地址」填板子够得着的主机名。
 
 ## 4. Windows 上的 MCP 服务器
 

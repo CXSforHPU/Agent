@@ -258,6 +258,7 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `inc/uti
 | `src/utils/file_op.c` | 文件操作线程与 `msh_agent_upload_download` |
 | `src/utils/stt.c` | 本地语音转写，见 3.9 |
 | `src/utils/tts.c` | 文本转语音，见 3.10 |
+| `src/utils/agent_endpoint.c` | 外部服务器地址解析，见 3.14 |
 | `src/utils/webclient_util.c` | webclient 超时设置，见 3.8 |
 
 协议目录按协议分文件：
@@ -312,7 +313,7 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 - 仅在 `PKG_AGENT_STT_ENABLE` 时编译。
 - `to_content()` 处理 `TYPE_AUDIO` 时调用 `agent_stt_transcribe()`。
-- 使用 multipart POST 把 WAV 发到 `<PKG_AGENT_WEB_SERVER_URL>/stt`。
+- 使用 multipart POST 把 WAV 发到 `<文件服务器地址>/stt`。地址取自 `agent_endpoint_file_server()`，见 3.14。
 - 连接超时 120 s，响应缓冲为静态 1024 字节。
 - 解析 `{"code":0,"data":{"text":"..."}}`。
 - 转写后删除本地录音，无论成功与否；成功时生成文本项，失败时生成一条提示文本，不上传音频。原因是纯文本模型收到 `audio_url` 会直接返回 422。
@@ -381,6 +382,31 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 模型通过 `skill` 工具取正文。不带 `name` 时返回目录，带 `name` 时返回该技能的完整 Markdown。工具实现在 `src/tools/tool_skill.c`，参数说明和注册表也在同一个文件末尾。
 
 上下文被压缩后，摘要里只留技能名，不留正文。要继续用某个技能，先重新加载。
+
+### 3.14 外部服务器地址解析
+
+文件：`src/utils/agent_endpoint.c`、`inc/utils/agent_endpoint.h`
+
+板端要连两台外部服务器：文件服务器和 MCP 网关。这个模块给出它们的当前地址。
+
+地址有两个来源，由 Kconfig 的 `External Server` 菜单选：
+
+| 模式 | 行为 |
+|---|---|
+| 手动（默认） | 直接用 `PKG_AGENT_WEB_SERVER_URL` 与 `PKG_AGENT_MCP_SERVER_URL`，启动时不发任何请求 |
+| 自动 | 启动时向控制台问一次，用控制台报的地址；问不到就用手填的地址 |
+
+自动模式下板端请求 `GET <PKG_AGENT_CONSOLE_URL><PKG_AGENT_CONSOLE_API>`，默认是 `http://10.0.2.2:8080/api/ops/endpoints`。回包里读 `data.fileServerUrl` 与 `data.mcpUrl` 两个字段。
+
+调用关系：
+
+- `init_agent()` 在 `init_tools()` 之前调 `agent_endpoint_init()`。MCP 客户端握手要用地址，所以解析必须先跑。
+- `file_op.c`、`stt.c`、`tts.c` 和 `mcp_client.c` 调 `agent_endpoint_file_server()` 或 `agent_endpoint_mcp()` 取地址，不再直接读宏。
+- 宏值在 `agent_endpoint.h` 里带 `#ifndef` 兜底，工程 `.config` 跟不上的包也有默认地址可用。
+
+控制台连不上、回的不是 200、或者 JSON 缺字段，模块都返回失败并打告警，板端用手填的地址继续跑。地址写进两个静态缓冲区，取地址的函数在缓冲区为空时直接回宏值，所以回退不需要额外的分支。
+
+`msh_agent_endpoint` 打印当前地址和来源，`msh_agent_endpoint refresh` 再问控制台一次。
 
 ## 4. 数据流
 
@@ -535,13 +561,25 @@ sequenceDiagram
 | 宏 | 说明 |
 |---|---|
 | `PKG_AGENT_MULTIMODAL_ENABLE` / `PKG_AGENT_MULTIMODAL_DISABLE` | 多模态开关，默认关闭 |
-| `PKG_AGENT_WEB_SERVER_URL` | web 服务器根地址，默认 `http://10.0.2.2:8000`，不含路径 |
 | `PKG_AGENT_FILE_OP_THREAD_SIZE` | 文件操作线程栈，默认 4096 |
 | `PKG_AGENT_STT_ENABLE` / `PKG_AGENT_STT_DISABLE` | 语音转写开关，默认启用 |
 | `PKG_AGENT_TTS_ENABLE` / `PKG_AGENT_TTS_DISABLE` | 语音合成开关，默认启用 |
 | `PKG_AGENT_TTS_SAVE_FILE` | 合成 WAV 的落盘路径，默认 `/tts.wav`，需可写文件系统 |
 | `PKG_AGENT_TTS_AUTO_PLAY` | 回复自动播报，依赖 `PKG_AGENT_DRIVER_AUDIO`，默认关闭 |
 | `PKG_AGENT_DRIVER_AUDIO` | 音频驱动开关，独立于多模态 |
+
+### 外部服务器地址
+
+地址选项单独放在 `External Server` 菜单里，见 3.14。
+
+| 宏 | 说明 |
+|---|---|
+| `PKG_AGENT_EXT_SERVER_MANUAL` / `PKG_AGENT_EXT_SERVER_AUTO` | 地址来源，手动填死还是启动时向控制台问一次，默认手动 |
+| `PKG_AGENT_WEB_SERVER_URL` | 文件服务器根地址，默认 `http://10.0.2.2:8000`，不含路径 |
+| `PKG_AGENT_MCP_SERVER_URL` | MCP 网关地址，默认 `http://10.0.2.2:8765/mcp` |
+| `PKG_AGENT_CONSOLE_URL` | 控制台地址，默认 `http://10.0.2.2:8080`，只有自动模式下显示 |
+| `PKG_AGENT_CONSOLE_API` | 控制台上报地址的接口路径，默认 `/api/ops/endpoints`，只有自动模式下显示 |
+| `PKG_AGENT_ENDPOINT_TIMEOUT_MS` | 读控制台响应体的超时，默认 3000 毫秒，只有自动模式下显示 |
 
 ### MQTT
 

@@ -56,6 +56,8 @@ const fileServerPortInput = ref(null)
 const fileServerPortDirty = ref(false)
 const mcpPortInput = ref(null)
 const mcpPortDirty = ref(false)
+const deviceHostInput = ref('')
+const deviceHostDirty = ref(false)
 const portBusy = ref(false)
 
 // 组件明细。探测要几秒，所以单独拉，不跟着状态一起轮询。
@@ -118,6 +120,13 @@ const statusRows = computed(() => [
     note: status.value.mcpPort
       ? `端口 ${status.value.mcpPort} · ${status.value.mcpUrl || ''}`
       : (status.value.mcpUrl || ''),
+  },
+  {
+    key: '板端地址',
+    on: Boolean(status.value.deviceHost),
+    note: status.value.deviceHost
+      ? `${status.value.deviceHost} · ${status.value.deviceFileServerUrl || ''} · ${status.value.deviceMcpUrl || ''}`
+      : '（没设）',
   },
   { key: 'Python 环境', on: status.value.venvReady, note: '文件服务器的 .venv' },
   { key: 'TTS 权重', on: status.value.ttsReady, note: 'GPT-SoVITS 推理代码与音色权重' },
@@ -205,6 +214,9 @@ async function refreshStatus() {
     }
     if (!mcpPortDirty.value && status.value.mcpPort) {
       mcpPortInput.value = status.value.mcpPort
+    }
+    if (!deviceHostDirty.value && status.value.deviceHost) {
+      deviceHostInput.value = status.value.deviceHost
     }
     // 同理，勾选没保存之前也不刷回去
     if (!selectionDirty.value && Array.isArray(status.value.startComponents)) {
@@ -329,7 +341,23 @@ function checkPort(value, label) {
   return port
 }
 
-// 只发改过的端口，没动的那项不动
+// 板端地址只收主机名或 IP，协议和端口由端口设置拼
+function checkDeviceHost(value) {
+  const host = String(value || '').trim()
+  if (!host) {
+    error.value = '板端地址不能为空'
+    message.error(error.value)
+    return null
+  }
+  if (host.includes('://') || host.includes('/') || host.includes(':') || host.includes(' ')) {
+    error.value = '板端地址只填主机名或 IP，不要带协议、端口和路径'
+    message.error(error.value)
+    return null
+  }
+  return host
+}
+
+// 只发改过的端口与板端地址，没动的那项不动
 async function savePorts() {
   error.value = ''
   notice.value = ''
@@ -348,6 +376,13 @@ async function savePorts() {
     }
     body.mcpPort = port
   }
+  if (deviceHostDirty.value) {
+    const host = checkDeviceHost(deviceHostInput.value)
+    if (host === null) {
+      return
+    }
+    body.deviceHost = host
+  }
   if (!Object.keys(body).length) {
     notice.value = '端口没改'
     return
@@ -357,8 +392,12 @@ async function savePorts() {
     const data = await api.opsSaveSettings(body)
     fileServerPortInput.value = data.fileServerPort
     mcpPortInput.value = data.mcpPort
+    if (data.deviceHost) {
+      deviceHostInput.value = data.deviceHost
+    }
     fileServerPortDirty.value = false
     mcpPortDirty.value = false
+    deviceHostDirty.value = false
     notice.value = data.message || '端口已保存'
     message.success(notice.value)
     await refreshStatus()
@@ -776,6 +815,19 @@ function jumpToLatest() {
           />
           <div class="muted">
             板端用这个端口连网关。改完保存，下次启动文件服务器时连带生效，两个端口不能填一样。
+          </div>
+        </div>
+        <div>
+          <div class="section-label">板端地址</div>
+          <NInput
+            v-model:value="deviceHostInput"
+            placeholder="10.0.2.2"
+            style="width: 180px"
+            @update:value="deviceHostDirty = true"
+          />
+          <div class="muted">
+            板子访问文件服务器与 MCP 网关用的主机名，只填主机名或 IP。QEMU 里的板子填
+            10.0.2.2，真板子填局域网 IP。固件开了自动获取地址时，板端就按这个来连。
           </div>
         </div>
       </div>

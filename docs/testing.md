@@ -221,7 +221,7 @@ python build/skill_qemu/run_live.py
 4. 起 QEMU，带 SLIRP 网卡：`-net nic,model=lan9118 -net user,host=10.0.2.2,net=10.0.2.0/24,dhcpstart=10.0.2.10`。板子 DHCP 拿到 `10.0.2.10`，宿主别名固定是 `10.0.2.2`。
 5. 在板子上跑 `mcp_live_qemu_test`，结果写进 `build/skill_qemu/result_live.json`。
 
-固件的 `PKG_AGENT_MCP_SERVER_URL` 要配成 `http://10.0.2.2:8765/mcp`。用 SLIRP 时宿主地址是 `10.0.2.2`，不是 PC 的真实 IP。
+固件的 `PKG_AGENT_MCP_SERVER_URL` 要配成 `http://10.0.2.2:8765/mcp`。用 SLIRP 时宿主地址是 `10.0.2.2`，不是 PC 的真实 IP。开了自动获取地址就以控制台报的为准，这条回归要对着控制台回包里的 `mcpUrl` 核对。
 
 离线回归启动时 `mock_chat` 会拦下这个地址上的所有 MCP 请求。`mcp_live_qemu_test` 第一步调 `mock_mcp_release()` 放行，后面的握手、取工具表、调桌面工具都走真链路。
 
@@ -342,3 +342,25 @@ msh /> agent_send_message 0 读一下 RTC 的时间
 ### 6.4 查日志
 
 串口日志能看出工具调用的完整过程：每次调用的工具名、参数和返回文本。`[mem] cleanup done` 的 `used` 用来判断有没有泄漏，反复执行「进入对话 → 清理 → 再进入」看这个数是否持平。
+
+## 7. 外部服务器地址回归
+
+地址来源有两种模式，各跑一遍。
+
+手动模式用 Kconfig 里的地址。自动模式启动时向控制台问一次，问不到就用手填的地址。
+
+```bash
+python build/qemu_endpoint_check.py manual
+python build/qemu_endpoint_check.py auto
+```
+
+脚本在 BSP 工作区里，不在包内。它做三件事：
+
+1. 起一个假控制台，端口取固件的 `PKG_AGENT_CONSOLE_URL`，`GET /api/ops/endpoints` 回一份地址跟 Kconfig 不一样的 JSON，报的端口是 8100 与 8790。
+2. 起 QEMU，等板子启动完，打 `msh_agent_endpoint` 看板子用的是哪一份地址。
+3. 自动模式下再起一次板子，这次假控制台不答，板子应该回退到 Kconfig 里的地址。
+
+判据一共 8 项。手动模式：模式是 manual，地址是 Kconfig 里的那两个，串口日志里没有 `[endpoint] GET`。自动模式加控制台在：模式是 auto，地址是假控制台报的那两个，日志里有 `[endpoint] file server ..., mcp ...`，没有回退告警。自动模式加控制台不在：日志里有 `[endpoint] use the fallback address in Kconfig`，地址是 Kconfig 里的那两个。
+
+脚本从固件的 `rtconfig.h` 读 `PKG_AGENT_CONSOLE_URL`，假控制台就起在这个地址的端口上，回退地址也从 `rtconfig.h` 读。改了固件配置不用改脚本。
+

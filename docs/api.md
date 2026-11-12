@@ -632,7 +632,7 @@ webnet 是单线程的，`/tasks/send` 会占住整个线程直到 agent 跑完�
 
 仅在 `PKG_AGENT_STT_ENABLE` 时编译。`agent_stt_transcribe(const char *path)` 定义在 `src/utils/stt.c`，声明在 `inc/utils/stt.h`，由 `to_content()` 处理音频时调用。
 
-- 向 `<PKG_AGENT_WEB_SERVER_URL>/stt` 发送 multipart POST。
+- 向 `<文件服务器地址>/stt` 发送 multipart POST。地址取自 `agent_endpoint_file_server()`，见 6.7。
 - 连接建立后把收发超时放宽到 120 s，首次加载 whisper 模型可能耗时较久。
 - 解析 `{"code":0,"data":{"text":"..."}}`。
 - 响应缓冲为静态 1024 字节。
@@ -657,14 +657,14 @@ void agent_tts_speak(const char *text); /* 把回复文本入队，不等合成 
 
 | 项 | 取值 |
 |---|---|
-| 方法 | `POST <PKG_AGENT_WEB_SERVER_URL>/tts`，`Content-Type: application/json` |
+| 方法 | `POST <文件服务器地址>/tts`，`Content-Type: application/json` |
 | 整条合成 | `{"text":"…","sample_rate":16000,"channels":1}`，响应体是一条完整 WAV |
 | 流式合成 | 上面再加 `"stream":true,"block_seconds":1.5`，响应体是 `[4 字节小端长度][完整 WAV]` 的帧序列 |
 | 声道数 | 1。`libraries/HAL_Drivers/drv_i2s.c` 的 `convert_mono_to_stereo()` 负责复制成左右两个 PCM 槽，喂双声道会变成两倍时长、低八度 |
 | 超时 | 连接建立后放宽到 5 min，取 `AGENT_TTS_TIMEOUT_MS` |
 | 结束标志 | 流式以连接关闭结束，没有单独的结束帧，也没有状态帧。服务端合成中途失败也走这条收尾，板侧只能按已收到的帧数判断说到哪儿 |
 
-返回值：`agent_tts_synth()` 成功返回 `RT_EOK`，落地字节数写进 `out_len`，该参数可以为 `NULL`。文本或路径为空、`PKG_AGENT_WEB_SERVER_URL` 为空或者拼出的地址超长返回 `-RT_EINVAL`。连接、收流、写盘任一段出错返回负值，串口打印 HTTP 状态码或者断点位置。`Content-Length` 已知而实际收到的字节更少算失败，不留半条 WAV。
+返回值：`agent_tts_synth()` 成功返回 `RT_EOK`，落地字节数写进 `out_len`，该参数可以为 `NULL`。文本或路径为空、文件服务器地址为空或者拼出的地址超长返回 `-RT_EINVAL`。连接、收流、写盘任一段出错返回负值，串口打印 HTTP 状态码或者断点位置。`Content-Length` 已知而实际收到的字节更少算失败，不留半条 WAV。
 
 模块常量集中在 `inc/utils/tts.h`，用 `AGENT_` 前缀：`AGENT_TTS_IO_BUF_SZ` 8192、`AGENT_TTS_SLOT_PATH_SZ` 64、`AGENT_TTS_BLOCK_SECONDS` 1.5、`AGENT_TTS_MAX_BLOCKS` 64、`AGENT_TTS_SPEAK_QUEUE` 8、`AGENT_TTS_SPEAK_STACK` 8192、`AGENT_TTS_PLAY_WAIT_MS` 60000。能在 menuconfig 里改的参数保留 `PKG_AGENT_` 前缀，由 `rtconfig.h` 提供。
 
@@ -716,6 +716,25 @@ typedef struct
 [framework.md 的 3.8 节](./framework.md)。
 
 `utils.h` 的声明与实际符号存在差异，见第 11 节。
+
+### 6.7 外部服务器地址解析
+
+头文件：`inc/utils/agent_endpoint.h` 实现：`src/utils/agent_endpoint.c`
+
+| 函数 | 说明 |
+|---|---|
+| `void agent_endpoint_init(void)` | 初始化。自动模式下向控制台问一次地址，问不到就打告警并用手填的地址 |
+| `rt_err_t agent_endpoint_refresh(void)` | 重新问控制台一次。手动模式下返回 `-RT_ENOSYS` |
+| `const char *agent_endpoint_file_server(void)` | 当前的文件服务器地址。取不到运行时值时回 `PKG_AGENT_WEB_SERVER_URL` |
+| `const char *agent_endpoint_mcp(void)` | 当前的 MCP 网关地址。取不到运行时值时回 `PKG_AGENT_MCP_SERVER_URL` |
+
+地址来源由 Kconfig 的 `External Server` 菜单选。手动模式直接用宏里的地址；自动模式启动时请求
+`GET <PKG_AGENT_CONSOLE_URL><PKG_AGENT_CONSOLE_API>`，读回包里的 `data.fileServerUrl` 与
+`data.mcpUrl`。宏值在头文件里带 `#ifndef` 兜底，工程 `.config` 跟不上的包也有默认值。
+
+`init_agent()` 在 `init_tools()` 之前调 `agent_endpoint_init()`，MCP 客户端握手要用地址。
+
+MSH 命令 `msh_agent_endpoint` 打印当前地址和来源，带 `refresh` 参数再问控制台一次。
 
 ## 7. AgentAudio：音频驱动
 
@@ -797,6 +816,7 @@ typedef struct agent_runtime_config
 | `msh_agent_upload_download down <file_id> <save_path>` | utils | 按文件 ID 下载 |
 | `msh_agent_tts [-f] [-o <path>] <text>` | utils | 合成语音落盘并播放 |
 | `agent_protocol [openai\|anthropic]` | utils | 查看或切换 LLM 协议 |
+| `msh_agent_endpoint [refresh]` | utils | 打印外部服务器地址与来源，带 `refresh` 再问控制台一次 |
 | `mqtt_tool connect\|disconnect\|start\|stop\|status\|list\|sub\|unsub\|pub\|recv\|history\|rule\|rules\|sim\|flush` | MQTT 工具 | MQTT 调试命令 |
 
 `msh_agent_upload_download` 支持 `up` / `upload` 与 `down` / `download` 两组写法，也接受 `-h`、`--help`、`help`。

@@ -20,12 +20,14 @@
  */
 static rt_err_t tts_url(char *buf, size_t size)
 {
-    if (PKG_AGENT_WEB_SERVER_URL[0] == '\0')
+    const char *base = agent_endpoint_file_server();
+
+    if (base[0] == '\0')
     {
-        LOG_E("[tts] PKG_AGENT_WEB_SERVER_URL is empty");
+        LOG_E("[tts] file server address is empty");
         return -RT_EINVAL;
     }
-    int n = rt_snprintf(buf, size, "%s/tts", PKG_AGENT_WEB_SERVER_URL);
+    int n = rt_snprintf(buf, size, "%s/tts", base);
     if (n < 0 || n >= (int)size)
     {
         LOG_E("[tts] url too long");

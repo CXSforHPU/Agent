@@ -50,6 +50,10 @@ agent:
     file-server-host: 127.0.0.1
     file-server-port: 8000
     mcp-port: 8765
+    # 板端用的主机名。板子在控制台外面，得填板子能访问到的地址：
+    # QEMU 里的板子填 10.0.2.2，真板子填局域网的 IP。
+    # 运维页里改这个值，改完存进 ops_setting。
+    device-host: 10.0.2.2
     # 合成请求的超时秒数。冷启动要装权重、编译 CUDA graph，整机要跑十分钟上下，别调小
     tts-timeout-seconds: 900
   jwt:

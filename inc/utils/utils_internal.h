@@ -12,6 +12,7 @@
  *   tool_json.c   工具定义 JSON 拼装
  *   protocol/     LLM 协议模块，按 OpenAI 与 Anthropic 分文件，统一入口 utils/protocol.h
  *   webclient_util.c  webclient 超时设置，绕开 v2.2.0 的两个坑
+ *   agent_endpoint.c  外部服务器地址，手动填或向控制台自动获取
  *   file_op.c     文件上传下载线程，需要 PKG_AGENT_MULTIMODAL_ENABLE
  *   stt.c         本地语音转写，需要 PKG_AGENT_STT_ENABLE
  *   tts.c         文本转语音与回复播报，需要 PKG_AGENT_TTS_ENABLE
@@ -24,10 +25,8 @@
 #include "string.h"
 #include "MessageHub.h"
 
-/* 工程 .config 比包里的 Kconfig 旧时还没有这个选项，用默认的本机地址兜底 */
-#ifndef PKG_AGENT_WEB_SERVER_URL
-#define PKG_AGENT_WEB_SERVER_URL "http://10.0.2.2:8000"
-#endif
+/* 外部服务器地址。Kconfig 选项旧了没跟上时，agent_endpoint.h 里有默认地址兜底 */
+#include "utils/agent_endpoint.h"
 
 #include "utils/message.h"
 #include "utils/format.h"
