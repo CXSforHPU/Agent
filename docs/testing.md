@@ -310,7 +310,7 @@ python build/skill_qemu/run_llm_live.py
 
 ### 6.1 通道选择
 
-当前工程在 `rtconfig.h` 里定义了 `PKG_AGENT_DEBUG_CHANNEL`，包内 `src/channels/AgentDebugChannel.c` 提供实现。LVGL 通道暂时没开，它的实现由应用工程提供。
+当前工程在 `rtconfig.h` 里定义的是 `PKG_AGENT_A2A_CHANNEL`，`agent_send_message` 这套命令属于 Debug 通道，要先切过去才能用：把 `.config` 里的通道换成 Debug，执行 `scons --useconfig=.config` 重新生成 `rtconfig.h`，再编译。验证完换回 A2A。LVGL 通道暂时没开，它的实现由应用工程提供。
 
 ### 6.2 手动跑包内用例
 

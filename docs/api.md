@@ -480,7 +480,7 @@ typedef struct AgentChannelOps
 } AgentChannelOps;
 ```
 
-`AgentLoop` 通过 `AGENT_CHANNEL_OPS` 选择通道，选择点在 `inc/channels/AgentChannels.h`。优先级为 LVGL → CLI → WebNet → Debug，未配置时返回 `RT_NULL`。
+`AgentLoop` 通过 `AGENT_CHANNEL_OPS` 选择通道，选择点在 `inc/channels/AgentChannels.h`。优先级为 LVGL → CLI → WebNet → A2A → Debug，未配置时返回 `RT_NULL`。
 
 ### 5.2 CLI 通道
 
@@ -533,9 +533,29 @@ agent_send_message <type> <content>
 
 `type` 取 0 到 4，依次是 text、audio、image、video、null，0 表示文本。命令把消息投进输入邮箱，然后等输出，最多等 30 秒。超时、agent 没运行或参数个数不足时返回 -1。
 
-本项目在 `rtconfig.h` 里定义了 `PKG_AGENT_DEBUG_CHANNEL`，当前选中的是 Debug 通道。用它做真机验证的方法见 [testing.md](./testing.md)。
+本项目在 `rtconfig.h` 里定义了 `PKG_AGENT_A2A_CHANNEL`，当前选中的是 A2A 通道。Debug 通道用它做真机验证的方法见 [testing.md](./testing.md)，跑之前要把 `.config` 换成 Debug 通道再编译。
 
-### 5.5 LVGL 通道
+### 5.5 A2A 通道
+
+宏：`PKG_AGENT_A2A_CHANNEL`
+实现：`src/channels/AgentA2aChannel.c`
+公共助手：`src/channels/webnet_util.c`
+
+跑在 webnet 之上，共用 `WEBNET_PORT`（默认 80）。启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/.well-known/agent.json` | GET | 能力卡，探活也用它 |
+| `/tasks/send` | POST | 同步发任务，一直等到端侧 agent 跑完 |
+| `/tasks/sendSubscribe` | POST | 流式发任务，先推一帧 `working`，再按 SSE 推最终结果 |
+
+请求体是 `{"message": {"role": "user", "parts": [{"type": "text", "text": "..."}]}}`。同步接口返回 `{"id", "status": {"state"}, "artifacts": [{"parts": [...]}]}`，`state` 取 `working`、`completed`、`failed`。SSE 每一帧也是这个结构，空行分帧。
+
+能力卡里的 `name` 与 `description` 来自 Kconfig 的 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION`。
+
+webnet 是单线程的，`/tasks/send` 会占住整个线程直到 agent 跑完。同一台设备并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。控制台的做法是给每台设备加一把锁，探活与聊天不同时进行。
+
+### 5.6 LVGL 通道
 
 宏：`PKG_AGENT_LVGL_CHANNEL`
 头文件：`inc/channels/AgentLvglChannel.h`

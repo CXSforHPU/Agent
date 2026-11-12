@@ -22,7 +22,7 @@
 
 draw.io 源文件：[agent-architecture.drawio](diagrams/agent-architecture.drawio)
 
-图里画的是当前工程的实际状态：通道层选中 Debug 通道，LVGL 通道暂时停用；平台层是 RT-Thread 设备框架与挂在其下的外设。工具层按模块划分，模块全开时共 40 个工具，设备框架 29 个、运算 3 个、MQTT 7 个、skill 1 个，每个模块自己登记到模块表；内嵌技能是编进固件的 4 份 Markdown。右侧为跨层关注点：写入授权、控制台保护、摘要压缩、离线验证。
+图里画的是当前工程的实际状态：通道层选中 A2A 通道，其余通道暂时停用；平台层是 RT-Thread 设备框架与挂在其下的外设。工具层按模块划分，模块全开时共 40 个工具，设备框架 29 个、运算 3 个、MQTT 7 个、skill 1 个，每个模块自己登记到模块表；内嵌技能是编进固件的 5 份 Markdown。右侧为跨层关注点：写入授权、控制台保护、摘要压缩、离线验证。
 
 工具从模块文件到模型手里的完整链路：
 
@@ -209,11 +209,16 @@ typedef struct AgentChannelOps
 | LVGL | `PKG_AGENT_LVGL_CHANNEL` | `agent_lvgl_ops` | 应用侧实现，保存 hub | 应用侧实现，清空 hub |
 | CLI | `PKG_AGENT_CLI_CHANNEL` | `agent_cli_ops` | 创建 readline 线程 | 停止线程并释放句柄 |
 | WebNet | `PKG_AGENT_WEBNET_CHANNEL` | `agent_webnet_ops` | 注册 CGI | 置空缓存指针 |
+| A2A | `PKG_AGENT_A2A_CHANNEL` | `agent_a2a_ops` | 注册 A2A CGI 并启动 webnet | 置空缓存指针 |
 | Debug | `PKG_AGENT_DEBUG_CHANNEL` | `agent_debug_ops` | 保存 hub 与 ctx | 置空缓存指针 |
 
-`inc/channels/AgentChannels.h` 是唯一的通道选择点，优先级为 LVGL → CLI → WebNet → Debug。Kconfig 的通道选项是单选，正常配置只会定义一个宏。
+`inc/channels/AgentChannels.h` 是唯一的通道选择点，优先级为 LVGL → CLI → WebNet → A2A → Debug。Kconfig 的通道选项是单选，正常配置只会定义一个宏。
 
-**当前工程的通道选择**：本项目在 `rtconfig.h` 里定义了 `PKG_AGENT_DEBUG_CHANNEL`，实际选中的是 Debug 通道。LVGL 通道暂时没开。
+**当前工程的通道选择**：本项目在 `rtconfig.h` 里定义了 `PKG_AGENT_A2A_CHANNEL`，实际选中的是 A2A 通道，其余通道暂时没开。
+
+A2A 通道跑在 webnet 之上，文件是 `src/channels/AgentA2aChannel.c`。它提供三个端点：`GET /.well-known/agent.json` 出能力卡，`POST /tasks/send` 同步等最终结果，`POST /tasks/sendSubscribe` 按 SSE 分帧推送。启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。端点与消息格式见 [api.md](./api.md) 的 5.5。
+
+webnet 是单线程的，A2A 同步接口会一直等到 agent 跑完才返回，期间占住整个线程。同一台设备并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。
 
 Debug 通道由包内实现，文件是 `src/channels/AgentDebugChannel.c`。它提供 MSH 命令 `agent_send_message <type> <content>`，`type` 取 0 到 4，0 是文本。命令把消息投给 agent，再等输出，最多等 30 秒，超时返回 -1。
 
@@ -593,5 +598,5 @@ LVGL 通道的实现不在包内，由应用工程编译。
 - LVGL 通道只提供接口，包内不包含聊天界面。
 - `utils.h` 中下载函数的声明名与实际定义不一致，详见 [api.md](./api.md) 的“已知差异”。
 - 上下文摘要会增加一次模型请求的耗时和 token 消耗，期间 agent 保持忙碌。压缩失败或仅有一轮超长对话时保留全部历史，后续对话可能使历史继续增长。`PKG_AGENT_MESSAGE_TRIM` 不是硬性容量上限。
-- 本项目当前选中 Debug 通道，`rtconfig.h` 里定义了 `PKG_AGENT_DEBUG_CHANNEL`。LVGL 通道暂时没开，它的 ops 要由应用工程实现。
+- 本项目当前选中 A2A 通道，`rtconfig.h` 里定义了 `PKG_AGENT_A2A_CHANNEL`。LVGL 通道暂时没开，它的 ops 要由应用工程实现；A2A 与 WebNet 共用 webnet，同一台设备上要串行访问。
 - 设备框架工具的完整说明见 [tool_device.md](./tool_device.md)，验证方法见 [testing.md](./testing.md)。

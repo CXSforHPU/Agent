@@ -11,7 +11,7 @@
 - 设备框架工具：通用层 7 个工具统一走 `rt_device_*`，屏蔽具体驱动。GPIO、PWM、ADC、DAC、I2C、SPI、传感器、LED 八类各一个 `.c`，封装本类的专用 API。
 - 技能模块：`skills/*.md` 在构建时编进固件，目录注入系统提示词，模型按需加载正文。
 - 上下文管理：历史超过阈值时用滚动摘要压缩，压缩失败保留原始历史。
-- 多通道：CLI、WebNet、Debug、LVGL 四种通道，通过 `AgentChannelOps` 统一接入。
+- 多通道：CLI、WebNet、A2A、Debug、LVGL 五种通道，通过 `AgentChannelOps` 统一接入。
 - 多模态：图片、视频和未启用 STT 的音频上传到文件服务器，按 URL 交给模型。
 - 本地语音转写：音频消息可在本机转成文本，再按普通文本发给模型。
 - 音频驱动：封装 `wavplay` / `wavrecord`，支持播放、暂停、继续、停止与录音。
@@ -47,7 +47,7 @@
 
 LVGL 通道只提供接口，具体界面由应用实现。本仓库的示例在 `applications/lvgl/demo/lv_home_agent.c`。
 
-本仓库当前选的是 Debug 通道：`rtconfig.h` 定义 `PKG_AGENT_DEBUG_CHANNEL`，用 MSH 命令 `agent_send_message <type> <content>` 注入消息，不依赖界面。
+本仓库当前选的是 A2A 通道：`rtconfig.h` 定义 `PKG_AGENT_A2A_CHANNEL`，对 `/tasks/send` 这类 HTTP 端点应答，由控制台或别的 agent 直接调用，不依赖界面。想在 MSH 里手工投消息，改选 Debug 通道：`rtconfig.h` 定义 `PKG_AGENT_DEBUG_CHANNEL`，用 MSH 命令 `agent_send_message <type> <content>` 注入消息。
 
 ### 4. 调 mbedtls 分片长度
 
@@ -138,7 +138,7 @@ mbedtls 请选择较新的版本。旧版本会把 `certs/README.md` 一起编�
 
 draw.io 源文件：[agent-architecture.drawio](./docs/diagrams/agent-architecture.drawio)
 
-图里画的是当前工程的实际状态：通道层选中 Debug 通道，LVGL 通道暂时停用；平台层是 RT-Thread 设备框架与挂在其下的外设。工具层按模块划分，模块全开时共 40 个工具，设备框架 29 个、运算 3 个、MQTT 7 个、skill 1 个；内嵌技能是编进固件的 4 份 Markdown。
+图里画的是当前工程的实际状态：通道层选中 A2A 通道，CLI、WebNet、Debug 通道暂时停用；平台层是 RT-Thread 设备框架与挂在其下的外设。工具层按模块划分，模块全开时共 40 个工具，设备框架 29 个、运算 3 个、MQTT 7 个、skill 1 个；内嵌技能是编进固件的 5 份 Markdown。
 
 工具从模块文件到模型手里的完整链路：
 
@@ -166,7 +166,7 @@ draw.io 源文件：[agent-fsm.drawio](./docs/diagrams/agent-fsm.drawio)
 | MessageHub | `src/core/MessageHub.c` | 双邮箱消息传递，支持超时接收 |
 | Context | `src/core/context.c` | 维护 system / user / assistant / tool 消息 |
 | Tool | `src/core/tool_base.c`、`src/core/tool_func.c` | 工具链表的注册、查找、执行与清理；模块表在 `src/utils/tool_json.c` |
-| Channels | `src/channels/` | CLI、WebNet、Debug 通道实现 |
+| Channels | `src/channels/` | LVGL、CLI、WebNet、A2A、Debug 五种通道实现，公共助手在 `webnet_util.c` |
 | AgentConfig | `src/core/AgentConfig.c` | 编译期默认值与运行时配置 |
 | Utils | `src/utils/` | 多模态转换、文件上传下载、STT 与 TTS、文本注入、webclient 超时封装 |
 | AgentAudio | `src/driver/audio/AgentAudio.c` | 播放与录音命令封装 |
@@ -185,8 +185,9 @@ draw.io 源文件：[agent-fsm.drawio](./docs/diagrams/agent-fsm.drawio)
 | `tests/` | 包内 utest 用例，只在 `RT_USING_UTEST` 打开时编译 |
 | `docs/` | 中文文档。图在 `docs/diagrams/`（draw.io 源文件加导出的 PNG），界面截图在 `docs/pictures/` |
 | `scripts/` | 板侧开发脚本，不参与编译。`kconfig_check/` 离线校验 Kconfig，`mqtt_test/` 是 QEMU 复现与回归脚本 |
+| `resource/web/` | 管理控制台，不参与编译。Spring Boot 后端加 Vue3 前端，见 [管理控制台](#管理控制台) |
 | `resource/file_server/mcp/` | 主机侧 MCP 服务端，不参与编译。HTTP 网关加内置文件工具和联网搜索，Windows 11 上把 ODR 注册的 MCP 服务器桥接成 HTTP，也能接入 Windows-MCP 控制本机桌面 |
-| `resource/` | 板外配套资源：文件服务器 `file_server/`、TLS 根证书、WebNet 页面 `index.html` |
+| `resource/` | 板外配套资源：管理控制台 `web/`、文件服务器 `file_server/`、TLS 根证书、WebNet 页面 `index.html` |
 | 根目录三个文件 | `Kconfig` 菜单项定义、`SConscript` 构建脚本、`package.json` 索引元数据 |
 
 `scripts/` 放的是给开发者跑的脚本，`src/tools/` 放的是给模型调用的工具，两者不要混淆。
@@ -227,14 +228,19 @@ draw.io 源文件：[llm-protocol.drawio](./docs/diagrams/llm-protocol.drawio)
 
 ### 通道选择
 
-`inc/channels/AgentChannels.h` 是唯一的通道选择点。Kconfig 的通道选项是单选，通常只会定义一个宏。如果同时定义了多个宏，优先级为 LVGL → CLI → WebNet → Debug。
+`inc/channels/AgentChannels.h` 是唯一的通道选择点。Kconfig 的通道选项是单选，通常只会定义一个宏。如果同时定义了多个宏，优先级为 LVGL → CLI → WebNet → A2A → Debug。
 
 | 通道 | 宏 | 说明 |
 |---|---|---|
+| LVGL | `PKG_AGENT_LVGL_CHANNEL` | 包内只有接口，`agent_lvgl_ops` 由应用实现 |
 | CLI | `PKG_AGENT_CLI_CHANNEL` | MSH 命令行交互，CTRL+D 退出 |
 | WebNet | `PKG_AGENT_WEBNET_CHANNEL` | HTTP `/cgi-bin/chat`、`/cgi-bin/config`、`/cgi-bin/get_config` |
+| A2A | `PKG_AGENT_A2A_CHANNEL` | HTTP `/.well-known/agent.json`、`/tasks/send`、`/tasks/sendSubscribe`，跑在 WebNet 之上 |
 | Debug | `PKG_AGENT_DEBUG_CHANNEL` | `agent_send_message` 命令注入消息 |
-| LVGL | `PKG_AGENT_LVGL_CHANNEL` | 包内只有接口，`agent_lvgl_ops` 由应用实现 |
+
+WebNet 与 A2A 都跑在 webnet 上，共用 `WEBNET_PORT`（默认 80）。A2A 通道启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。配套选项 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 填能力卡里的名字和描述。
+
+A2A 通道是给控制台或别的 agent 直接调用的，同步接口会一直等到端侧 agent 跑完才返回，一次请求占住 webnet 整个线程。同一台设备上并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。
 
 ### 多模态与语音
 
@@ -303,6 +309,47 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 摘要请求不带工具。只有响应明确自然结束、正文完整、没有工具调用，并且确实变小了，才提交替换；任何一条不满足就保留原始历史。压缩后的摘要只留技能名，要继续用技能需重新加载。
 
+## 管理控制台
+
+`resource/web/` 是给这套 agent 配的管理网站，不参与固件编译。它做四件事：账号注册登录、设备管理、和 agent 对话、运维板外的两个服务。对话有两条路，不选设备时走网站侧的 agent，选了设备就经 A2A 转给端侧 agent。
+
+```
+resource/web/
+├── setup.sh / setup.bat   一键安装与启动
+├── server/                Spring Boot 后端，内嵌 SQLite
+├── client/                Vue3 前端，Vite
+└── README.md              控制台自己的完整说明
+```
+
+运维页 `/ops` 管的是文件服务器（`resource/file_server` 那套 FastAPI）和它带的 MCP 网关：装依赖、启动、停止都做成按钮，语音合成与语音转写也能在页面上试，日志能读尾部。按钮背后的接口是 `/api/ops/*`。
+
+启动方式、接口清单与环境变量见 [resource/web/README.md](./resource/web/README.md)。
+
+### 网站侧 agent 的配置来源
+
+设置页里的采用的协议、协议地址、API Key、模型名，默认取工程根目录的 `rtconfig.h`，也就是编译进端侧固件的那份配置。取值优先级是：设置页按账号存的值 → 环境变量 → `rtconfig.h` → 空。
+
+服务端启动时从工作目录往上找带 `PKG_USING_AGENT` 的 `rtconfig.h`，找不到就只用环境变量和内置默认值；也可以用 `AGENT_RTCONFIG_H` 直接指定路径。设置页会把 `rtconfig.h` 给出的默认地址和默认模型名一并显示出来，密钥只露尾四位。
+
+两种协议各一个实现，都在 `server/src/main/java/com/agentconsole/agent/` 下：
+
+| 协议 | 类 | 请求地址 | 鉴权 |
+|---|---|---|---|
+| OpenAI | `OpenAiLlmClient` | `<base>/chat/completions` | `Authorization: Bearer` |
+| Anthropic | `AnthropicLlmClient` | `<base>/v1/messages` | `x-api-key` 与 `anthropic-version` |
+
+报文格式与包内 `src/utils/protocol/` 的实现一致，所以端侧和网站侧可以共用同一份 base URL 与模型名。
+
+### 网页端 agent 与端侧 agent 通信
+
+网站侧 agent 带一个 `ask_device` 工具：模型按设备名找到地址，经 A2A 把问题转给端侧 agent，拿到回答再作答，最多来回 4 轮。设备列表会进系统提示词，模型才知道能对哪台设备提问。
+
+端侧 agent 跑在设备上，能读传感器、下发指令、连 MQTT 和 MCP；网站侧 agent 只是控制台里的助手，问不到设备内部的东西，需要转一手。
+
+### 同一台设备要串行访问
+
+端侧的 webnet 是单线程的，A2A 同步接口会一直等到 agent 跑完才返回，期间占住整个线程。控制台给每台设备加了一把锁，探活和聊天不会同时开两条连接——QEMU 的 user 网络下并发时，后到的连接会把先到那条的响应顶掉，客户端只收到空响应。
+
 ## 配置
 
 主要 Kconfig 选项：
@@ -358,6 +405,8 @@ python -B build/skill_qemu/run_llm_live.py
 
 命令、判据与「这套回归不能证明什么」见 [验证方法](./docs/testing.md)。
 
+控制台那条链路另有一套端到端验证：起 QEMU 跑板子，起控制台，注册账号、加设备、探活，再分别打端侧 agent、网站侧 agent 和 `ask_device` 中继三条链路。步骤见 [resource/web/README.md](./resource/web/README.md) 的「验证」一节。
+
 ## 常见问题
 
 | 现象 | 原因 | 处理 |
@@ -382,7 +431,7 @@ python -B build/skill_qemu/run_llm_live.py
 - cJSON
 - webclient，HTTPS 需要 mbedtls
 - ulog
-- webnet（仅 WebNet 通道）
+- webnet（仅 WebNet 与 A2A 通道）
 - paho-mqtt（仅 MQTT 工具）
 - wavplayer（仅音频驱动）
 - DFS / POSIX（仅多模态文件操作）
