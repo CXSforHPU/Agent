@@ -148,7 +148,7 @@ void agent_wn_send_sse_event(struct webnet_session *session, const char *event,
         return;
     }
 
-    if (event != RT_NULL && event[0] != "\0")
+    if (event != RT_NULL && event[0] != '\0')
     {
         webnet_session_write(session, (const rt_uint8_t *)"event: ", 7);
         webnet_session_write(session, (const rt_uint8_t *)event, strlen(event));
@@ -164,7 +164,7 @@ void agent_wn_send_sse_event(struct webnet_session *session, const char *event,
     cursor = data;
     for (;;)
     {
-        const char *newline = strchr(cursor, "\n");
+        const char *newline = strchr(cursor, '\n');
         rt_size_t line_len = newline != RT_NULL
                            ? (rt_size_t)(newline - cursor)
                            : strlen(cursor);

@@ -1,5 +1,9 @@
 #include "AgentConfig.h"
 
+#define LOG_TAG "Agent.config"
+#define LOG_LVL LOG_LVL_INFO
+#include <ulog.h>
+
 #ifdef PKG_AGENT_API_PROTOCOL_ANTHROPIC
 #define AGENT_CONFIG_DEFAULT_PROTOCOL   AGENT_API_PROTOCOL_ANTHROPIC
 #else
@@ -149,17 +153,29 @@ void agent_config_set(const char *api_key, const char *model_name, const char *b
         rt_strncpy(g_agent_runtime_config.api_key, api_key, sizeof(g_agent_runtime_config.api_key));
         g_agent_runtime_config.api_key[sizeof(g_agent_runtime_config.api_key) - 1] = '\0';
     }
+    else if (api_key)
+    {
+        LOG_W("api key too long (>= %d), ignored", (int)sizeof(g_agent_runtime_config.api_key));
+    }
     if (model_name && rt_strlen(model_name) < sizeof(g_agent_runtime_config.model_name))
     {
         rt_memset(g_agent_runtime_config.model_name, 0, sizeof(g_agent_runtime_config.model_name));
         rt_strncpy(g_agent_runtime_config.model_name, model_name, sizeof(g_agent_runtime_config.model_name));
         g_agent_runtime_config.model_name[sizeof(g_agent_runtime_config.model_name) - 1] = '\0';
     }
+    else if (model_name)
+    {
+        LOG_W("model name too long (>= %d), ignored", (int)sizeof(g_agent_runtime_config.model_name));
+    }
     if (base_url && rt_strlen(base_url) < sizeof(g_agent_runtime_config.base_url))
     {
         rt_memset(g_agent_runtime_config.base_url, 0, sizeof(g_agent_runtime_config.base_url));
         rt_strncpy(g_agent_runtime_config.base_url, base_url, sizeof(g_agent_runtime_config.base_url));
         g_agent_runtime_config.base_url[sizeof(g_agent_runtime_config.base_url) - 1] = '\0';
+    }
+    else if (base_url)
+    {
+        LOG_W("base url too long (>= %d), ignored", (int)sizeof(g_agent_runtime_config.base_url));
     }
     g_agent_runtime_config.is_configured = RT_TRUE;
 }

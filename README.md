@@ -168,6 +168,7 @@ draw.io 源文件：[agent-fsm.drawio](./docs/diagrams/agent-fsm.drawio)
 | Tool | `src/core/tool_base.c`、`src/core/tool_func.c` | 工具链表的注册、查找、执行与清理；模块表在 `src/utils/tool_json.c` |
 | Channels | `src/channels/` | LVGL、CLI、WebNet、A2A、Debug 五种通道实现，公共助手在 `webnet_util.c` |
 | AgentConfig | `src/core/AgentConfig.c` | 编译期默认值与运行时配置 |
+| AgentStream | `src/core/AgentStream.c` | 流式事件队列，通道边等结果边取走推给客户端 |
 | Utils | `src/utils/` | 多模态转换、文件上传下载、STT 与 TTS、文本注入、webclient 超时封装 |
 | AgentAudio | `src/driver/audio/AgentAudio.c` | 播放与录音命令封装 |
 | MQTT | `src/tools/tool_mqtt/` | MQTT 连接、订阅、过滤、规则与历史缓存 |
@@ -240,7 +241,9 @@ draw.io 源文件：[llm-protocol.drawio](./docs/diagrams/llm-protocol.drawio)
 
 WebNet 与 A2A 都跑在 webnet 上，共用 `WEBNET_PORT`（默认 80）。A2A 通道启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。配套选项 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 填能力卡里的名字和描述。
 
-A2A 通道是给控制台或别的 agent 直接调用的，同步接口会一直等到端侧 agent 跑完才返回，一次请求占住 webnet 整个线程。同一台设备上并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。
+A2A 通道是给控制台或别的 agent 直接调用的，同步接口会一直等到端侧 agent 跑完才返回，一次请求占住 webnet 整个线程。流式接口则边跑边推：任务开始先推一帧 `working`，之后每 100 ms 把 `AgentStream` 队列里的事件取空、各推一帧，直到最终结果那帧为止。帧里的 `artifacts[].name` 取 `reasoning`、`tool`、`content`、`response`，前三个是增量，`response` 是完整答案，`append` 为真表示和前一段续接。
+
+同一台设备上并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。
 
 ### 多模态与语音
 
@@ -340,6 +343,20 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 一次请求结束后调用 `compress_context()`。历史条数超过 `PKG_AGENT_MESSAGE_TRIM` 时，把旧历史交给模型做滚动摘要，用摘要替换原始消息，保留 system 与最近完整轮次。
 
 摘要请求不带工具。只有响应明确自然结束、正文完整、没有工具调用，并且确实变小了，才提交替换；任何一条不满足就保留原始历史。压缩后的摘要只留技能名，要继续用技能需重新加载。
+
+### 日志
+
+诊断信息一律走 ulog：文件头写 `LOG_TAG`、`LOG_LVL LOG_LVL_INFO` 和 `#include <ulog.h>`，然后用 `LOG_I`、`LOG_W`、`LOG_E`。报错、告警、状态变化都要落日志，方便按 tag 过滤，后面要接文件或网络日志后端也能直接用。配置项因为超长被忽略之类的情况会告警，不会静默丢掉，见 `src/core/AgentConfig.c`。
+
+用户能直接看的输出不走日志，直接打控制台：
+
+| 输出 | 位置 |
+|---|---|
+| 回复正文、思考过程 | `src/utils/message.c` 的 `print_context`、`print_reasoning`，同时投一份进 `AgentStream` |
+| CLI 交互、光标移动 | `src/channels/CLI.c` |
+| MSH 命令的帮助、用法、结果 | 各工具的 `*_cmd.c`、`file_op.c`、`tts.c`、`agent_endpoint.c` |
+
+按这个分界改代码时照着办：诊断归 ulog，用户输出归控制台。
 
 ## 管理控制台
 
@@ -453,6 +470,7 @@ python -B build/skill_qemu/run_llm_live.py
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 请求返回 404 | URL 少了协议路径 | Anthropic 端点要写全 `https://api.deepseek.com/anthropic/v1/messages`，不能只写 `https://api.deepseek.com/anthropic` |
+| 控制台对话报 `Not Found (request_id…)` 的 404 | 协议地址还是另一个协议的默认值，拼出的端点不对 | 协议地址跟着协议走。设置页切协议时地址会清空、回落到新协议的默认值；已经存过的旧值由服务端识别后改用当前协议的默认地址，并在日志里告警 |
 | TLS 握手失败，日志报 `certificate validity starts in the future` | 板子时间早于证书生效时间 | 用 `date` 命令把时间设到当下；软 RTC 每次上电都要重设 |
 | 跑真链路回归时 `data abort`，栈落在 `rt_list_remove` | MSH 线程只有 4KB 栈，跑不下 TLS 握手 | 把检查放到自己的线程上跑，栈给到 32KB；产品侧的 `AgentLoop` 线程已经是 10KB |
 | TLS 握手失败 | mbedtls 分片太小 | 把 `Maxium fragment length in bytes` 改为 6144 |

@@ -104,7 +104,7 @@ static void mqtt_tool_simulate(const char *topic, const char *payload)
     }
     if (s_rx_queue == RT_NULL)
     {
-        rt_kprintf("mqtt rx queue not ready, run 'mqtt_tool start' first\n");
+        LOG_E("mqtt rx queue not ready, run 'mqtt_tool start' first");
         return;
     }
 
@@ -123,7 +123,7 @@ static void mqtt_tool_simulate(const char *topic, const char *payload)
 
     if (rt_mq_send(s_rx_queue, &item, sizeof(item)) != RT_EOK)
     {
-        rt_kprintf("mqtt rx queue full\n");
+        LOG_E("mqtt rx queue full");
         return;
     }
     rt_kprintf("simulated message on '%s' enqueued\n", topic);
@@ -162,7 +162,7 @@ static int mqtt_tool(int argc, char **argv)
     }
     if (result == RT_NULL)
     {
-        rt_kprintf("out of memory\n");
+        LOG_E("out of memory");
         return -1;
     }
     result[0] = '\0';
@@ -191,7 +191,7 @@ static int mqtt_tool(int argc, char **argv)
             if (rt_strcmp(argv[3], "auto") != 0 && rt_strcmp(argv[3], "poll") != 0 &&
                 rt_strcmp(argv[3], "filter") != 0)
             {
-                rt_kprintf("mode must be filter|auto|poll\n");
+                LOG_E("mode must be filter|auto|poll");
                 rt_free(result);
                 return -1;
             }
@@ -296,7 +296,7 @@ static int mqtt_tool(int argc, char **argv)
         int flushed = poll_clear();
         if (flushed < 0)
         {
-            rt_kprintf("mqtt state busy, retry later\n");
+            LOG_W("mqtt state busy, retry later");
             ret = -1;
         }
         else

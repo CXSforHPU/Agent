@@ -316,7 +316,7 @@ static int msh_agent_tts(int argc, char *argv[])
                                 used ? " %s" : "%s", argv[i]);
             if (n < 0 || used + n >= (int)sizeof(text))
             {
-                rt_kprintf("error: text too long (max %d)\n", (int)sizeof(text) - 1);
+                LOG_E("tts text too long (max %d)", (int)sizeof(text) - 1);
                 return -1;
             }
             used += n;
@@ -325,13 +325,13 @@ static int msh_agent_tts(int argc, char *argv[])
 
     if (text[0] == '\0')
     {
-        rt_kprintf("error: empty text\n");
+        LOG_E("tts text is empty");
         return -1;
     }
 
     if (agent_tts_synth(text, save_path, RT_NULL) != RT_EOK)
     {
-        rt_kprintf("tts failed: %s\n", save_path);
+        LOG_E("tts synth failed: %s", save_path);
         return -1;
     }
 
@@ -342,7 +342,7 @@ static int msh_agent_tts(int argc, char *argv[])
         rt_kprintf("play %s, ret=%d (wavplayer runs in its own thread)\n", save_path, ret);
     }
 #else
-    if (play) rt_kprintf("warning: PKG_AGENT_DRIVER_AUDIO is off, only synthesized\n");
+    if (play) LOG_W("PKG_AGENT_DRIVER_AUDIO is off, only synthesized");
 #endif
     return 0;
 }

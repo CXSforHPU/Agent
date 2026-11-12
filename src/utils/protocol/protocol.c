@@ -65,7 +65,7 @@ static int agent_protocol(int argc, char **argv)
     }
     else
     {
-        rt_kprintf("usage: agent_protocol [openai|anthropic]\n");
+        LOG_E("usage: agent_protocol [openai|anthropic]");
         return -RT_EINVAL;
     }
 

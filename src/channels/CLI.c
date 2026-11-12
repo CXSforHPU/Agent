@@ -101,7 +101,7 @@ static int CLI_readline(CLI_channel_t handle, const char *prompt, char *buffer, 
     rt_uint8_t ch;
 
 start:
-    rt_kprintf(prompt);
+    rt_kprintf("%s", prompt);
 
     while (1)
     {
@@ -334,7 +334,7 @@ static void CLI_run(void *p)
     handle->thread_running = RT_FALSE;
     /* 动态线程退出后空闲线程自动清理，清零避免再次使用时野指针 */
     handle->thread = RT_NULL;
-    rt_kprintf(FINSH_PROMPT);
+    rt_kprintf("%s", FINSH_PROMPT);
 
     /* 通知 agent_cli_stop 线程已完全退出 */
     rt_sem_release(handle->exit_sem);

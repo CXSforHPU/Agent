@@ -1,5 +1,6 @@
 #include "AgentA2aChannel.h"
 #include "webnet_util.h"
+#include "AgentStream.h"
 
 #define LOG_TAG "Agent.channel.a2a"
 #define LOG_LVL LOG_LVL_INFO
@@ -7,6 +8,8 @@
 
 #define A2A_REQUEST_MAX_SIZE 4096
 #define A2A_REPLY_TIMEOUT_MS 30000
+/* 等结果时的轮询间隔：既能及时把中间事件推给客户端，又不至于空转太频繁 */
+#define A2A_POLL_INTERVAL_MS 100
 
 static MessageHub_t message_hub = RT_NULL;
 static Context_t context = RT_NULL;
@@ -82,18 +85,14 @@ static char *extract_text(const char *body)
 }
 
 /*
- * @brief 把用户消息投给 agent 并等回复
- * @param  text 用户输入
- * @param  out  回复文本，失败时为 NULL
+ * @brief 把用户消息投给 agent
+ * @param text 用户输入
  * @return RT_EOK 成功
  */
-static rt_err_t run_task(const char *text, char **out)
+static rt_err_t task_submit(const char *text)
 {
     Messages_t input;
-    Messages_t output;
-    rt_err_t result;
 
-    *out = RT_NULL;
     if (message_hub == RT_NULL || message_hub->put_message == RT_NULL ||
         message_hub->get_message == RT_NULL)
     {
@@ -117,23 +116,122 @@ static rt_err_t run_task(const char *text, char **out)
         messages_destroy(input);
         return -RT_ERROR;
     }
-    input = RT_NULL;
 
-    output = message_hub_get_timeout(message_hub, message_hub->output_mailbox,
-                                     rt_tick_from_millisecond(A2A_REPLY_TIMEOUT_MS));
-    if (output == RT_NULL || messages_get_content_idx(output, 0) == RT_NULL)
+    return RT_EOK;
+}
+
+/*
+ * @brief 造一条状态更新帧（思考、工具调用、正文分片）
+ * @param id   任务 id
+ * @param kind 事件类型名，reasoning / tool / content
+ * @param text 文本内容
+ * @return 任务结果，调用方负责 cJSON_Delete
+ */
+static cJSON *build_task_update(const char *id, const char *kind, const char *text)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON *status;
+    cJSON *artifacts;
+    cJSON *artifact;
+    cJSON *parts;
+    cJSON *part;
+
+    if (root == RT_NULL)
     {
-        if (output != RT_NULL)
-        {
-            messages_destroy(output);
-        }
-        return -RT_ERROR;
+        return RT_NULL;
     }
 
-    *out = rt_strdup(messages_get_content_idx(output, 0));
-    messages_destroy(output);
-    result = (*out != RT_NULL) ? RT_EOK : -RT_ENOMEM;
-    return result;
+    cJSON_AddStringToObject(root, "id", id);
+
+    status = cJSON_CreateObject();
+    cJSON_AddStringToObject(status, "state", "working");
+    cJSON_AddItemToObject(root, "status", status);
+
+    artifacts = cJSON_AddArrayToObject(root, "artifacts");
+    artifact = cJSON_CreateObject();
+    parts = cJSON_AddArrayToObject(artifact, "parts");
+    part = cJSON_CreateObject();
+    cJSON_AddStringToObject(part, "type", "text");
+    cJSON_AddStringToObject(part, "text", text);
+    cJSON_AddItemToArray(parts, part);
+    /* name 标出这是哪类内容，append 表示与前面的内容续接 */
+    cJSON_AddStringToObject(artifact, "name", kind);
+    cJSON_AddBoolToObject(artifact, "append", 1);
+    cJSON_AddItemToArray(artifacts, artifact);
+
+    return root;
+}
+
+/*
+ * @brief 把队列里的中间事件推给客户端
+ * @param session webnet 会话
+ * @param id      任务 id
+ */
+static void flush_stream_events(struct webnet_session *session, const char *id)
+{
+    agent_stream_event_t event;
+
+    while (agent_stream_take(&event))
+    {
+        cJSON *update = build_task_update(id, agent_stream_kind_name(event.kind),
+                                          event.text);
+        if (update == RT_NULL)
+        {
+            continue;
+        }
+        char *encoded = cJSON_PrintUnformatted(update);
+        cJSON_Delete(update);
+        if (encoded != RT_NULL)
+        {
+            agent_wn_send_sse_event(session, RT_NULL, encoded);
+            cJSON_free(encoded);
+        }
+    }
+}
+
+/*
+ * @brief 等 agent 的最终结果
+ * @param session webnet 会话，为 NULL 时不推中间事件
+ * @param id      任务 id
+ * @param out     回复文本，失败时为 NULL
+ * @return RT_EOK 成功
+ */
+static rt_err_t task_wait(struct webnet_session *session, const char *id, char **out)
+{
+    Messages_t output;
+    rt_tick_t start = rt_tick_get();
+    rt_int32_t timeout_tick = rt_tick_from_millisecond(A2A_REPLY_TIMEOUT_MS);
+    rt_int32_t poll_tick = rt_tick_from_millisecond(A2A_POLL_INTERVAL_MS);
+
+    *out = RT_NULL;
+
+    for (;;)
+    {
+        if (session != RT_NULL)
+        {
+            flush_stream_events(session, id);
+        }
+
+        output = message_hub_get_timeout(message_hub, message_hub->output_mailbox,
+                                         poll_tick);
+        if (output != RT_NULL)
+        {
+            const char *text = messages_get_content_idx(output, 0);
+
+            if (text != RT_NULL)
+            {
+                *out = rt_strdup(text);
+            }
+            messages_destroy(output);
+            return (*out != RT_NULL) ? RT_EOK : -RT_ENOMEM;
+        }
+
+        if ((rt_int32_t)(rt_tick_get() - start) > timeout_tick)
+        {
+            LOG_E("a2a task %s timed out", id);
+            return -RT_ETIMEOUT;
+        }
+    }
 }
 
 /*
@@ -273,6 +371,9 @@ static void handle_task(struct webnet_session *session, rt_bool_t stream)
 
     id = next_task_id();
 
+    /* 新任务开始，清掉上一轮可能残留的中间事件 */
+    agent_stream_clear();
+
     if (stream)
     {
         /* 先推一帧 working，再等最终结果，让客户端看到任务确实在跑 */
@@ -291,7 +392,32 @@ static void handle_task(struct webnet_session *session, rt_bool_t stream)
         }
     }
 
-    if (run_task(text, &reply) != RT_EOK)
+    if (task_submit(text) != RT_EOK)
+    {
+        LOG_E("a2a task %s submit failed", id);
+        response = build_task_response(id, "failed", RT_NULL);
+        if (response != RT_NULL)
+        {
+            encoded = cJSON_PrintUnformatted(response);
+            if (encoded != RT_NULL)
+            {
+                if (stream)
+                {
+                    agent_wn_send_sse_event(session, RT_NULL, encoded);
+                }
+                else
+                {
+                    agent_wn_send_raw_json(session, 502, "Bad Gateway", encoded);
+                }
+                cJSON_free(encoded);
+            }
+            cJSON_Delete(response);
+        }
+        rt_free(text);
+        return;
+    }
+
+    if (task_wait(stream ? session : RT_NULL, id, &reply) != RT_EOK)
     {
         LOG_E("a2a task %s failed", id);
         response = build_task_response(id, "failed", RT_NULL);

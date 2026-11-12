@@ -1,6 +1,10 @@
 #include "AgentDebugChannel.h"
 #include <stdlib.h>
 
+#define LOG_TAG "Agent.channel.debug"
+#define LOG_LVL LOG_LVL_INFO
+#include <ulog.h>
+
 /* MSH 命令拼接后的内容上限 */
 #define DEBUG_CONTENT_MAX 256
 
@@ -44,15 +48,18 @@ void agent_debug_reset(void)
 static int agent_send_message(int argc, char *argv[])
 {
     if (argc < 3) {
+        LOG_E("usage: agent_send_message <type> <content...>");
         return -1;
     }
 
     if (g_message_hub == RT_NULL) {
+        LOG_E("agent is not running");
         return -1;
     }
 
     int type_int = atoi(argv[1]);
     if (type_int < TYPE_TEXT || type_int > TYPE_NULL) {
+        LOG_E("invalid message type: %d", type_int);
         return -1;
     }
     MessageType msg_type = (MessageType)type_int;
@@ -90,14 +97,17 @@ static int agent_send_message(int argc, char *argv[])
         content[used] = '\0';
     }
     if (used == 0) {
+        LOG_E("empty message content");
         return -1;
     }
 
     Messages_t input_messages = messages_create(1);
     if (input_messages == RT_NULL) {
+        LOG_E("out of memory");
         return -1;
     }
     if (messages_append(input_messages, msg_type, content) != RT_EOK) {
+        LOG_E("append message failed");
         messages_destroy(input_messages);
         return -1;
     }
@@ -105,6 +115,7 @@ static int agent_send_message(int argc, char *argv[])
     /* 所有权移交：put 成功后由 main_loop 消费并释放，此处不得销毁 */
     rt_err_t ret = g_message_hub->put_message(g_message_hub, input_messages, g_message_hub->input_mailbox);
     if (ret != RT_EOK) {
+        LOG_E("put message failed");
         messages_destroy(input_messages);
         return -1;
     }
@@ -115,6 +126,7 @@ static int agent_send_message(int argc, char *argv[])
                                                         rt_tick_from_millisecond(30000));
 
     if (output_message == RT_NULL) {
+        LOG_W("no reply within 30s");
         return -1;
     }
 

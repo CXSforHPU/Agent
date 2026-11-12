@@ -3,6 +3,7 @@
 
 #include <rtthread.h>
 #include <webnet.h>
+#include <wn_module.h>
 #include <wn_session.h>
 #include <cJSON.h>
 

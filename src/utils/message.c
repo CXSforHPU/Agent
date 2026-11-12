@@ -1,5 +1,6 @@
 #include "utils/utils_internal.h"
 #include "AgentRuntime.h"   /* agent_is_running / agent_get_message_hub */
+#include "AgentStream.h"    /* 流式事件队列，通道侧取走后推给客户端 */
 
 #define LOG_TAG "Agent.utils.message"
 #define LOG_LVL LOG_LVL_INFO
@@ -27,6 +28,7 @@ void print_reasoning(const char *text)
         g_reasoning_started = RT_TRUE;
     }
     rt_kprintf("%s", text);
+    agent_stream_emit(AGENT_STREAM_REASONING, text);
 }
 
 /*
@@ -35,6 +37,7 @@ void print_reasoning(const char *text)
 void print_tool_call(const char *text)
 {
     LOG_I("Tool Call: \n%s", text);
+    agent_stream_emit(AGENT_STREAM_TOOL_CALL, text);
 }
 
 /*
@@ -43,8 +46,13 @@ void print_tool_call(const char *text)
  */
 void print_context(const char *text)
 {
+    if (text == RT_NULL)
+    {
+        return;
+    }
     g_reasoning_started = RT_FALSE;
     rt_kprintf("%s", text);
+    agent_stream_emit(AGENT_STREAM_CONTENT, text);
 }
 
 /*

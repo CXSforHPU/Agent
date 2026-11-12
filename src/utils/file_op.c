@@ -308,9 +308,16 @@ static void file_operation_work_thread(void *arg)
         {
             case CMD_AGENT_FILE_UPLOAD:
             {
-                rt_kprintf("[upload] start %s\n", req.path);
+                LOG_I("[upload] start %s", req.path);
                 ret = agent_upload_file(req.path, url, sizeof(url));
-                rt_kprintf("[upload] %s, url=%s\n", (ret == RT_EOK) ? "ok" : "failed", url);
+                if (ret == RT_EOK)
+                {
+                    LOG_I("[upload] ok, url=%s", url);
+                }
+                else
+                {
+                    LOG_E("[upload] failed, path=%s", req.path);
+                }
 
                 rt_memset(&req_out, 0, sizeof(req_out));
                 req_out.op = CMD_AGENT_FILE_URL;
@@ -328,14 +335,21 @@ static void file_operation_work_thread(void *arg)
 
             case CMD_AGENT_FILE_DOWNLOAD:
             {
-                rt_kprintf("[download] file_id=%s -> %s\n", req.file_id, req.path);
+                LOG_I("[download] file_id=%s -> %s", req.file_id, req.path);
                 ret = agent_multi_get_file(req.file_id, req.path);
-                rt_kprintf("[download] %s\n", (ret == RT_EOK) ? "ok" : "failed");
+                if (ret == RT_EOK)
+                {
+                    LOG_I("[download] ok");
+                }
+                else
+                {
+                    LOG_E("[download] failed, file_id=%s", req.file_id);
+                }
                 break;
             }
 
             default:
-                rt_kprintf("[file op] unknown op:%d\n", req.op);
+                LOG_E("[file op] unknown op:%d", req.op);
                 break;
         }
     }
@@ -549,7 +563,7 @@ static int msh_agent_upload_download(int argc, char *argv[])
 
     if (file_op_mq == RT_NULL)
     {
-        rt_kprintf("error: file op mq not init\n");
+        LOG_E("file op mq not init");
         return -1;
     }
 
@@ -596,7 +610,7 @@ static int msh_agent_upload_download(int argc, char *argv[])
     }
 
     /* 未知子命令 */
-    rt_kprintf("error: unknown subcommand '%s'\n", argv[1]);
+    LOG_E("unknown subcommand '%s'", argv[1]);
     rt_kprintf("try '%s -h' for help\n", prog);
     return -1;
 }
