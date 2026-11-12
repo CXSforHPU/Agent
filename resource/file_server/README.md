@@ -141,7 +141,7 @@ deploy.bat --status --json
 
 ### 镜像与索引
 
-清华源已是默认索引，`uv.lock` 同时锁定三种 torch 构建，换机器不需要重新解析。非国内网络可以删掉 `pyproject.toml` 中名为 `tuna` 的那段 `[[tool.uv.index]]`，回到 PyPI。
+默认索引为 PyPI。\`uv.lock\` 同时锁定三种 torch 构建，部署脚本按检测到的硬件选择依赖组。
 
 torch 生态的三个包按硬件走不同索引：
 

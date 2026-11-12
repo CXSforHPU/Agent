@@ -13,7 +13,7 @@ body {
   font-family: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
   color: #1f2430;
-  background: #f2f4f8;
+  background: #f5f6fa;
 }
 
 a {
@@ -36,13 +36,13 @@ a {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 24px;
   flex-wrap: wrap;
 }
 
 .page-head h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 26px;
   font-weight: 600;
 }
 
@@ -95,4 +95,18 @@ a {
   .grid-3 {
     grid-template-columns: 1fr;
   }
+}
+
+.page-head h2 { letter-spacing: -.6px; color: #20253d; line-height: 1.4; }
+.page-head .muted { margin-top: 6px; }
+.n-card { box-shadow: 0 3px 18px #242c4a04; }
+.n-menu { padding: 4px 8px; }
+.n-card-header__main { letter-spacing: -.2px; }
+.n-button { transition: background-color .15s, box-shadow .15s; }
+.n-button--primary-type { box-shadow: 0 3px 8px #6366f11a; }
+.n-data-table { overflow-x: auto; }
+.n-modal { max-width: calc(100vw - 32px); }
+@media (max-width: 760px) {
+  .page-head h2 { font-size: 22px; }
+  .page-head { gap: 16px; }
 }

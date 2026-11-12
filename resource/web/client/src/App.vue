@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, computed, h, ref } from 'vue'
+import { onMounted, onUnmounted, computed, h, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   NConfigProvider,
@@ -18,6 +18,7 @@ import {
   dateZhCN,
 } from 'naive-ui'
 import {
+  GridOutline,
   HardwareChipOutline,
   ChatbubblesOutline,
   TimeOutline,
@@ -33,9 +34,16 @@ const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 
-const collapsed = ref(false)
+const narrowScreen = window.matchMedia('(max-width: 760px)')
+const collapsed = ref(narrowScreen.matches)
+function syncNavigation(event) {
+  collapsed.value = event.matches
+}
+onMounted(() => narrowScreen.addEventListener('change', syncNavigation))
+onUnmounted(() => narrowScreen.removeEventListener('change', syncNavigation))
 
 const menus = [
+  { label: '总览仪表盘', key: 'dashboard', icon: GridOutline },
   { label: '设备管理', key: 'devices', icon: HardwareChipOutline },
   { label: '对话', key: 'chat', icon: ChatbubblesOutline },
   { label: '会话历史', key: 'history', icon: TimeOutline },
@@ -87,13 +95,13 @@ function logout() {
               bordered
               collapse-mode="width"
               :collapsed-width="64"
-              :width="216"
+              :width="244"
               :collapsed="collapsed"
               :native-scrollbar="false"
             >
               <div class="brand">
-                <span class="brand-logo">A</span>
-                <span v-show="!collapsed" class="brand-text">Agent 控制台</span>
+                <span class="brand-logo"><NIcon :size="22"><HardwareChipOutline /></NIcon></span>
+                <span v-show="!collapsed" class="brand-text">Agent Console</span>
               </div>
               <NMenu
                 :options="menuOptions"
@@ -108,12 +116,12 @@ function logout() {
 
             <NLayout>
               <NLayoutHeader bordered class="topbar">
-                <NButton quaternary circle size="small" @click="collapsed = !collapsed">
+                <NButton quaternary circle size="small" aria-label="切换导航" :aria-expanded="!collapsed" @click="collapsed = !collapsed">
                   <template #icon>
                     <NIcon :size="18"><MenuOutline /></NIcon>
                   </template>
                 </NButton>
-                <NText strong class="page-title">{{ currentTitle }}</NText>
+                <NText strong class="page-title">工作空间 / {{ currentTitle }}</NText>
                 <div class="spacer"></div>
                 <NText depth="3" class="who">{{ auth.username }}</NText>
                 <NButton quaternary size="small" @click="logout">
@@ -141,59 +149,48 @@ function logout() {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 58px;
-  padding: 0 16px;
-  overflow: hidden;
+  gap: 12px;
+  height: 84px;
+  padding: 0 17px;
   white-space: nowrap;
+  overflow: hidden;
 }
-
 .brand-logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, #2f6bff, #6d4bff);
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 36px;
+  border-radius: 12px;
   color: #fff;
-  font-weight: 700;
-  font-size: 16px;
+  background: #6366f1;
+  box-shadow: 0 5px 12px #6366f12b;
 }
-
 .brand-text {
-  color: #e8ecf7;
-  font-weight: 600;
-  font-size: 15px;
+  color: #20253d;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -.5px;
 }
-
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 20px;
+  gap: 16px;
+  padding: 0 28px;
 }
-
-.page-title {
-  font-size: 15px;
-}
-
-.spacer {
-  flex: 1;
-}
-
-.who {
-  font-size: 13px;
-}
-
-.content {
-  background: #f2f4f8;
-}
-
+.page-title { font-size: 13px; color: #737b91; }
+.spacer { flex: 1; }
+.who { font-size: 13px; }
+.content { background: #f5f6fa; }
 .content-inner {
-  max-width: 1280px;
+  max-width: 1600px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 32px;
+}
+@media (max-width: 760px) {
+  .content-inner { padding: 16px 12px; }
+  .topbar { padding: 0 12px; gap: 8px; }
+  .who { display: none; }
+  .page-title { font-size: 12px; }
 }
 </style>

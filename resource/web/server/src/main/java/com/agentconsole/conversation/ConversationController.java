@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -61,6 +62,23 @@ public class ConversationController {
         String title = body.title() == null || body.title().isBlank() ? "新会话" : body.title();
         Conversation created = repo.create(claims.userId(), body.deviceId(), agentKind, title);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(created));
+    }
+
+    public record RenamePayload(
+            @jakarta.validation.constraints.NotBlank
+            @jakarta.validation.constraints.Size(max = 64) String title) {
+    }
+
+    @PatchMapping("/{id}")
+    public ResponseEntity<ApiResponse<Void>> rename(
+            @PathVariable long id,
+            @jakarta.validation.Valid @RequestBody RenamePayload body,
+            JwtService.Claims claims) {
+        if (repo.findById(id, claims.userId()).isEmpty()) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail("会话不存在"));
+        }
+        repo.rename(id, body.title().trim());
+        return ResponseEntity.ok(ApiResponse.ok());
     }
 
     @DeleteMapping("/{id}")

@@ -79,6 +79,18 @@ function displayValue(key) {
   return value.length <= 4 ? '****' : `****${value.slice(-4)}`
 }
 
+// 协议地址后面要接各协议自己的路径，切协议后旧地址不能再用。
+// 地址还是旧协议的默认值（说明不是用户自己填的）才清掉，让它回落到新协议的默认地址。
+function onProtocolChange(key) {
+  if (key !== 'llm.protocol') return
+  const current = form.value['llm.baseUrl']
+  const oldDefault = defaults.value['llm.baseUrl']
+  if (current && oldDefault && current === oldDefault) {
+    form.value['llm.baseUrl'] = ''
+    message.info('协议地址已清空，保存后会用新协议的默认地址')
+  }
+}
+
 async function load() {
   try {
     const data = await api.getSettings()
@@ -171,6 +183,7 @@ async function reset(key) {
             v-model:value="form[f.key]"
             :options="protocols"
             :placeholder="f.hint"
+            @update:value="onProtocolChange(f.key)"
           />
           <NInput
             v-else-if="f.long"

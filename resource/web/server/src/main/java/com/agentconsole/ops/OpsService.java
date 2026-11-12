@@ -58,6 +58,7 @@ public class OpsService {
     /** 探测结果的缓存时间。探测本身要几秒，运维页几秒刷一次状态。 */
     private static final long COMPONENT_CACHE_MS = 15_000L;
 
+    private final EmqxService emqx;
     private final Path fileServerDir;
     private final Path clientDir;
     private final Path runDir;
@@ -92,7 +93,8 @@ public class OpsService {
                       @Value("${agent.console.file-server-port:8000}") int port,
                       @Value("${agent.console.mcp-port:8765}") int mcpPort,
                       @Value("${agent.console.tts-timeout-seconds:900}") int ttsTimeoutSeconds,
-                      OpsSettingRepository settings) {
+                      OpsSettingRepository settings, EmqxService emqx) {
+        this.emqx = emqx;
         this.fileServerDir = Paths.get(fileServerDir).toAbsolutePath().normalize();
         this.clientDir = Paths.get(clientDir).toAbsolutePath().normalize();
         this.runDir = Paths.get(runDir).toAbsolutePath().normalize();
@@ -174,6 +176,9 @@ public class OpsService {
         out.put("deviceHost", deviceHost);
         out.put("deviceFileServerUrl", deviceFileServerUrl());
         out.put("deviceMcpUrl", deviceMcpUrl());
+        out.put("deviceEmqxUrl", "tcp://" + deviceHost + ":1883");
+        out.put("emqxUrl", "tcp://127.0.0.1:1883");
+        out.put("emqxDashboardUrl", "http://127.0.0.1:18083");
         out.put("startComponents", startComponents);
         out.put("managed", fileServerProcess != null && fileServerProcess.isAlive());
         return out;
@@ -206,6 +211,7 @@ public class OpsService {
         out.put("fileServerUrl", deviceFileServerUrl());
         out.put("fileServerPort", fileServerPort);
         out.put("mcpUrl", deviceMcpUrl());
+        out.put("emqxUrl", "tcp://" + deviceHost + ":1883");
         out.put("mcpPort", mcpPort);
         return out;
     }
@@ -273,6 +279,7 @@ public class OpsService {
         out.put("deviceHost", this.deviceHost);
         out.put("fileServerUrl", deviceFileServerUrl());
         out.put("mcpUrl", deviceMcpUrl());
+        out.put("emqxUrl", "tcp://" + deviceHost + ":1883");
         out.put("startComponents", this.startComponents);
         out.put("message", changed.isEmpty()
                 ? "设置没变"
@@ -352,10 +359,16 @@ public class OpsService {
      * @param components 要装哪些组件的依赖，file-server 本体一定算上
      * @return 任务 id
      */
-    public String install(String target, List<String> components) {
+    public synchronized String install(String target, List<String> components) {
+        if (jobs.values().stream().anyMatch(job -> job.finishedAt == 0)) {
+            throw new IllegalStateException("已有依赖安装任务在运行，请等待完成");
+        }
         List<String> command;
         String label;
-        if ("web".equals(target)) {
+        if ("emqx".equals(target)) {
+            label = "安装 EMQX";
+            command = emqx.installCommand();
+        } else if ("web".equals(target)) {
             label = "安装前端依赖";
             command = onWindows()
                     ? List.of("cmd.exe", "/c", "npm install --no-fund --no-audit")

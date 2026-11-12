@@ -1,5 +1,7 @@
 package com.agentconsole.settings;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +16,8 @@ import java.util.Map;
  */
 @Service
 public class SettingService {
+
+    private static final Logger log = LoggerFactory.getLogger(SettingService.class);
 
     /** key -> 展示名。顺序就是设置页的顺序。 */
     public static final Map<String, String> KEYS = new LinkedHashMap<>();
@@ -100,11 +104,12 @@ public class SettingService {
     /** 按优先级算出每一项的生效值。 */
     private Map<String, String> resolve(Map<String, String> stored) {
         String protocol = resolveProtocol(stored);
+        String baseUrl = storedBaseUrl(stored, protocol);
         Map<String, String> merged = new LinkedHashMap<>();
         for (String key : KEYS.keySet()) {
             merged.put(key, switch (key) {
                 case "llm.protocol" -> protocol;
-                case "llm.baseUrl" -> firstNonBlank(stored.get(key), envDefaults.get(key),
+                case "llm.baseUrl" -> firstNonBlank(baseUrl, envDefaults.get(key),
                         rtConfig.baseUrlFor(protocol));
                 case "llm.apiKey" -> firstNonBlank(stored.get(key), envDefaults.get(key),
                         rtConfig.apiKey());
@@ -114,6 +119,42 @@ public class SettingService {
             });
         }
         return merged;
+    }
+
+    /**
+     * 读存下来的协议地址，换个协议后地址要跟着换。
+     *
+     * <p>地址里带协议路径：Anthropic 是根地址加 {@code /v1/messages}，OpenAI 是根地址加
+     * {@code /chat/completions}。用户以前用 OpenAI 协议时存的地址，切到 Anthropic 后再照用，
+     * 拼出来的端点会 404。存的地址如果正好是另一个协议的默认值，说明它不是用户自己填的，
+     * 这里不生效，让下面回落到当前协议的默认地址。
+     */
+    private String storedBaseUrl(Map<String, String> stored, String protocol) {
+        String storedUrl = trimUrl(stored.get("llm.baseUrl"));
+        if (storedUrl.isEmpty() || protocol.isEmpty()) {
+            return storedUrl;
+        }
+
+        String other = RtConfigDefaults.PROTOCOL_ANTHROPIC.equals(protocol)
+                ? RtConfigDefaults.PROTOCOL_OPENAI
+                : RtConfigDefaults.PROTOCOL_ANTHROPIC;
+        String otherDefault = trimUrl(rtConfig.baseUrlFor(other));
+        String currentDefault = trimUrl(rtConfig.baseUrlFor(protocol));
+
+        if (otherDefault.isEmpty() || storedUrl.equalsIgnoreCase(currentDefault)) {
+            return storedUrl;
+        }
+        if (!storedUrl.equalsIgnoreCase(otherDefault)) {
+            return storedUrl;
+        }
+
+        log.warn("协议地址存的是 {} 协议的默认值，当前协议是 {}，改用 {} 协议的默认地址",
+                other, protocol, protocol);
+        return "";
+    }
+
+    private static String trimUrl(String value) {
+        return value == null ? "" : value.trim();
     }
 
     /** 生效的协议：用户填的优先，其次环境变量，最后 rtconfig.h 里选中的那个。 */

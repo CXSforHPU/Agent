@@ -1,16 +1,17 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { isLoggedIn } from './api.js'
-import LoginView from './views/LoginView.vue'
-import DevicesView from './views/DevicesView.vue'
-import ChatView from './views/ChatView.vue'
-import HistoryView from './views/HistoryView.vue'
-import SettingsView from './views/SettingsView.vue'
-import OpsView from './views/OpsView.vue'
+const LoginView = () => import('./views/LoginView.vue')
+const DevicesView = () => import('./views/DevicesView.vue')
+const ChatView = () => import('./views/ChatView.vue')
+const HistoryView = () => import('./views/HistoryView.vue')
+const SettingsView = () => import('./views/SettingsView.vue')
+const OpsView = () => import('./views/OpsView.vue')
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/devices' },
+    { path: '/', redirect: '/dashboard' },
+    { path: '/dashboard', name: 'dashboard', component: () => import('./views/DashboardView.vue') },
     { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
     { path: '/devices', name: 'devices', component: DevicesView },
     { path: '/chat', name: 'chat', component: ChatView },

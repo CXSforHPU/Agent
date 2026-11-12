@@ -34,10 +34,45 @@ import { api } from '../api.js'
 const message = useMessage()
 
 const status = ref({})
+const emqx = ref({})
+const emqxBusy = ref(false)
+async function refreshEmqx() {
+  try { emqx.value = await api.emqxStatus() } catch (e) { report(e) }
+}
+async function emqxAction(action) {
+  emqxBusy.value = true
+  try { await api.emqxAction(action); await refreshEmqx() }
+  catch (e) { report(e) }
+  finally { emqxBusy.value = false }
+}
+onMounted(refreshEmqx)
+
 const jobs = ref([])
 const error = ref('')
 const notice = ref('')
 const busy = ref('')
+const installComponents = ref(['file-server'])
+const installLocked = computed(() => Boolean(busy.value) ||
+  jobs.value.some(job => job.status === 'pending' || job.status === 'running'))
+
+async function installSelected() {
+  if (installLocked.value || !installComponents.value.length) return
+  const selected = [...installComponents.value]
+  busy.value = '安装选中依赖'
+  try {
+    if (selected.includes('web')) {
+      if (!await install('web', [], '前端依赖')) return
+    }
+    if (selected.includes('emqx')) {
+      if (!await install('emqx', [], 'EMQX')) return
+      await refreshEmqx()
+    }
+    const components = selected.filter(item => !['web', 'emqx'].includes(item))
+    if (components.length) await install('file-server', components, '服务组件依赖')
+  } finally {
+    busy.value = ''
+  }
+}
 
 const logName = ref('file-server')
 const logLines = ref([])
@@ -278,11 +313,10 @@ async function install(target, components, label) {
     const data = await api.opsInstall(target, components)
     notice.value = `${label}已开始，日志写到 .run/install.log`
     await refreshJobs()
-    pollJob(data.jobId)
+    return await pollJob(data.jobId)
   } catch (e) {
     report(e)
-  } finally {
-    busy.value = ''
+    return false
   }
 }
 
@@ -310,7 +344,7 @@ async function pollJob(id) {
       refreshStatus()
       // 装完依赖依赖明细变了，重新探一次
       loadComponents(true)
-      return
+      return job.status === 'done'
     }
   }
 }
@@ -608,6 +642,28 @@ function jumpToLatest() {
       {{ notice }}
     </NAlert>
 
+    <NCard title="服务地址与端侧接入" size="small" class="block">
+      <div class="endpoint-list">
+        <div><strong>文件服务器</strong><code>{{ status.fileServerUrl || '—' }}</code></div>
+        <div><strong>MCP 网关</strong><code>{{ status.mcpUrl || '—' }}</code></div>
+        <div><strong>EMQX MQTT</strong><code>{{ status.emqxUrl || '—' }}</code></div>
+        <div><strong>EMQX 管理台（服务器本机）</strong><a :href="status.emqxDashboardUrl" target="_blank" rel="noopener">{{ status.emqxDashboardUrl || '—' }}</a></div>
+      </div>
+      <p>端侧自动分发地址</p>
+      <div class="endpoint-list">
+        <div><strong>文件服务器</strong><code>{{ status.deviceFileServerUrl || '—' }}</code></div>
+        <div><strong>MCP 网关</strong><code>{{ status.deviceMcpUrl || '—' }}</code></div>
+        <div><strong>EMQX MQTT</strong><code>{{ status.deviceEmqxUrl || '—' }}</code></div>
+      </div>
+      <p class="muted">在端侧 menuconfig → External Server 中，文件服务器、MCP 和 EMQX 各自选择 Manual 或 Auto。Manual 显示 URL 输入项；Auto 使用公共 Web 控制台 URL，从 /api/ops/endpoints 获取对应地址。下方“板端地址”决定分发给设备的主机地址。</p>
+    </NCard>
+    <nav class="section-nav" aria-label="运维分区">
+      <a href="#ops-components">组件与依赖</a>
+      <a href="#ops-services">服务部署</a>
+      <a href="#ops-tts">语音测试</a>
+      <a href="#ops-logs">运行日志</a>
+    </nav>
+    <div id="ops-components" class="ops-grid">
     <NCard title="组件状态" size="small" class="block">
       <div class="stat-grid">
         <div v-for="row in statusRows" :key="row.key" class="stat">
@@ -625,58 +681,25 @@ function jumpToLatest() {
     </NCard>
 
     <NCard title="安装依赖" size="small" class="block">
-      <NText depth="3" class="tip">
-        装依赖是后台任务，进度写到 .run/install.log。按组件分开装：语音合成那一条会拉
-        GPT-SoVITS 的推理代码、预训练模型和音色权重，第一次要下载几个 GB。
-      </NText>
-
-      <NSpace>
-        <NButton
-          type="primary"
-          :disabled="Boolean(busy)"
-          :loading="busy === '安装前端依赖'"
-          @click="install('web', [], '安装前端依赖')"
-        >
-          <template #icon>
-            <NIcon><DownloadOutline /></NIcon>
-          </template>
-          安装前端依赖
+      <NText depth="3" class="tip">勾选需要安装的组件后统一执行。服务组件会自动安装文件服务器基础依赖；语音合成首次需下载数 GB 模型。</NText>
+      <NCheckboxGroup v-model:value="installComponents" :disabled="installLocked">
+        <div class="dependency-options">
+          <NCheckbox value="emqx">EMQX MQTT 服务</NCheckbox>
+          <NCheckbox value="web">Web 前端</NCheckbox>
+          <NCheckbox value="file-server">文件服务器</NCheckbox>
+          <NCheckbox value="mcp">MCP 网关</NCheckbox>
+          <NCheckbox value="tts">语音合成 TTS</NCheckbox>
+          <NCheckbox value="stt">语音转写 STT</NCheckbox>
+        </div>
+      </NCheckboxGroup>
+      <div class="row-actions">
+        <NButton type="primary" :disabled="installLocked || !installComponents.length"
+          :loading="Boolean(busy)" @click="installSelected">
+          <template #icon><NIcon><DownloadOutline /></NIcon></template>
+          安装选中依赖
         </NButton>
-        <NButton
-          :disabled="Boolean(busy)"
-          :loading="busy === '安装文件服务器依赖'"
-          @click="install('file-server', [], '安装文件服务器依赖')"
-        >
-          <template #icon>
-            <NIcon><DownloadOutline /></NIcon>
-          </template>
-          安装文件服务器依赖
-        </NButton>
-        <NButton
-          secondary
-          :disabled="Boolean(busy)"
-          :loading="busy === '安装 MCP 网关依赖'"
-          @click="install('file-server', ['mcp'], '安装 MCP 网关依赖')"
-        >
-          安装 MCP 网关依赖
-        </NButton>
-        <NButton
-          secondary
-          :disabled="Boolean(busy)"
-          :loading="busy === '安装语音合成依赖'"
-          @click="install('file-server', ['tts'], '安装语音合成依赖')"
-        >
-          安装语音合成依赖
-        </NButton>
-        <NButton
-          secondary
-          :disabled="Boolean(busy)"
-          :loading="busy === '安装语音转写依赖'"
-          @click="install('file-server', ['stt'], '安装语音转写依赖')"
-        >
-          安装语音转写依赖
-        </NButton>
-      </NSpace>
+        <NText depth="3">{{ installLocked ? '安装任务执行中，请等待完成' : '已选择 ' + installComponents.length + ' 个组件' }}</NText>
+      </div>
 
       <NTable v-if="jobs.length" :bordered="false" size="small" class="jobs">
         <thead>
@@ -705,6 +728,8 @@ function jumpToLatest() {
         </tbody>
       </NTable>
     </NCard>
+
+    </div>
 
     <NCard title="组件依赖明细" size="small" class="block">
       <template #header-extra>
@@ -747,7 +772,21 @@ function jumpToLatest() {
       </div>
     </NCard>
 
-    <NCard title="文件服务器与 MCP 网关" size="small" class="block">
+    <NCard title="EMQX MQTT 服务" size="small" class="block">
+      <template #header-extra><NTag :type="emqx.running ? 'success' : 'default'">{{ emqx.running ? '运行中' : '未运行' }}</NTag></template>
+      <p>{{ emqx.platform }} · {{ emqx.arch }} · 安装方式 {{ emqx.method }}</p>
+      <NAlert v-if="emqx.message" type="warning">{{ emqx.message }}</NAlert>
+      <p class="muted">MQTT 端口 1883 · 管理台端口 18083 · 数据使用持久化卷。勾选安装 EMQX 时会自动补装 Docker，系统可能要求管理员授权或重启。</p>
+      <NSpace>
+        <NButton type="primary" :disabled="!emqx.runtimeReady || installLocked || emqxBusy" @click="emqxAction('start')">启动 EMQX</NButton>
+        <NButton :disabled="!emqx.running || emqxBusy" @click="emqxAction('stop')">停止</NButton>
+        <NButton :disabled="emqxBusy" @click="refreshEmqx">刷新状态</NButton>
+        <NButton tag="a" href="http://127.0.0.1:18083" target="_blank" rel="noopener" :disabled="!emqx.running">打开本机管理台</NButton>
+        <NButton tag="a" href="https://docs.docker.com/get-started/get-docker/" target="_blank" rel="noopener">安装 Docker</NButton>
+      </NSpace>
+    </NCard>
+
+    <NCard id="ops-services" title="文件服务器与 MCP 网关" size="small" class="block">
       <NText depth="3" class="tip">
         启动走 file_server/deploy 脚本，只起勾选的组件：没勾的组件不注册端点，调用它会返回 404。
         停止会先杀本控制台起的进程，还占着端口的话按端口反查 pid 再杀一次，连 MCP 网关一起带走。
@@ -842,7 +881,7 @@ function jumpToLatest() {
       </div>
     </NCard>
 
-    <NCard title="语音合成试听" size="small" class="block">
+    <NCard id="ops-tts" title="语音合成试听" size="small" class="block">
       <NText depth="3" class="tip">
         需要文件服务器在跑，并且装过 TTS 依赖与权重。没装的话合成会返回 503。
       </NText>
@@ -910,7 +949,7 @@ function jumpToLatest() {
       <div v-if="sttText" class="result">{{ sttText }}</div>
     </NCard>
 
-    <NCard title="日志" size="small" class="block">
+    <NCard id="ops-logs" title="日志" size="small" class="block">
       <template #header-extra>
         <NSpace align="center">
           <NSelect v-model:value="logName" :options="logOptions" style="width: 150px" @update:value="loadLog" />
@@ -940,6 +979,47 @@ function jumpToLatest() {
 </template>
 
 <style scoped>
+.endpoint-list { display: grid; gap: 12px; }
+.endpoint-list > div { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; }
+.endpoint-list code, .endpoint-list a { overflow-wrap: anywhere; color: #6366f1; }
+.dependency-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; padding: 16px; background: #f7f8fc; border-radius: 12px; }
+.section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 24px;
+  padding: 6px;
+  width: fit-content;
+  background: #e9ecf5;
+  border-radius: 12px;
+}
+.section-nav a {
+  padding: 9px 18px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: #5b647e;
+  font-weight: 500;
+}
+.section-nav a:hover, .section-nav a:focus-visible {
+  background: white;
+  color: #5759d6;
+  box-shadow: 0 2px 6px #242c4a0a;
+}
+.block { scroll-margin-top: 24px; }
+
+.ops-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .ops-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+
 .block {
   margin-bottom: 16px;
 }

@@ -26,9 +26,26 @@ import java.util.Map;
 public class OpsController {
 
     private final OpsService ops;
+    private final EmqxService emqx;
 
-    public OpsController(OpsService ops) {
+    public OpsController(OpsService ops, EmqxService emqx) {
+        this.emqx = emqx;
         this.ops = ops;
+    }
+
+    @GetMapping("/emqx")
+    public ApiResponse<Map<String, Object>> emqxStatus(JwtService.Claims claims) {
+        return ApiResponse.ok(emqx.status());
+    }
+
+    @PostMapping("/emqx/{action}")
+    public ResponseEntity<ApiResponse<Void>> emqxAction(@PathVariable String action, JwtService.Claims claims) {
+        try {
+            emqx.action(action);
+            return ResponseEntity.ok(ApiResponse.ok());
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
+        }
     }
 
     /** 各组件状态。 */
@@ -135,6 +152,8 @@ public class OpsController {
         try {
             String id = ops.install(target, componentsOf(components));
             return ResponseEntity.ok(ApiResponse.ok(Map.of("jobId", id)));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(e.getMessage()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
         }

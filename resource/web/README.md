@@ -46,7 +46,7 @@ Vue 3 加 Vite，组件库用 [naive-ui](https://www.naiveui.com/)，图标用 `
 | 页面 | 路径 | 内容 |
 |---|---|---|
 | 设备管理 | `/devices` | 设备增删改查、探活、配置下发。列表用表格，上面三块统计数字 |
-| 对话 | `/chat` | 选对话对象与会话，底下是消息气泡 |
+| 对话 | `/chat` | 选对话对象与会话，底下是消息气泡。回复一段段推过来，思考过程与工具调用实时显示 |
 | 会话历史 | `/history` | 左边会话列表，右边消息详情 |
 | 设置 | `/settings` | 网站侧 agent 的五个配置项 |
 | 运维 | `/ops` | 文件服务器与 MCP 网关的七个面板 |
@@ -259,6 +259,7 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 | POST | `/api/conversations` | 新建会话 |
 | DELETE | `/api/conversations/{id}` | 删除会话 |
 | POST | `/api/chat` | 发消息，`deviceId` 为空走网站侧 agent |
+| POST | `/api/chat/stream` | 同上，但用 SSE 一路推中间过程 |
 | GET | `/api/settings` | 读当前用户的设置项、当前值与 `rtconfig.h` 默认值 |
 | PUT | `/api/settings` | 保存设置，body 是 `{key: value}` |
 | POST | `/api/settings/{key}/reset` | 把某一项恢复成环境变量默认值 |
@@ -290,6 +291,15 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 
 `conversationId` 不传就新建会话，`deviceId` 不传就走网站侧 agent。
 
+`POST /api/chat/stream` 的请求体一样，返回 `text/event-stream`，每行一个 JSON：
+
+```json
+{"kind": "reasoning", "text": "用户想问…"}
+{"kind": "final", "text": "完整答案", "conversationId": 1}
+```
+
+`kind` 取 `status`（开始处理）、`reasoning`（思考分片）、`tool`（工具调用）、`content`（正文分片）、`final`（完整答案，同时带上会话 id）、`error`（出错）。前面几类是增量，逐条追加显示；`final` 是权威答案，用来覆盖增量拼出来的文本。`conversationId` 为空表示这次还没落库。
+
 ## 端侧对接
 
 网站经 A2A 协议和端侧 agent 通信，端点按协议约定：
@@ -301,6 +311,14 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 | `/tasks/sendSubscribe` | POST | 流式发任务，SSE 返回 |
 
 消息体是 `{"message": {"role": "user", "parts": [{"type": "text", "text": "..."}]}}`。同步接口返回 `{"id", "status": {"state"}, "artifacts": [{"parts": [...]}]}`，`state` 取 `working`、`completed`、`failed`。SSE 每一帧也是这个结构，空行分隔。
+
+流式接口的帧可以带产出：`artifacts[].name` 标出这一段是什么，取 `reasoning`（思考分片）、`tool`（工具调用）、`content`（正文分片）、`response`（完整答案），`append` 为真表示和前一段续接。除 `response` 外都是增量，最后那帧 `state` 是 `completed`。
+
+### 半双工
+
+网页发一条、端侧回一条，同一时刻只有一个方向在传。网页发出去之后，端侧 agent 边跑边推思考、工具调用和正文分片，跑完补上最终答案。后端把 `/tasks/sendSubscribe` 的每一帧转成 `/api/chat/stream` 的事件发给网页，网页收到 `final` 才允许再发下一条。
+
+板子这边的实现在两个地方：`AgentStream` 收中间事件，`AgentA2aChannel` 每 100 ms 把队列取空推一帧，取到最后结果那帧结束。
 
 探活就是 GET 能力卡，200 算在线。设备的 `address` 字段填服务根地址，能力卡自动拼在后面。
 

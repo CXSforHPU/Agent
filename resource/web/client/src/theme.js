@@ -2,17 +2,17 @@
  * Naive UI 主题配置。品牌色、圆角、字号都在这里改一处即可。
  */
 
-export const brandColor = '#2f6bff'
+export const brandColor = '#6366f1'
 
 export const themeOverrides = {
   common: {
     primaryColor: brandColor,
-    primaryColorHover: '#4d80ff',
-    primaryColorPressed: '#1f56e0',
-    primaryColorSuppl: '#4d80ff',
+    primaryColorHover: '#8183f5',
+    primaryColorPressed: '#4f46e5',
+    primaryColorSuppl: '#8183f5',
     infoColor: brandColor,
-    infoColorHover: '#4d80ff',
-    infoColorPressed: '#1f56e0',
+    infoColorHover: '#8183f5',
+    infoColorPressed: '#4f46e5',
     successColor: '#12a150',
     successColorHover: '#2fb56a',
     successColorPressed: '#0b8a42',
@@ -30,22 +30,28 @@ export const themeOverrides = {
       '"Microsoft YaHei", "PingFang SC", system-ui, -apple-system, "Segoe UI", sans-serif',
   },
   Card: {
-    borderRadius: '12px',
+    borderRadius: '16px',
     borderColor: '#e6e9ef',
-    paddingMedium: '18px 20px',
+    paddingMedium: '24px',
     color: '#ffffff',
   },
   Layout: {
-    siderColor: '#141b2d',
-    siderColorActive: '#1d2740',
-    siderBorderColor: '#141b2d',
-    siderColorCollapsed: '#141b2d',
+    siderColor: '#ffffff',
+    siderColorActive: '#eef0ff',
+    siderBorderColor: '#eaecf3',
+    siderColorCollapsed: '#ffffff',
     headerColor: '#ffffff',
     headerBorderColor: '#e6e9ef',
-    headerHeight: '58px',
+    headerHeight: '68px',
   },
   Menu: {
-    itemHeight: '42px',
+    itemHeight: '46px',
+    itemTextColor: '#667085',
+    itemIconColor: '#8a91a6',
+    itemColorActive: '#eeefff',
+    itemColorActiveHover: '#e6e8ff',
+    itemTextColorActive: '#5759d6',
+    itemIconColorActive: '#5759d6',
     borderRadius: '8px',
     fontSize: '14px',
   },
@@ -69,13 +75,13 @@ export const themeOverrides = {
     thPadding: '10px 12px',
     tdPadding: '12px',
     borderColor: '#eef0f4',
-    borderRadius: '12px',
+    borderRadius: '16px',
   },
   Tag: {
     borderRadius: '6px',
   },
   DataTableInternal: {
-    borderRadius: '12px',
+    borderRadius: '16px',
   },
   Modal: {
     borderRadius: '14px',

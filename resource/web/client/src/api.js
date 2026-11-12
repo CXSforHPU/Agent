@@ -109,14 +109,88 @@ export const api = {
     request(`/conversations${deviceId ? `?deviceId=${deviceId}` : ''}`),
   getConversation: (id) => request(`/conversations/${id}`),
   createConversation: (data) => request('/conversations', { method: 'POST', body: data }),
+  renameConversation: (id, title) => request(`/conversations/${id}`, { method: 'PATCH', body: { title } }),
   deleteConversation: (id) => request(`/conversations/${id}`, { method: 'DELETE' }),
 
   chat: (data) => request('/chat', { method: 'POST', body: data, auth: true }),
+
+  /**
+   * 流式聊天。onEvent 收到 {kind, text, conversationId}，
+   * kind 取 status / reasoning / tool / content / final / error。
+   * 端侧 agent 的思考、工具调用、正文分片随到随推，final 是完整答案。
+   */
+  async chatStream(data, onEvent) {
+    const headers = { 'Content-Type': 'application/json' }
+    const token = getToken()
+    if (token) {
+      headers.Authorization = `Bearer ${token}`
+    }
+
+    let resp
+    try {
+      resp = await fetch('/api/chat/stream', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(data),
+      })
+    } catch (e) {
+      throw new ApiError(`连不上后端：${e.message}`, 0)
+    }
+
+    if (resp.status === 401) {
+      setToken('')
+      throw new ApiError('登录已过期，请重新登录', 401)
+    }
+    if (!resp.ok) {
+      let msg = `请求失败（HTTP ${resp.status}）`
+      const raw = await resp.text()
+      try {
+        msg = JSON.parse(raw).message || msg
+      } catch {
+        // 错误也可能是 SSE 帧（比如会话不存在），从 data 行里取原因
+        const line = raw.split('\n').find((l) => l.startsWith('data:'))
+        if (line) {
+          try {
+            msg = JSON.parse(line.slice(5).trim()).text || msg
+          } catch {
+            // 帧解析不了就用默认文案
+          }
+        }
+      }
+      throw new ApiError(msg, resp.status)
+    }
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let index
+      while ((index = buffer.indexOf('\n\n')) >= 0) {
+        const frame = buffer.slice(0, index)
+        buffer = buffer.slice(index + 2)
+        for (const line of frame.split('\n')) {
+          if (!line.startsWith('data:')) continue
+          const payload = line.slice(5).trim()
+          if (!payload) continue
+          try {
+            onEvent(JSON.parse(payload))
+          } catch {
+            // 坏帧丢掉，不影响后面的事件
+          }
+        }
+      }
+    }
+  },
 
   getSettings: () => request('/settings'),
   saveSettings: (data) => request('/settings', { method: 'PUT', body: data }),
   resetSetting: (key) => request(`/settings/${encodeURIComponent(key)}/reset`, { method: 'POST' }),
 
+  emqxStatus: () => request('/ops/emqx'),
+  emqxAction: (action) => request('/ops/emqx/' + action, { method: 'POST' }),
   opsStatus: () => request('/ops/status'),
   opsSettings: () => request('/ops/settings'),
   opsSaveSettings: (data) => request('/ops/settings', { method: 'PUT', body: data }),
