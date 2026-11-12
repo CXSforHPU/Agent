@@ -11,6 +11,7 @@ import sqlite3
 import mimetypes
 import threading
 import asyncio
+import time
 import traceback
 from datetime import datetime
 from io import BytesIO
@@ -325,6 +326,71 @@ _TTS_LANG_ALIAS = {
 _TTS_UNAVAILABLE = ("TTS 未装配：先跑 bash deploy.sh --tts（或 deploy.bat --tts）"
                     "与 python fetch_tts.py dicts voice assets")
 
+# 合成进度。只记最近一次合成，运维页轮询 /tts/progress 看跑到第几句了。
+_TTS_PROGRESS = {
+    "stage": "idle",       # idle / loading / running / done / error
+    "index": 0,            # 已合成第几句
+    "total": 0,            # 一共几句
+    "audioSeconds": 0.0,   # 已生成的音频秒数
+    "elapsed": 0.0,        # 这一轮已经跑了多少秒
+    "message": "",
+    "updatedAt": 0.0,
+}
+_TTS_PROGRESS_LOCK = threading.Lock()
+
+
+def _tts_progress(**fields) -> None:
+    """更新合成进度。没传的字段保持原样。"""
+    with _TTS_PROGRESS_LOCK:
+        _TTS_PROGRESS.update(fields)
+        if "message" in fields:
+            # 心跳要在这句话后面接「已用 X 分」，原句得单独留一份
+            _TTS_PROGRESS["_base"] = fields["message"]
+        _TTS_PROGRESS["updatedAt"] = time.time()
+
+
+def _tts_elapsed_text(seconds: float) -> str:
+    """把秒数写成「1 分 20 秒」。"""
+    seconds = int(seconds)
+    if seconds < 60:
+        return "%d 秒" % seconds
+    return "%d 分 %d 秒" % (seconds // 60, seconds % 60)
+
+
+class _TtsHeartbeat:
+    """引擎推理期间每秒刷一次进度。
+
+    GPT-SoVITS 的 TTS.run() 是一次性返回整段音频，句子级进度在它返回之前拿不到。
+    没有心跳的话页面只能停在「模型加载中」，看不出程序还活着。这里每秒钟把
+    已用时长写回进度记录，运维页就能看到时间在走。
+    """
+
+    def __init__(self):
+        self._t0 = time.time()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _run(self) -> None:
+        while not self._stop.wait(1.0):
+            elapsed = time.time() - self._t0
+            with _TTS_PROGRESS_LOCK:
+                base = _TTS_PROGRESS.get("_base", "")
+                _TTS_PROGRESS["elapsed"] = round(elapsed, 1)
+                _TTS_PROGRESS["message"] = "%s，已用 %s" % (base, _tts_elapsed_text(elapsed))
+                _TTS_PROGRESS["updatedAt"] = time.time()
+
+    def __enter__(self):
+        self._t0 = time.time()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+        return False
+
 
 def _tts_lang(value: str) -> str:
     """中文名或引擎码 -> 引擎码；不在表内原样返回，由调用处判错。"""
@@ -464,18 +530,37 @@ def _tts_synth_wav(sp: Dict[str, str], text: str, language: str, speed: float,
     import soundfile as sf
 
     with _TTS_LOCK:
-        pipe = _tts_pipeline(sp)
-        fragments = list(pipe.run({
-            "text": text,
-            "text_lang": language,
-            "ref_audio_path": sp["ref_audio"],
-            "prompt_text": sp["prompt_text"],
-            "prompt_lang": sp["prompt_lang"],
-            "text_split_method": "cut5",
-            "batch_size": 1,
-            "speed_factor": speed,
-        }))
+        t0 = time.time()
+        # 冷启动要先装模型，这段最慢，先把阶段报出去
+        _tts_progress(stage="loading", index=0, total=0, audioSeconds=0.0, elapsed=0.0,
+                      message="模型加载中，第一次合成要等一会儿")
+        fragments = []
+        seconds = 0.0
+        with _TtsHeartbeat():
+            pipe = _tts_pipeline(sp)
+            # 总句数按引擎自己的切句结果算，跟实际产出的片段数基本对上
+            total = len(pipe.text_preprocessor.pre_seg_text(text, language, "cut5"))
+            _tts_progress(stage="running", index=0, total=total,
+                          elapsed=round(time.time() - t0, 1),
+                          message="合成中，共 %d 句" % total)
+            for frag in pipe.run({
+                "text": text,
+                "text_lang": language,
+                "ref_audio_path": sp["ref_audio"],
+                "prompt_text": sp["prompt_text"],
+                "prompt_lang": sp["prompt_lang"],
+                "text_split_method": "cut5",
+                "batch_size": 1,
+                "speed_factor": speed,
+            }):
+                fragments.append(frag)
+                seconds += len(frag[1]) / float(frag[0] or 1)
+                _tts_progress(stage="running", index=len(fragments), total=total,
+                              audioSeconds=round(seconds, 2),
+                              elapsed=round(time.time() - t0, 1),
+                              message="第 %d/%d 句" % (len(fragments), max(total, len(fragments))))
     if not fragments:
+        _tts_progress(stage="error", message="没产出音频")
         raise RuntimeError("TTS 未产出音频，检查文本与参考音频")
 
     sr = fragments[0][0]
@@ -493,6 +578,11 @@ def _tts_synth_wav(sp: Dict[str, str], text: str, language: str, speed: float,
 
     buf = BytesIO()
     sf.write(buf, _tts_pad_frames(audio, channels), sr, format="WAV", subtype="PCM_16")
+    # 引擎一次性交回整段音频，句子数在最后才补齐
+    _tts_progress(stage="done", index=max(total, len(fragments)), total=max(total, len(fragments)),
+                  audioSeconds=round(seconds, 2), elapsed=round(time.time() - t0, 1),
+                  message="完成，音频 %.1f 秒，用了 %s"
+                          % (seconds, _tts_elapsed_text(time.time() - t0)))
     return sr, buf.getvalue()
 
 
@@ -674,6 +764,15 @@ def tts_speakers():
     }
 
 
+@app.get("/tts/progress", summary="合成进度")
+def tts_progress():
+    """最近一次合成的进度。运维页轮询这个接口看跑到第几句了。"""
+    with _TTS_PROGRESS_LOCK:
+        # _base 是给心跳用的内部字段，不往外发
+        data = {k: v for k, v in _TTS_PROGRESS.items() if not k.startswith("_")}
+        return {"code": 0, "data": data}
+
+
 async def _tts_handle(text: str, speaker: Optional[str], language: str, speed: float,
                       sample_rate: Optional[int], channels: int,
                       stream: bool = False, block_seconds: float = 1.5) -> Response:
@@ -719,6 +818,7 @@ async def _tts_handle(text: str, speaker: Optional[str], language: str, speed: f
         raise
     except Exception as e:
         traceback.print_exc()
+        _tts_progress(stage="error", message="%s: %s" % (type(e).__name__, e))
         raise HTTPException(status_code=500,
                             detail=f"tts failed: {type(e).__name__}: {e}")
     return Response(content=wav, media_type="audio/wav",

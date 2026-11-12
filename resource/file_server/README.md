@@ -28,6 +28,8 @@ deploy.bat --tts          # Windows cmd
 
 一条命令跑完四步：按算力装 torch、拉不入库的第三方资产、逐项核对 SHA256、起服务。四步都幂等，已经落地的文件跳过，重跑一遍很便宜。
 
+不想敲命令的话，管理控制台的运维页上有对应的按钮，详情见 [../web/README.md](../web/README.md) 的「运维页」一节。
+
 ### 参数
 
 两个脚本的参数对得上，只有 GitHub 下载的默认走法不同。
@@ -121,6 +123,8 @@ deploy.bat --start-only              # Windows cmd
 
 换端口加 `--port 8001`，想让服务一起来就把模型预热好加 `--autoload`，换默认音色加 `--speaker da_fei_yv`。环境还没装配过时用 `bash deploy.sh --tts`，装完自动接着启动。
 
+管理控制台的运维页上点「启动文件服务器与 MCP 网关」走的是同一个 `--start-only`，点「停止」会连 MCP 网关一起带走。
+
 直接起解释器也可以，但要绕开 uv 的自动同步：
 
 ```bash
@@ -165,6 +169,7 @@ PKG_AGENT_MCP_SERVER_URL=http://PC-IP:8765/mcp
 | `/tts` | POST | 文本转语音，直接返回 `audio/wav` 字节。请求带 `"stream":true` 时改返回 `[4 字节小端长度][完整 WAV]` 的帧序列，见 11 节的流式分块。未装配 GPT-SoVITS 时返回 503，其余接口不受影响 |
 | `/tts` | GET | 同样的合成，参数走 query，`GET /tts?text=你好` 本身就是一个音频 URL |
 | `/tts/play` | GET | 浏览器试听页，带 `audio` 播放器。`/docs` 里播不出声音，试听要走这条 |
+| `/tts/progress` | GET | 最近一次合成的进度，返回 `{"code":0,"data":{"stage":"...","index":N,"total":N,"audioSeconds":X,"elapsed":X,"message":"..."}}` |
 
 上传接口返回示例：
 
@@ -523,6 +528,23 @@ curl -s -N -X POST -H "Content-Type: application/json" --data @req_stream.json l
 回复文本里的表情符号要单独处理。上游 `TextPreprocessor.pre_seg_text` 有一句 `print(text)`，中文 Windows 的 stdout 默认 GBK，遇到 😸 这类字符直接抛 `UnicodeEncodeError`，`/tts` 回 500，看着像推理坏了。`main.py` 开头把 stdout/stderr 重设成 UTF-8，`_tts_handle()` 再剥掉非 BMP 平面（`U+10000` 以上）的表情符号。实测三种输入：中英混排带 😸 返回 200、531 244 字节；纯表情返回 400「text 去掉表情符号和不可念的符号后为空」；`✅` 这类 BMP 符号（GBK 也编不了）返回 200。板侧遇到 500 只打印 `http resp code 500` 和 `reply stream request failed`，这一条回复不发声，播报线程接着处理下一条。
 
 非 ASCII 的符号也要在入口换掉。回复里同时出现 `°C` 和 `—` 这类符号时，引擎的切句器把它们连同其他非 ASCII 字符按中日韩文处理，两侧又是拉丁字母，于是切出一个不含汉字的“中文”片段。`clean_text` 把它规范成空串，`TextPreprocessor.get_bert_feature` 拿着空的 `word2ph` 走到 `torch.cat([])` 抛 `ValueError`，整条 `/tts` 回 500。上游只在整个句子层面过滤纯符号（`TextPreprocessor.py:101`），句内片段没人管。`_tts_sanitize()` 先把 `°C`、`°F`、`°`、`≈`、`±`、`%`、`—`、`–` 换成英文单词，再把白名单以外的字符削成空格。白名单是 ASCII 加中日韩文字和中文标点：ASCII 走 en 路径，符号最多被丢掉，切不出空片段。实测一条 647 字节的传感器回复（含 `°C` 5 处、`—` 1 处、`≈` 1 处），净化前 500、0.12 s 返回；净化后 200，42 帧、62.79 s 音频。单测那句出问题的 `' fluctuation under 0.4 °C — nothing unusual 喵。'` 也是同一组结果：500 变 200。
+
+### 合成进度
+
+`GET /tts/progress` 返回最近一次合成的进度，运维页靠它画进度条。响应是 `{"code":0,"data":{...}}`，`data` 里的字段：
+
+| 字段 | 说明 |
+|---|---|
+| `stage` | `idle`、`loading`、`running`、`done`、`error` |
+| `index` | 已合成第几句 |
+| `total` | 一共几句，按引擎自己的切句结果算 |
+| `audioSeconds` | 已生成的音频秒数 |
+| `elapsed` | 这一轮已经跑了多少秒 |
+| `message` | 一句话说明，推理期间带已用时长 |
+
+引擎的 `TTS.run()` 是一次性交回整段音频的，句子级的进度要等它返回才有。推理期间 `_TtsHeartbeat` 每秒刷一次进度，把已用时长写回 `elapsed` 和 `message`，这样页面能看出程序还活着。冷启动要装权重、编译 CUDA graph，本机实测整机要跑十分钟上下。
+
+进度只记最近一次合成，服务重启后回到 `idle`。
 
 ### 流式分块
 
