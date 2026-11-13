@@ -216,7 +216,11 @@ typedef struct AgentChannelOps
 
 **当前工程的通道选择**：本项目在 `rtconfig.h` 里定义了 `PKG_AGENT_A2A_CHANNEL`，实际选中的是 A2A 通道，其余通道暂时没开。
 
-A2A 通道跑在 webnet 之上，文件是 `src/channels/AgentA2aChannel.c`。它提供三个端点：`GET /.well-known/agent.json` 出能力卡，`POST /tasks/send` 同步等最终结果，`POST /tasks/sendSubscribe` 按 SSE 分帧推送。启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。端点与消息格式见 [api.md](./api.md) 的 5.5。
+A2A 通道跑在 webnet 之上，文件是 `src/channels/AgentA2aChannel.c`。它提供五个端点：`GET /.well-known/agent.json` 出能力卡，`GET /card` 读当前能力卡，`POST /card` 改能力卡并落盘，`POST /tasks/send` 同步等最终结果，`POST /tasks/sendSubscribe` 按 SSE 分帧推送。启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。端点与消息格式见 [api.md](./api.md) 的 5.5。
+
+能力卡在启动时从 `PKG_AGENT_A2A_CARD_PATH` 指定的文件读，读不到就用 Kconfig 的默认值。`POST /card` 改完立刻写回同一个文件，所以重启后还是这份。
+
+流式接口的中间帧由 `AgentStream` 队列驱动。`task_wait()` 每 100 ms 醒一次，先把队列里的事件取空推给客户端，再等输出邮箱。这样思考过程、工具调用、正文分片都能边跑边推，不用等最终答案。
 
 webnet 是单线程的，A2A 同步接口会一直等到 agent 跑完才返回，期间占住整个线程。同一台设备并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。
 
@@ -532,6 +536,9 @@ sequenceDiagram
 | `PKG_AGENT_WEBNET_CHANNEL` | WebNet 通道 |
 | `PKG_AGENT_DEBUG_CHANNEL` | Debug 通道 |
 | `PKG_AGENT_LVGL_CHANNEL` | LVGL 通道 |
+| `PKG_AGENT_A2A_CHANNEL` | A2A 通道 |
+| `PKG_AGENT_A2A_NAME` / `PKG_AGENT_A2A_DESCRIPTION` | 能力卡的默认名字与描述，控制台改过以后以板端存的文件为准 |
+| `PKG_AGENT_A2A_CARD_PATH` | 能力卡落盘路径，默认 `/agent_card.json`，要落在可写文件系统上 |
 
 ### LLM 与缓冲
 

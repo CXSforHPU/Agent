@@ -193,6 +193,22 @@ draw.io 源文件：[agent-fsm.drawio](./docs/diagrams/agent-fsm.drawio)
 
 `scripts/` 放的是给开发者跑的脚本，`src/tools/` 放的是给模型调用的工具，两者不要混淆。
 
+### 仓库里跟什么
+
+仓库只跟源码、文档和构建脚本。第三方二进制、依赖目录、构建产物都不进版本库。
+
+| 不跟踪 | 说明 |
+|---|---|
+| `/resource/*.exe` | 内网穿透启动器，从飞鸽官网下载后自己放到 `resource/` 下 |
+| `/resource/web/client/node_modules/`、`dist/` | 前端依赖与打包产物 |
+| `/resource/web/server/target/`、`.m2` | Java 构建产物与依赖缓存 |
+| `/resource/file_server/.venv/` | 文件服务器的 Python 虚拟环境 |
+| `resource/file_server/test/*` | 测试目录只保留 `*.py` |
+| `*.bin`、`*.elf`、`*.log` | 编译产物与日志 |
+| `/skills/skill_data.c` | 技能在编译期生成的 C 文件 |
+
+包自己的 `Kconfig` 是进版本库的。它和 packages 索引仓库里的那份必须一字不差，改的时候两边一起改。
+
 ## 核心机制
 
 ### LLM 协议
@@ -239,9 +255,21 @@ draw.io 源文件：[llm-protocol.drawio](./docs/diagrams/llm-protocol.drawio)
 | A2A | `PKG_AGENT_A2A_CHANNEL` | HTTP `/.well-known/agent.json`、`/tasks/send`、`/tasks/sendSubscribe`、`/card`，跑在 WebNet 之上 |
 | Debug | `PKG_AGENT_DEBUG_CHANNEL` | `agent_send_message` 命令注入消息 |
 
-WebNet 与 A2A 都跑在 webnet 上，共用 `WEBNET_PORT`（默认 80）。A2A 通道启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。配套选项 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 填能力卡里的名字和描述，这两个值只当默认：`POST /card` 改过之后板端写进 SD 卡的 `/agent_card.json`，启动时读那份，Kconfig 的值不再生效。`GET /card` 读当前生效的三个字段。
+WebNet 与 A2A 都跑在 webnet 上，共用 `WEBNET_PORT`（默认 80）。A2A 通道启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。
 
-A2A 通道是给控制台或别的 agent 直接调用的，同步接口会一直等到端侧 agent 跑完才返回，一次请求占住 webnet 整个线程。流式接口则边跑边推：任务开始先推一帧 `working`，之后每 100 ms 把 `AgentStream` 队列里的事件取空、各推一帧，直到最终结果那帧为止。帧里的 `artifacts[].name` 取 `reasoning`、`tool`、`content`、`response`，前三个是增量，`response` 是完整答案，`append` 为真表示和前一段续接。
+A2A 通道有五个端点：
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/.well-known/agent.json` | GET | 能力卡，探活也用它 |
+| `/card` | GET | 读当前生效的 `name`、`description`、`version` |
+| `/card` | POST | 改能力卡，改完落盘，重启后还是这份 |
+| `/tasks/send` | POST | 同步发任务，等端侧 agent 跑完才返回 |
+| `/tasks/sendSubscribe` | POST | 流式发任务，按 SSE 分帧推 |
+
+能力卡的落盘路径由 Kconfig 选项 `PKG_AGENT_A2A_CARD_PATH` 决定，默认 `/agent_card.json`，要放在可写文件系统上。启动时读这个文件，读不到就用 Kconfig 的 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 当默认值。控制台下发一次以后，板端读到的就是下发的这份。
+
+流式接口边跑边推：任务开始先推一帧 `working`，之后每 100 ms 把 `AgentStream` 队列里的事件取空、各推一帧，直到最终结果那帧为止。帧里的 `artifacts[].name` 取 `reasoning`、`tool`、`content`、`response`，前三个是增量，`response` 是完整答案，`append` 为真表示和前一段续接。
 
 同一台设备上并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。
 
@@ -411,6 +439,8 @@ resource/web/
 | `PKG_AGENT_ANTHROPIC_VERSION` | Anthropic 的 `anthropic-version` 请求头，默认 `2023-06-01`；仅在菜单选中 Anthropic 时显示 |
 | `PKG_AGENT_ANTHROPIC_MAX_TOKENS` | Anthropic 请求的 `max_tokens` 上限，默认 4096；仅在菜单选中 Anthropic 时显示 |
 | `PKG_AGENT_COMMUNICATION_CHANNEL_SEL` | 通道选择，默认 CLI |
+| `PKG_AGENT_A2A_NAME` / `PKG_AGENT_A2A_DESCRIPTION` | 能力卡的默认名字与描述，只当第一次启动的默认值 |
+| `PKG_AGENT_A2A_CARD_PATH` | 能力卡落盘路径，默认 `/agent_card.json`，要放在可写文件系统上 |
 | `PKG_AGENT_MULTIMODAL_ENABLE` | 多模态总开关，默认关闭 |
 | `PKG_AGENT_STT_ENABLE` | 本地语音转写开关 |
 | `PKG_AGENT_DRIVER_AUDIO` | 音频驱动，独立于多模态 |
@@ -438,6 +468,41 @@ resource/web/
 | `PKG_AGENT_CONSOLE_API` | 控制台上报地址的接口路径，默认 `/api/ops/endpoints`；只有自动模式下显示 |
 | `PKG_AGENT_ENDPOINT_TIMEOUT_MS` | 读控制台响应体的超时，默认 3000 毫秒；只有自动模式下显示 |
 
+## 包体积
+
+下面的数字来自本仓库当前配置的 `rtthread.map`，统计的是 Agent 包各目标文件的 `text`、`rodata`、`data` 与 `ARM.exidx` 之和。固件整体是 text 2 805 051 字节、data 35 248 字节、bss 178 640 字节。
+
+当前配置开了 MQTT、设备框架的通用层加 PIN、I2C、SPI、MCP、多模态、语音转写、音频驱动，技能是随包发布的 5 份。
+
+| 模块 | 字节 | 怎么关 |
+|---|---|---|
+| MQTT 工具 | 48 349 | `PKG_AGENT_TOOL_MQTT_ENABLE` |
+| 设备框架工具 | 42 036 | `PKG_AGENT_TOOL_DEVICE` 与八个类模块开关 |
+| 核心（状态机、上下文、对话） | 26 381 | 必编 |
+| 内嵌技能 | 20 527 | `PKG_AGENT_SKILL_DIR` 指向只放要留的技能 |
+| 通用工具 | 17 825 | 多模态与语音转写关掉后，`file_op` 与 `stt` 跟着消失 |
+| 协议模块 | 14 005 | 不选的那份协议仍要编译，运行时切换要用 |
+| 通道 | 9 849 | 只留一个通道 |
+| MCP 客户端 | 8 408 | `PKG_AGENT_TOOL_MCP_ENABLE` |
+| 运算与技能工具 | 4 000 | 必编 |
+| 音频驱动 | 2 174 | `PKG_AGENT_DRIVER_AUDIO` |
+
+整个包当前是 193 554 字节，占固件 flash 的 6.8%。
+
+MQTT 工具是最大的一块，在 `src/tools/tool_mqtt/` 下分成五个文件：`tool_mqtt_ops.o` 13 742 字节、`tool_mqtt_tools.o` 9 248 字节、`tool_mqtt_client.o` 6 788 字节、`tool_mqtt_filter.o` 6 083 字节、`tool_mqtt_cmd.o` 4 892 字节。不用 MQTT 就整块关掉。
+
+设备框架工具里，通用层 `tool_device_core.o` 是 19 972 字节，I2C 模块 6 596 字节，SPI 模块 5 924 字节，PIN 模块 5 100 字节。关掉的模块编出来是空壳，链接后不占固件空间。
+
+要更小，按这个顺序关：
+
+- MQTT 工具，省 48 349 字节。
+- 多模态与语音转写，省 9 600 字节上下。
+- 不用的设备类模块，一个省 5 000 到 7 000 字节。
+- 技能只留一份，省 15 000 字节上下。
+- MCP 客户端，省 8 408 字节。
+
+技能目录可以另建一个目录，只放要留的 Markdown，再把 `PKG_AGENT_SKILL_DIR` 指过去。也可以单次构建时用 `scons agent_skill_dir=<目录>` 覆盖。
+
 ## 验证
 
 包内自带 utest 用例 `agent.device_tools`，覆盖通用层工具、模块表注册与两个技能。BSP 工作区另有离线 QEMU 回归 `build/skill_qemu/`，在 webclient 边界替换模型，检查技能、上下文压缩、设备工具、MCP 客户端与端到端链路。
@@ -464,6 +529,30 @@ python -B build/skill_qemu/run_llm_live.py
 命令、判据与「这套回归不能证明什么」见 [验证方法](./docs/testing.md)。
 
 控制台那条链路另有一套端到端验证：起 QEMU 跑板子，起控制台，注册账号、加设备、探活，再分别打端侧 agent、网站侧 agent 和 `ask_device` 中继三条链路。步骤见 [resource/web/README.md](./resource/web/README.md) 的「验证」一节。
+
+### QEMU 实测结果
+
+下面是本仓库当前固件在 QEMU 上跑出来的结果。板子用 WinTAP 网卡接宿主机，串口走 `tcp:127.0.0.1:5599`。
+
+| 用例 | 结果 |
+|---|---|
+| 板端联网 | MQTT 连上并订阅 5 个主题，控制台端点刷新成功，域名解析与 NTP 都通 |
+| A2A 流式接口 | 收到 19 帧 SSE：先是 `working` 与 `content` 分片，最后是 `completed` 与 `response`。模型真实回了话 |
+| 控制台端到端 | 6 项全过：注册登录、建会话、带 `Origin` 的 PATCH 改名、建设备、下发能力卡、板端读回下发的能力卡 |
+
+控制台那条用例里，PATCH 改名带上 `Origin` 头返回 200。这是以前报 403 的那条路径。
+
+板端串口日志里能看到能力卡在重启后还在：
+
+<!-- autocorrect:disable -->
+
+```text
+agent card loaded: name=端到端测试卡, file=/agent_card.json
+```
+
+<!-- autocorrect:enable -->
+
+宿主机的 Windows 防火墙会拦 TAP 网卡上的 ICMP，`ping` 板子不通，但 TCP 和 UDP 不受影响，MQTT、控制台 8080、MCP 8765 都正常。
 
 ## 常见问题
 

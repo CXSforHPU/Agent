@@ -546,12 +546,16 @@ agent_send_message <type> <content>
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/.well-known/agent.json` | GET | 能力卡，探活也用它 |
+| `/card` | GET | 读当前生效的能力卡三个字段 |
+| `/card` | POST | 改能力卡，改完写进文件 |
 | `/tasks/send` | POST | 同步发任务，一直等到端侧 agent 跑完 |
 | `/tasks/sendSubscribe` | POST | 流式发任务，先推一帧 `working`，再按 SSE 推最终结果 |
 
 请求体是 `{"message": {"role": "user", "parts": [{"type": "text", "text": "..."}]}}`。同步接口返回 `{"id", "status": {"state"}, "artifacts": [{"parts": [...]}]}`，`state` 取 `working`、`completed`、`failed`。SSE 每一帧也是这个结构，空行分帧。
 
-能力卡里的 `name` 与 `description` 来自 Kconfig 的 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION`。
+流式接口的中间帧，`artifacts[].name` 取四种值：`reasoning` 是思考过程，`tool` 是工具调用，`content` 是正文分片，`response` 是最终完整答案。前三种是增量，`append` 为真表示与前一段续接；`response` 那帧没有 `append` 字段。任务开始时先推一帧 `state` 为 `working` 的空结果，之后每 100 ms 把 `AgentStream` 队列里的事件取空推出去。
+
+`POST /card` 的请求体是 `{"name": "...", "description": "...", "version": "..."}`。`name` 必填，`description` 与 `version` 不传就保持原值。改完写进 `PKG_AGENT_A2A_CARD_PATH` 指定的文件（默认 `/agent_card.json`），重启后还是这份。Kconfig 里的 `PKG_AGENT_A2A_NAME` 与 `PKG_AGENT_A2A_DESCRIPTION` 只当第一次启动的默认值。板端读不到文件、文件为空或不是合法 JSON 时用默认值，不当错误报。
 
 webnet 是单线程的，`/tasks/send` 会占住整个线程直到 agent 跑完。同一台设备并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。控制台的做法是给每台设备加一把锁，探活与聊天不同时进行。
 

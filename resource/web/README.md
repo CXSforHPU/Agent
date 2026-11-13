@@ -324,9 +324,9 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 
 探活就是 GET 能力卡，200 算在线。设备的 `address` 字段填服务根地址，能力卡自动拼在后面。
 
-能力卡的 `name`、`description`、`version` 可以在设备页的「能力卡」里改，走 `POST /api/devices/{id}/card` 下发到板子的 `POST /card`。板端写进 SD 卡的 `/agent_card.json`，启动时读，Kconfig 里的 `PKG_AGENT_A2A_NAME`、`PKG_AGENT_A2A_DESCRIPTION` 只当第一次的默认值。`url` 不参与下发，始终按请求里的 Host 现算；`capabilities` 与 `skills` 目前还是固定的。打开对话框时会先探活，把板子上那份预填进来，描述与版本留空表示不改。
+能力卡的 `name`、`description`、`version` 可以在设备页的「能力卡」里改，走 `POST /api/devices/{id}/card` 下发到板子的 `POST /card`。板端写进 `PKG_AGENT_A2A_CARD_PATH` 指定的文件，默认是 `/agent_card.json`，启动时读，Kconfig 里的 `PKG_AGENT_A2A_NAME`、`PKG_AGENT_A2A_DESCRIPTION` 只当第一次的默认值。`url` 不参与下发，始终按请求里的 Host 现算；`capabilities` 与 `skills` 目前还是固定的。打开对话框时会先探活，把板子上那份预填进来，描述与版本留空表示不改。
 
-端侧的 A2A 通道在 agent 包里，menuconfig 里选 `Agent interaction communication channel → A2A channel (Agent-to-Agent over HTTP)`。它跑在 WebNet 之上，端口用 `WEBNET_PORT`（默认 80），另外把 CGI 根切到 `/`，这样 `/.well-known/agent.json` 这种带点号的路径才能被匹配到。配套选项 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 填能力卡里的名字和描述。
+端侧的 A2A 通道在 agent 包里，menuconfig 里选 `Agent interaction communication channel → A2A channel (Agent-to-Agent over HTTP)`。它跑在 WebNet 之上，端口用 `WEBNET_PORT`（默认 80），另外把 CGI 根切到 `/`，这样 `/.well-known/agent.json` 这种带点号的路径才能被匹配到。配套选项 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 填能力卡里的名字和描述，`PKG_AGENT_A2A_CARD_PATH` 决定能力卡落在哪个文件。
 
 通道是互斥的，选了 A2A 就不能同时用 CLI、WebNet、Debug、LVGL。webnet 要求 lwIP 的 tcpip 线程栈大于 1408，工程里已把 `RT_LWIP_TCPTHREAD_STACKSIZE` 提到 2048。
 
@@ -353,6 +353,12 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
    - 不选设备、但让网站侧 agent 用 `ask_device` 去问设备，验证网页端与端侧的中继。
 
 第 3、4 步的响应慢是正常的：端侧 agent 要真的调一次模型，一条消息几秒到十几秒。
+
+### 自动化的那条链路
+
+上面的四步手工跑过一遍以后，还能用脚本再跑一遍，脚本在 BSP 工作区的 `build/llm_probe/` 下。它起 QEMU、起控制台、按顺序打六项：注册登录、建会话、带 `Origin` 头的 PATCH 改名、建设备、下发能力卡、板端读回下发的能力卡。六项都过才退出码为 0。
+
+带 `Origin` 头的那一项就是以前报 403 的那条路径，现在返回 200。
 
 ### 运维页的验证
 
