@@ -236,10 +236,10 @@ draw.io 源文件：[llm-protocol.drawio](./docs/diagrams/llm-protocol.drawio)
 | LVGL | `PKG_AGENT_LVGL_CHANNEL` | 包内只有接口，`agent_lvgl_ops` 由应用实现 |
 | CLI | `PKG_AGENT_CLI_CHANNEL` | MSH 命令行交互，CTRL+D 退出 |
 | WebNet | `PKG_AGENT_WEBNET_CHANNEL` | HTTP `/cgi-bin/chat`、`/cgi-bin/config`、`/cgi-bin/get_config` |
-| A2A | `PKG_AGENT_A2A_CHANNEL` | HTTP `/.well-known/agent.json`、`/tasks/send`、`/tasks/sendSubscribe`，跑在 WebNet 之上 |
+| A2A | `PKG_AGENT_A2A_CHANNEL` | HTTP `/.well-known/agent.json`、`/tasks/send`、`/tasks/sendSubscribe`、`/card`，跑在 WebNet 之上 |
 | Debug | `PKG_AGENT_DEBUG_CHANNEL` | `agent_send_message` 命令注入消息 |
 
-WebNet 与 A2A 都跑在 webnet 上，共用 `WEBNET_PORT`（默认 80）。A2A 通道启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。配套选项 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 填能力卡里的名字和描述。
+WebNet 与 A2A 都跑在 webnet 上，共用 `WEBNET_PORT`（默认 80）。A2A 通道启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。配套选项 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 填能力卡里的名字和描述，这两个值只当默认：`POST /card` 改过之后板端写进 SD 卡的 `/agent_card.json`，启动时读那份，Kconfig 的值不再生效。`GET /card` 读当前生效的三个字段。
 
 A2A 通道是给控制台或别的 agent 直接调用的，同步接口会一直等到端侧 agent 跑完才返回，一次请求占住 webnet 整个线程。流式接口则边跑边推：任务开始先推一帧 `working`，之后每 100 ms 把 `AgentStream` 队列里的事件取空、各推一帧，直到最终结果那帧为止。帧里的 `artifacts[].name` 取 `reasoning`、`tool`、`content`、`response`，前三个是增量，`response` 是完整答案，`append` 为真表示和前一段续接。
 
@@ -478,6 +478,8 @@ python -B build/skill_qemu/run_llm_live.py
 | 看不到思考过程 | 提供方使用 `reasoning_content` 字段 | 框架同时识别 `reasoning_content` 和 `reasoning` |
 | 工具参数不完整 | 流式分片的 `id` / `name` 为 `null` | 框架按 `index` 合并，缺失 `id` 时用 `call_<index>` 兜底 |
 | 日志出现 `-0x4c` 或 `http status=-76` | TLS 连接被对端或网络重置 | 请求会自动重试 3 次；同时降低上报频率，或调大 MQTT 注入间隔 |
+| 日志里 `getaddrinfo err: 203`，随后所有 HTTP 都连不上 | 203 是 `EAI_MEMORY`。lwIP 的 `MEMP_NUM_NETDB` 默认只有 1，一个线程解析完阻塞在 `connect()` 时占着唯一的解析结果，别的线程拿不到 | menuconfig 把 `RT_MEMP_NUM_NETDB` 调到 4。MQTT 连不上时会一直重试占着这个槽位，网络一抖就把 agent 的请求全带崩 |
+| 板子 `ping` 宿主机全超时、`ping baidu.com` 报 unknown host，但控制台 8080 和 MCP 8765 能通 | 主机 ICS 的 DNS 代理与 NAT 没在工作（`netstat` 里 53 端口没监听）。共享开关还在，但私有侧服务没起来 | 右键以太网 → 属性 → 共享，把「允许其他网络用户…」取消再勾回来，选 qemu 适配器；这一步要管理员权限 |
 | 模型反复调用同一个工具 | 工具结果为空，或模型不认可结果 | 重复调用会被跳过；连续两轮无效调用或达到 `PKG_AGENT_TOOL_LOOP_MAX` 轮时强制文本回答 |
 | CLI 看不到兜底提示 | 兜底文本只投递输出邮箱时，CLI 不显示 | 兜底文本由 `agent_notify()` 同时走流式打印；仍看不到就检查通道是否实现了 `on_context` |
 | 未启动 MQTT 时查询报 `mqtt state busy` | 状态锁只在客户端启动时创建，未启动就取不到 | 锁为幂等懒创建，未启动也能读订阅表和历史 |
