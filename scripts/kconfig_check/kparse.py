@@ -1,8 +1,9 @@
 """Parse-check a Kconfig file with kconfiglib and report errors/warnings.
 
 Usage:
-    python kparse.py Agent.Kconfig.current      # parse + list warnings
-    python kparse.py --values Agent.Kconfig     # also dump PKG_AGENT* values
+    python kparse.py                    # parse the package Kconfig + list warnings
+    python kparse.py --values           # also dump PKG_AGENT* values
+    python kparse.py <other-kconfig>    # check any other file
 """
 
 import os
@@ -18,9 +19,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 os.chdir(HERE)
 os.environ["srctree"] = HERE
 
+# 被测文件默认取软件包自己的 Kconfig（包根目录，两级上一级）
+DEFAULT_TARGET = "../../Kconfig"
+
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 dump = "--values" in sys.argv
-target = args[0] if args else "Agent.Kconfig.current"
+target = args[0] if args else DEFAULT_TARGET
 
 with open(os.path.join(HERE, "Kconfig.test"), "w", encoding="utf-8") as f:
     f.write('source "stubs/Kconfig.deps"\n\nsource "%s"\n' % target)

@@ -12,7 +12,7 @@ CONFIG_PKG_AGENT_TOOL_MQTT_ENABLE=y
 CONFIG_PKG_AGENT_MULTIMODAL_DISABLE=y
 """
 open(os.path.join(HERE,".config.audio"),"w").write(cfg)
-for target in ("Agent.Kconfig", "Agent.Kconfig.current"):
+for target in ("../../Kconfig",):
     open(os.path.join(HERE,"Kconfig.test"),"w").write('source "stubs/Kconfig.deps"\n\nsource "%s"\n' % target)
     k = kconfiglib.Kconfig(os.path.join(HERE,"Kconfig.test"), warn_to_stderr=False)
     k.load_config(os.path.join(HERE,".config.audio"))

@@ -1,7 +1,7 @@
 """Scenario runner: load a Kconfig file under test with given symbol values and
 report the vsnprintf decision + the paho-pipe situation.
 
-Usage: python scenarios.py Agent.Kconfig
+Usage: python scenarios.py [kconfig-path]
 """
 
 import os
@@ -17,7 +17,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 os.chdir(HERE)
 os.environ["srctree"] = HERE
 
-target = sys.argv[1] if len(sys.argv) > 1 else "Agent.Kconfig"
+target = sys.argv[1] if len(sys.argv) > 1 else "../../Kconfig"
 with open(os.path.join(HERE, "Kconfig.test"), "w", encoding="utf-8") as f:
     f.write('source "stubs/Kconfig.deps"\n\nsource "%s"\n' % target)
 

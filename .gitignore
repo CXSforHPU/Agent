@@ -36,8 +36,8 @@ __pycache__/
 *.log
 .DS_Store
 
-# kconfig
-Kconfig
+# 第三方二进制：飞鸽内网穿透启动器，从官网下载后放在 resource/ 下
+/resource/*.exe
 
 # web 控制台：工具链、依赖与产物全部不进版本库
 /resource/web/server/.jdk/

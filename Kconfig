@@ -1,0 +1,1087 @@
+# Kconfig file for package Agent
+menuconfig PKG_USING_AGENT
+    bool "Lightweight Agent software for RT-Thread"
+    select PKG_USING_CJSON
+    select PKG_USING_WEBCLIENT
+    select PKG_USING_MBEDTLS
+    select PKG_USING_MBEDTLS_DIGICERT_ROOT_CA
+    select PKG_USING_MBEDTLS_CLOBALSIGN_ROOT_CA
+    select RT_USING_ULOG
+
+# 完整版 vsnprintf（%f/%e/%g、long long）的来源。判定依据是「内核是否已经
+# 定义 rt_vsnprintf 符号」，而不是单纯的内核版本号：
+#
+#   * RT_KLIBC_USING_LIBC_VSNPRINTF = n（默认）
+#       klibc 会编译 rt_vsnprintf_std.c 或 rt_vsnprintf_tiny.c，两者都是强符号
+#       int rt_vsnprintf(...) -> 内核已定义该符号
+#   * RT_KLIBC_USING_LIBC_VSNPRINTF = y
+#       klibc 直接调用 libc 的 vsnprintf，内核不再定义该符号
+#
+# 所以「内核已定义」时再启用 pkgs/rt_vsnprintf_full 必然重复定义，链接报
+#     multiple definition of `rt_vsnprintf'
+# 注意 RT-Thread 4.1 起 klibc 就已经是 std/tiny 两套实现，所以只按
+# RT_VERSION_MAJOR < 5 判断会误选（这正是 4.1.x 上重复定义的原因）。
+#
+#   * 但内核的 tiny 实现（RT_KLIBC_USING_VSNPRINTF_STANDARD = n）只是「符号存在」，
+#     %f/%e/%g 会吃掉参数而不输出内容（见 rt_vsnprintf_tiny.c 的 case 'f'），
+#     Agent 的 %f 会变成空串，因此还需要
+#         RT_KLIBC_USING_VSNPRINTF_STANDARD = y
+#     （并保持 DECIMAL/EXPONENTIAL specifiers 打开）才有完整浮点支持。
+#
+#   * pkgs/rt_vsnprintf_full 自己的 Kconfig 是 depends on RT_VER_NUM < 0x50200：
+#     RT-Thread >= 5.2 上该包无法被选中，此时只能用上面的 STANDARD = y 方案。
+#
+# 结论（auto 模式）：内核没有定义该符号 -> 选包；内核已定义 -> 不选包，
+# 并在菜单里提示是否还需要打开 STANDARD。也可以用下面的
+# PKG_AGENT_VSNPRINTF_SRC_SEL 手动强制。
+    select PKG_USING_RT_VSNPRINTF_FULL if PKG_AGENT_VSNPRINTF_NEED_PKG
+
+    default n
+
+if PKG_USING_AGENT
+
+    config PKG_AGENT_PATH
+        string
+        default "/packages/ai/Agent"
+
+    menu "Agent Build Options"
+
+        # ------------------------------------------------------------------
+        # 隐藏判定变量：menuconfig 中不显示，但会写进 .config，便于排查
+        # 「为什么这个包被/没被选中」。全部由内核符号推导，不需要人工维护。
+        # ------------------------------------------------------------------
+
+        # 内核是否已经提供 rt_vsnprintf 符号（klibc 的 std/tiny 都会定义；
+        # RT_KLIBC_USING_LIBC_VSNPRINTF=y 时 klibc 不编译这两者，符号不存在）
+        # 说明：RT_VER_NUM 在 4.x/5.x 都是内核自己的隐藏 hex 符号（值就是内核版本），
+        # 直接读它比维护一个人工版本号可靠；未定义它的极老内核在 Kconfig 里无法与
+        # 「比较结果为假」区分，因此这里不做人工兜底，需要时用 USE_PKG 强制。
+        config PKG_AGENT_KLIBC_HAS_VSNPRINTF
+            bool
+            default y if RT_VER_NUM >= 0x40100 && !RT_KLIBC_USING_LIBC_VSNPRINTF
+
+        # 内核提供的是否为「支持 %f/%e/%g 的完整实现」
+        # （tiny 实现符号存在但不支持浮点，Agent 的 %f 会打印成空串）
+        config PKG_AGENT_KLIBC_FULL_VSNPRINTF
+            bool
+            default y if PKG_AGENT_KLIBC_HAS_VSNPRINTF && RT_KLIBC_USING_VSNPRINTF_STANDARD && RT_KLIBC_USING_VSNPRINTF_DECIMAL_SPECIFIERS
+
+        # pkgs/rt_vsnprintf_full 本身是否可用（其 Kconfig: depends on RT_VER_NUM < 0x50200）
+        config PKG_AGENT_VSNPRINTF_PKG_USABLE
+            bool
+            default y if RT_VER_NUM < 0x50200
+
+        # 最终是否需要 select pkgs/rt_vsnprintf_full
+        # auto 分支只在「内核没有该符号」且「该包可用」时选；USE_PKG 是人工强制
+        config PKG_AGENT_VSNPRINTF_NEED_PKG
+            bool
+            default y if PKG_AGENT_VSNPRINTF_USE_PKG && PKG_AGENT_VSNPRINTF_PKG_USABLE
+            default y if PKG_AGENT_VSNPRINTF_AUTO && !PKG_AGENT_KLIBC_HAS_VSNPRINTF && PKG_AGENT_VSNPRINTF_PKG_USABLE
+
+
+        config PKG_AGENT_RT_VERSION_MAJOR
+            int "Target RT-Thread major version (informational)"
+            range 3 9
+            default 5
+            help
+                Informational: the automatic decision below reads the kernel's
+                own RT_VER_NUM symbol (RT-Thread 4.x/5.x define it), so nothing
+                has to be kept in sync manually.
+
+                The real question is not the version but whether klibc defines
+                rt_vsnprintf:
+                  RT_KLIBC_USING_LIBC_VSNPRINTF=n : klibc compiles
+                      rt_vsnprintf_std.c / rt_vsnprintf_tiny.c, which already
+                      define rt_vsnprintf -> the package must NOT be selected,
+                      otherwise the link fails with
+                          multiple definition of `rt_vsnprintf'
+                      This is true for RT-Thread >= 4.1 as well, which is why a
+                      version-only check ("major < 5") selected the package
+                      wrongly on 4.1.x and 5.2/5.3.
+                  RT_KLIBC_USING_LIBC_VSNPRINTF=y : klibc defers to the libc
+                      vsnprintf, the kernel does not define the symbol, and the
+                      package can provide it (below RT-Thread 5.2 only; on 5.2+
+                      libc's own vsnprintf already handles %f/%e).
+
+                Only a kernel predating RT_VER_NUM cannot be classified
+                automatically (Kconfig cannot distinguish "undefined" from
+                "comparison is false"); on such a tree use
+                PKG_AGENT_VSNPRINTF_USE_PKG, or enable
+                PKG_USING_RT_VSNPRINTF_FULL directly in its own menu.
+
+        choice PKG_AGENT_VSNPRINTF_SRC_SEL
+            prompt "Full vsnprintf source"
+            default PKG_AGENT_VSNPRINTF_AUTO
+            help
+                Source of the full-featured vsnprintf (used for %f/%e and long integers).
+
+            config PKG_AGENT_VSNPRINTF_AUTO
+                bool "auto - decide by klibc capability and RT-Thread version (recommended)"
+                help
+                    Kernel already defines rt_vsnprintf
+                    (RT_VER_NUM >= 0x40100 and RT_KLIBC_USING_LIBC_VSNPRINTF=n)
+                        -> use the kernel implementation, never select the package
+                    Kernel does not define it
+                    (RT_KLIBC_USING_LIBC_VSNPRINTF=y) and RT-Thread < 5.2
+                        -> select PKG_USING_RT_VSNPRINTF_FULL
+                    RT-Thread >= 5.2
+                        -> the package is unavailable (its own Kconfig says
+                           "depends on RT_VER_NUM < 0x50200"), nothing is
+                           selected. That is fine either way: with klibc
+                           (RT_KLIBC_USING_LIBC_VSNPRINTF=n) the kernel std
+                           implementation handles %f when
+                           RT_KLIBC_USING_VSNPRINTF_STANDARD=y, and with
+                           RT_KLIBC_USING_LIBC_VSNPRINTF=y the libc vsnprintf
+                           does.
+
+                    Note: the kernel's tiny implementation
+                    (RT_KLIBC_USING_VSNPRINTF_STANDARD=n, the 32-bit default!)
+                    defines the symbol but prints nothing for %f/%e/%g, so the
+                    agent's float output would be silently empty even though
+                    the symbol exists - the menu shows a WARNING line for that
+                    case. Fix it with RT_KLIBC_USING_VSNPRINTF_STANDARD=y
+                    (Kernel -> klibc -> rt_vsnprintf options).
+
+            config PKG_AGENT_VSNPRINTF_USE_KLIB
+                bool "kernel klibc only - never select rt_vsnprintf_full"
+                help
+                    Use this when you are sure the kernel already provides a full
+                    rt_vsnprintf (RT_KLIBC_USING_VSNPRINTF_STANDARD=y on RT-Thread 5.x,
+                    or RT_KLIBC_USING_LIBC_VSNPRINTF=y with newlib).
+
+            config PKG_AGENT_VSNPRINTF_USE_PKG
+                bool "pkgs/rt_vsnprintf_full - force select"
+                help
+                    Force using pkgs/rt_vsnprintf_full. You MUST also stop the kernel
+                    from defining rt_vsnprintf, i.e. set
+                        RT-Thread Kernel -> klibc -> RT_KLIBC_USING_LIBC_VSNPRINTF = y
+                    otherwise the link fails with
+                        multiple definition of `rt_vsnprintf'
+                    The package itself is only offered on RT-Thread < 5.2
+                    (depends on RT_VER_NUM < 0x50200), so on 5.2 and later this
+                    choice has no effect and the menu shows that - use
+                    RT_KLIBC_USING_VSNPRINTF_STANDARD=y (klibc) or
+                    RT_KLIBC_USING_LIBC_VSNPRINTF=y (libc) instead.
+        endchoice
+
+        # 下面是让 menuconfig 直接显示自动判定结果的提示行（按依赖显示）
+        comment "vsnprintf: kernel klibc provides rt_vsnprintf -> pkgs/rt_vsnprintf_full NOT selected"
+            depends on PKG_AGENT_KLIBC_HAS_VSNPRINTF && !PKG_AGENT_VSNPRINTF_NEED_PKG
+
+        comment "vsnprintf: WARNING klibc vsnprintf has no %f - enable RT_KLIBC_USING_VSNPRINTF_STANDARD (or use the package)"
+            depends on !PKG_AGENT_KLIBC_FULL_VSNPRINTF && !PKG_AGENT_VSNPRINTF_NEED_PKG
+
+        comment "vsnprintf: pkgs/rt_vsnprintf_full IS selected (kernel has no rt_vsnprintf)"
+            depends on PKG_AGENT_VSNPRINTF_NEED_PKG
+
+        comment "vsnprintf: rt_vsnprintf_full unavailable on RT-Thread >= 5.2 - set RT_KLIBC_USING_VSNPRINTF_STANDARD=y"
+            depends on PKG_AGENT_VSNPRINTF_USE_PKG && !PKG_AGENT_VSNPRINTF_PKG_USABLE
+
+    endmenu
+
+    menu "Model & Endpoint"
+        config PKG_AGENT_API_KEY
+            string "LLM service API Key"
+            default "sk-**-**"
+            help
+                API key for accessing large-model LLM service.
+
+        config PKG_AGENT_MODEL_NAME
+            string "Target LLM model name"
+            default "deepseek-flash"
+            help
+                Specify the target LLM model identifier.
+
+        # LLM 协议选择：OpenAI 的 /chat/completions 与 Anthropic 的 /v1/messages
+        choice PKG_AGENT_API_PROTOCOL_SEL
+            prompt "LLM API protocol"
+            default PKG_AGENT_API_PROTOCOL_OPENAI
+            help
+                Wire format of the LLM service.
+                OpenAI: POST /chat/completions, Bearer token, delta-based SSE.
+                Anthropic: POST /v1/messages, x-api-key header, event-based SSE.
+                This choice only sets the default protocol. A running agent can
+                switch protocol through agent_config_set_protocol().
+                The Anthropic options below only show up when Anthropic is
+                picked here.
+
+            config PKG_AGENT_API_PROTOCOL_OPENAI
+                bool "OpenAI"
+
+            config PKG_AGENT_API_PROTOCOL_ANTHROPIC
+                bool "Anthropic"
+        endchoice
+
+        config PKG_AGENT_API_BASE_URL_OPENAI
+            string "OpenAI base URL"
+            default "https://api.deepseek.com"
+            help
+                Service root of the OpenAI wire format, without path. The
+                framework appends /chat/completions when it sends a request.
+                https://api.deepseek.com/chat/completions
+                -> base URL: https://api.deepseek.com
+
+        config PKG_AGENT_API_BASE_URL_ANTHROPIC
+            string "Anthropic base URL"
+            default "https://api.deepseek.com/anthropic"
+            help
+                Service root of the Anthropic wire format, without path. The
+                framework appends /v1/messages when it sends a request.
+                https://api.deepseek.com/anthropic/v1/messages
+                -> base URL: https://api.deepseek.com/anthropic
+
+        config PKG_AGENT_ANTHROPIC_VERSION
+            string "Anthropic API version header"
+            depends on PKG_AGENT_API_PROTOCOL_ANTHROPIC
+            default "2023-06-01"
+            help
+                Value of the anthropic-version request header.
+                This option only shows up when the protocol is Anthropic.
+
+        config PKG_AGENT_ANTHROPIC_MAX_TOKENS
+            int "Anthropic max output tokens"
+            depends on PKG_AGENT_API_PROTOCOL_ANTHROPIC
+            default 4096
+            range 256 32768
+            help
+                Upper bound of the max_tokens field of an Anthropic request.
+                The service rejects a value larger than the model's own output
+                limit, so the value sent is min(request value, this cap).
+                This option only shows up when the protocol is Anthropic.
+
+    endmenu
+
+    menu "External Server"
+
+        config PKG_AGENT_ENDPOINT_INDEPENDENT
+            bool
+            default y
+
+        config PKG_AGENT_CONSOLE_URL
+            string "Web console base URL"
+            default "http://192.168.137.1:8080"
+            help
+                Device-accessible Web console URL, used by all automatic
+                endpoints. The device requests /api/ops/endpoints.
+
+        menu "File server"
+            depends on PKG_AGENT_MULTIMODAL_ENABLE
+            choice PKG_AGENT_FILE_SOURCE
+                prompt "Address source"
+                default PKG_AGENT_FILE_MANUAL
+
+                config PKG_AGENT_FILE_MANUAL
+                    bool "Manual - enter URL"
+
+                config PKG_AGENT_FILE_AUTO
+                    bool "Auto - obtain from Web console"
+            endchoice
+
+            config PKG_AGENT_WEB_SERVER_URL
+                string "File server URL" if PKG_AGENT_FILE_MANUAL
+                default "http://192.168.137.1:8000"
+                help
+                    Manual mode uses this address. Automatic mode retrieves
+                    the address from Web and uses this value as fallback.
+        endmenu
+
+        menu "MCP gateway"
+            depends on PKG_AGENT_TOOL_MCP_ENABLE
+            choice PKG_AGENT_MCP_SOURCE
+                prompt "Address source"
+                default PKG_AGENT_MCP_MANUAL
+
+                config PKG_AGENT_MCP_MANUAL
+                    bool "Manual - enter URL"
+
+                config PKG_AGENT_MCP_AUTO
+                    bool "Auto - obtain from Web console"
+            endchoice
+
+            config PKG_AGENT_MCP_SERVER_URL
+                string "MCP gateway URL" if PKG_AGENT_MCP_MANUAL
+                default "http://192.168.137.1:8765/mcp"
+                help
+                    Manual mode uses this address. Automatic mode retrieves
+                    the address from Web and uses this value as fallback.
+        endmenu
+
+        menu "EMQX MQTT broker"
+            depends on PKG_AGENT_TOOL_MQTT_ENABLE
+            choice PKG_AGENT_EMQX_SOURCE
+                prompt "Address source"
+                default PKG_AGENT_EMQX_MANUAL
+
+                config PKG_AGENT_EMQX_MANUAL
+                    bool "Manual - enter URL"
+
+                config PKG_AGENT_EMQX_AUTO
+                    bool "Auto - obtain from Web console"
+            endchoice
+
+            config PKG_AGENT_TOOL_MQTT_BROKER_URL
+                string "EMQX MQTT broker URL" if PKG_AGENT_EMQX_MANUAL
+                default "tcp://broker.emqx.io:1883"
+                help
+                    Manual mode uses this address. Automatic mode retrieves
+                    the address from Web and uses this value as fallback.
+        endmenu
+
+        config PKG_AGENT_EXT_SERVER_AUTO
+            bool
+            default y if PKG_AGENT_FILE_AUTO || PKG_AGENT_MCP_AUTO || PKG_AGENT_EMQX_AUTO
+
+        if PKG_AGENT_EXT_SERVER_AUTO
+            config PKG_AGENT_CONSOLE_API
+                string "Console endpoint path"
+                default "/api/ops/endpoints"
+
+            config PKG_AGENT_ENDPOINT_TIMEOUT_MS
+                int "Discovery response timeout (ms)"
+                default 3000
+                range 500 30000
+        endif
+
+    endmenu
+
+    menu "Multimodal"
+
+        # Multimodal enable/disable choice (mode 开关)
+        choice PKG_AGENT_MULTIMODAL_MODE_SEL
+            prompt "Multimodal feature switch"
+            default PKG_AGENT_MULTIMODAL_DISABLE
+            help
+                Enable or disable agent multimodal(image/file/audio) capability.
+
+            config PKG_AGENT_MULTIMODAL_DISABLE
+                bool "Disable multimodal function"
+
+            config PKG_AGENT_MULTIMODAL_ENABLE
+                select WEBCLIENT_USING_FILE_DOWMLOAD
+                bool "Enable multimodal function"
+                help
+                Enable image parsing and file upload/download for agent.
+        endchoice
+
+        if PKG_AGENT_MULTIMODAL_ENABLE
+            menu "File Server"
+                config PKG_AGENT_FILE_OP_THREAD_SIZE
+                    int "File operation thread stack size"
+                    default 4096
+                    range 2048 16384
+                    help
+                        Stack size for agent file-operation worker thread.
+
+            endmenu
+
+            menu "Speech"
+
+                menu "STT"
+                    choice PKG_AGENT_STT_MODE_SEL
+                        prompt "Enable STT for communication by audio"
+                        default PKG_AGENT_STT_ENABLE
+
+                        config PKG_AGENT_STT_ENABLE
+                            bool "Enable STT"
+                        config PKG_AGENT_STT_DISABLE
+                            bool "Disable STT"
+                    endchoice
+
+                    # STT 接口地址由 PKG_AGENT_WEB_SERVER_URL 拼出：<地址>/stt
+                endmenu
+
+                menu "TTS"
+                    choice PKG_AGENT_TTS_MODE_SEL
+                        prompt "Enable TTS for communication by audio"
+                        default PKG_AGENT_TTS_ENABLE
+
+                        config PKG_AGENT_TTS_ENABLE
+                            bool "Enable TTS"
+                        config PKG_AGENT_TTS_DISABLE
+                            bool "Disable TTS"
+                    endchoice
+
+                    if PKG_AGENT_TTS_ENABLE
+                        # TTS 接口地址由 PKG_AGENT_WEB_SERVER_URL 拼出：<地址>/tts
+
+                        config PKG_AGENT_TTS_SAVE_FILE
+                            string "Synthesized WAV save path"
+                            default "/tts.wav"
+                            help
+                                合成结果落盘的完整路径，必须是可写文件系统。
+                                根目录挂 romfs 的板子要换到 /sdcard 或 /flash，
+                                例如 "/sdcard/tts.wav"。
+                                msh_agent_tts 用 -o 可以临时覆盖这个路径。
+                                名字不能以 _PATH 结尾：RT-Thread 用 PKG_*_PATH
+                                记录软件包安装路径，mk_rtconfig 会把它从
+                                rtconfig.h 里删掉。
+
+                        config PKG_AGENT_TTS_AUTO_PLAY
+                            depends on PKG_AGENT_DRIVER_AUDIO
+                            bool "Auto play the answer by voice"
+                            default n
+                            help
+                                把每一轮回复文本交给后台线程合成并播放。
+                                需要板上注册了 sound 设备，且 TTS 服务端常驻。
+                                合成一句要 3 s～5 s（冷启动可到 180 s），
+                                只在串行通道里逐条回答时才适合打开。
+                    endif
+                endmenu
+
+            endmenu
+        endif
+
+    endmenu
+
+    # 音频驱动与「多模态」无关，从多模态开关里移出来，避免必须打开多模态才能用音频
+    menu "Audio Driver"
+        config PKG_AGENT_DRIVER_AUDIO
+            select PKG_USING_WAVPLAYER
+            select PKG_WP_USING_RECORD
+            select RT_USING_AUDIO
+            bool "Enable Agent Driver Audio"
+            help
+                Enable the agent audio driver (wav play/record).
+
+                NOTES on the selects:
+                  * PKG_WP_USING_RECORD is the real wavplayer option name
+                    (PKG_WP_USINGRECORD does not exist and was a silent no-op).
+                  * RT_USING_AUDIO comes from the Audio framework, so it is
+                    portable across BSPs; the previous
+                    "select BSP_USING_AUDIO" was BSP specific and does not
+                    exist in every BSP (this BSP uses BSP_DRV_AUDIO, which
+                    already selects RT_USING_AUDIO) - enable your BSP's own
+                    audio/sound driver first.
+                  * This option used to be nested inside
+                    PKG_AGENT_MULTIMODAL_ENABLE, so the audio driver could
+                    not be enabled without multimodal; it is now independent.
+    endmenu
+
+    menu "Buffer & Length Configuration"
+        config PKG_AGENT_WEB_SOCKET_BUFSZ
+            int "Webclient session buffer size"
+            default 2048
+            range 512 8192
+            help
+                Send/receive buffer size for webclient http session.
+
+        config PKG_AGENT_RESP_BUFSZ
+            int "HTTP response temporary buffer size"
+            default 2048
+            range 512 8192
+
+        config PKG_AGENT_MAX_REASONING_LEN
+            int "Max reasoning text buffer length"
+            default 2048
+            range 256 8192
+            help
+                Upper limit buffer length for LLM reasoning content.
+
+        config PKG_AGENT_MAX_CONTENT_LEN
+            int "Max chat message content length"
+            default 2048
+            range 256 8192
+            help
+                Maximum payload length of single chat message.
+
+        config PKG_AGENT_STREAM_LINE_BUFSZ
+            int "SSE streaming parse line buffer size"
+            default 1024
+            range 512 8192
+            help
+                Line buffer for parsing SSE streaming chunk response.
+                NOTE: keep >= 1024. A single SSE chunk carrying tool_calls is
+                about 310+ bytes, and an over-long line is discarded, which makes
+                the framework miss tool calls (model looks like it never calls tools).
+
+        config PKG_AGENT_MAX_TOOL_ARG_LEN
+            int "Max tool-call JSON argument length"
+            default 1024
+            range 256 8192
+            help
+                Maximum buffer length for tool call JSON arguments.
+                NOTE: keep >= 512; streaming arguments are appended fragment by
+                fragment and are dropped once this limit is exceeded.
+
+        config PKG_AGENT_MESSAGE_TRIM
+            int "History message compression threshold"
+            default 6
+            range 2 64
+            help
+                Compress when history exceeds N messages (excluding the system
+                prompt and rolling summary). Keep at least N/2 recent messages,
+                expanding to whole user turns so tool calls stay with results.
+                Older turns and the previous summary are summarized by the LLM
+                in one extra request. Replace only with a complete, shorter
+                summary; on failure keep the original history without deletion.
+                A single long turn is kept intact even if it exceeds N.
+    endmenu
+
+    menu "Communication Channel"
+
+        choice PKG_AGENT_COMMUNICATION_CHANNEL_SEL
+            prompt "Agent interaction communication channel"
+            default PKG_AGENT_CLI_CHANNEL
+            help
+                Select input/output channel for agent user interaction.
+
+            config PKG_AGENT_CLI_CHANNEL
+                bool "CLI channel (RT-Thread MSH command-line)"
+                help
+                    Interact with agent via MSH shell command line.
+
+            config PKG_AGENT_WEBNET_CHANNEL
+                select PKG_USING_WEBNET
+                select WEBNET_USING_CGI
+                bool "WebNet channel (WebSocket / HTTP)"
+                help
+                    Interact with agent via web network service.
+
+            config PKG_AGENT_DEBUG_CHANNEL
+                bool "Debug test channel"
+                help
+                    For developer test only, send message via msh command api.
+            config PKG_AGENT_LVGL_CHANNEL
+                bool "LVGL channel"
+                help
+                    Interact with agent via LVGL GUI.
+
+            config PKG_AGENT_A2A_CHANNEL
+                select PKG_USING_WEBNET
+                select WEBNET_USING_CGI
+                bool "A2A channel (Agent-to-Agent over HTTP)"
+                help
+                    Serve the A2A protocol so a remote console can read the agent
+                    card and submit tasks. Runs on top of WebNet: the listen port
+                    is WEBNET_PORT, and the CGI root is switched to "/" so the
+                    A2A paths resolve. Pick only one channel.
+
+        endchoice
+
+        if PKG_AGENT_A2A_CHANNEL
+            menu "A2A Channel"
+
+                config PKG_AGENT_A2A_NAME
+                    string "Agent name"
+                    default "RT-Thread Agent"
+                    help
+                        name field of /.well-known/agent.json.
+
+                config PKG_AGENT_A2A_DESCRIPTION
+                    string "Agent description"
+                    default "Embedded agent running on RT-Thread"
+                    help
+                        description field of the agent card.
+
+                config PKG_AGENT_A2A_CARD_PATH
+                    string "Agent card file path"
+                    default "/agent_card.json"
+                    help
+                        Where POST /card stores the card. The file is read when
+                        the channel starts, and /.well-known/agent.json serves
+                        what it holds; the two options above only provide the
+                        first-boot defaults. Needs a writable file system, the
+                        SD card mounted at / for example.
+
+            endmenu
+        endif
+
+    endmenu
+
+    menu "Agent Skills Configuration"
+        config PKG_AGENT_SKILL_DIR
+            string "Markdown skill directory"
+            default "skills"
+            help
+                Recursively embed .md files as const C strings at build time.
+                Relative paths are resolved from the Agent package directory;
+                absolute paths are also supported. Use UTF-8 Markdown files.
+                The relative path without .md is the skill name.
+                Override for one build with scons agent_skill_dir=<directory>.
+                Changes require rebuilding firmware; no runtime filesystem is needed.
+    endmenu
+
+    menu "Agent Tools Configuration"
+
+        config PKG_AGENT_TOOL_LOOP_MAX
+            int "Max tool call rounds per request"
+            default 6
+            range 1 32
+            help
+                How many rounds of tool calls one user request may run.
+                Each round sends the model a request, executes the tools it
+                asks for, and feeds the results back. When the limit is hit,
+                the framework sends one more request without tools and asks
+                the model for a final text answer.
+
+                Raise it when a task needs more steps, for example a desktop
+                task that has to work through several windows in turn. Every
+                extra round costs one more LLM request, so a larger value
+                costs more time and tokens.
+
+        menu "Agent Tool: Mqtt Client"
+
+            config PKG_AGENT_TOOL_MQTT_ENABLE
+                bool "Enable MQTT client tool"
+                select PKG_USING_PAHOMQTT
+            # 工具依赖 paho 的 pipe 模式（UDP 模式不提供 publish/subscribe 接口）。
+            # 注意：PAHOMQTT_PIPE_MODE / PAHOMQTT_UDP_MODE 在 paho 的 Kconfig 里是
+            # 同一个 choice 的成员，select 对 choice 成员无效（kconfiglib 会报
+            # "select/imply has no effect on choice symbols"），所以这里不能 select，
+            # 原来那句 select PAHOMQTT_PIPE_MODE 实际不起作用。请在 paho menuconfig
+            # 里手动确认 "MQTT mode" 选的是 Pipe mode；若选成 UDP，
+            # tool_mqtt.h 会在编译期直接 #error 提示。
+                default n
+                help
+                    Enable the MQTT tool set for the agent:
+                      * mqtt_connect    : connect to the broker (idempotent)
+                      * mqtt_disconnect : disconnect from the broker, keeping the
+                                          subscription table so a later connect
+                                          re-subscribes automatically
+                      * mqtt_publish    : publish a command to a topic
+                                          (checks the connection first)
+                      * mqtt_subscribe  : subscribe/unsubscribe topics at runtime
+                                          (delivery mode: filter/auto/poll)
+                      * mqtt_rule       : threshold rules, only wake the agent when out of range
+                      * mqtt_history    : summarize recent messages/payloads + numeric
+                                          min/max/avg, so the agent can assess the recent
+                                          situation (read-only)
+                      * mqtt_receive    : consume buffered messages on demand
+
+                    Requires paho-mqtt in PIPE mode: select it manually in the
+                    paho menuconfig ("MQTT mode" -> Pipe mode), it cannot be
+                    selected from here because it is a choice member.
+
+                    IMPORTANT (paho side, must be set in the paho menuconfig):
+                      * PKG_PAHOMQTT_SUBSCRIBE_HANDLERS >= PKG_AGENT_TOOL_MQTT_MAX_SUB_TOPICS
+                        (default 4; with the paho default of 1 only one topic can be subscribed)
+                      * RT_PKG_MQTT_THREAD_STACK_SIZE >= 8192
+                        (the paho worker opens "/dev/MQTTn" through DFS, whose path
+                         resolution allocates ~12KB and needs stack; a 4KB stack
+                         overflows it, corrupts heap metadata and hangs the system)
+
+            if PKG_AGENT_TOOL_MQTT_ENABLE
+
+                menu "MQTT Connection"
+
+                    config PKG_AGENT_TOOL_MQTT_CLIENT_ID
+                        string "MQTT client ID"
+                        default "rt-thread-agent"
+                        help
+                            MQTT client ID. Two devices sharing one ID will kick
+                            each other's session off the broker.
+
+                    config PKG_AGENT_TOOL_MQTT_USERNAME
+                        string "MQTT username"
+                        default ""
+
+                    config PKG_AGENT_TOOL_MQTT_PASSWORD
+                        string "MQTT password"
+                        default ""
+
+                    config PKG_AGENT_TOOL_MQTT_WILLMSG
+                        string "MQTT will message"
+                        default "Goodbye from RT-Thread Agent"
+                        help
+                            Last-will payload, published by the broker on the
+                            publish topic when the client drops unexpectedly.
+
+                    config PKG_AGENT_TOOL_MQTT_KEEPALIVE_SEC
+                        int "MQTT keepalive interval (s)"
+                        default 60
+                        range 10 600
+
+                    config PKG_AGENT_TOOL_MQTT_QOS
+                        int "MQTT QoS level"
+                        default 1
+                        range 0 2
+                        help
+                            Reserved for compatibility: paho in PIPE mode only
+                            implements QoS1, and the agent MQTT tool always uses
+                            QoS1 regardless of this value.
+
+                endmenu
+
+                menu "MQTT Topics & Delivery"
+
+                    config PKG_AGENT_TOOL_MQTT_PUB_TOPIC
+                        string "Default publish topic"
+                        default "agent/pub"
+                        help
+                            Topic used when a publish call does not specify one.
+
+                    config PKG_AGENT_TOOL_MQTT_SUB_TOPIC
+                        string "Default subscribe topic"
+                        default "agent/sub"
+                        help
+                            Topic subscribed automatically when the client starts.
+
+                    choice PKG_AGENT_TOOL_MQTT_DEFAULT_MODE_SEL
+                        prompt "Default topic delivery mode"
+                        default PKG_AGENT_TOOL_MQTT_DEFAULT_MODE_FILTER
+                        help
+                            How messages of subscribed topics are delivered to the agent.
+
+                        config PKG_AGENT_TOOL_MQTT_DEFAULT_MODE_FILTER
+                            bool "filter - only advice/threshold breaches wake the agent"
+                            help
+                                Messages are filtered locally: the agent is only
+                                woken up when a message looks like a question or
+                                matches an mqtt_rule threshold. Routine data is
+                                counted and kept in the per-topic history instead.
+
+                        config PKG_AGENT_TOOL_MQTT_DEFAULT_MODE_AUTO
+                            bool "auto - forward every message"
+
+                        config PKG_AGENT_TOOL_MQTT_DEFAULT_MODE_POLL
+                            bool "poll - never forward, fetch with mqtt_receive/mqtt_history"
+                    endchoice
+
+                    config PKG_AGENT_TOOL_MQTT_AUTO_SUB_DEFAULT
+                        bool "Auto subscribe the default topic at startup"
+                        default y
+
+                endmenu
+
+                menu "MQTT Capacity & Buffers"
+
+                    config PKG_AGENT_TOOL_MQTT_BUF_SIZE
+                        int "paho send/receive buffer size"
+                        default 1024
+                        range 256 8192
+                        help
+                            Buffer used by paho for building/parsing packets.
+
+                    config PKG_AGENT_TOOL_MQTT_MAX_SUB_TOPICS
+                        int "Max concurrent subscriptions"
+                        default 4
+                        range 1 16
+                        help
+                            Capped automatically by paho's MAX_MESSAGE_HANDLERS
+                            (PKG_PAHOMQTT_SUBSCRIBE_HANDLERS).
+
+                    config PKG_AGENT_TOOL_MQTT_MAX_RULES
+                        int "Max threshold rules"
+                        default 4
+                        range 1 16
+
+                    config PKG_AGENT_TOOL_MQTT_TOPIC_MAX_LEN
+                        int "Topic string buffer length"
+                        default 64
+                        range 16 256
+
+                    config PKG_AGENT_TOOL_MQTT_PAYLOAD_MAX_LEN
+                        int "Max received payload length"
+                        default 256
+                        range 32 1024
+                        help
+                            Longer payloads are truncated and marked as truncated.
+
+                    config PKG_AGENT_TOOL_MQTT_MAX_PUB_LEN
+                        int "Max published payload length"
+                        default 256
+                        range 32 1024
+                        help
+                            Also bounded by the paho buffer and the rt_pipe size;
+                            a too-long publish is rejected with an error text.
+
+                    config PKG_AGENT_TOOL_MQTT_FIELD_MAX_LEN
+                        int "Max JSON field name length (rules)"
+                        default 24
+                        range 8 64
+
+                    config PKG_AGENT_TOOL_MQTT_LAST_PAYLOAD_LEN
+                        int "Cached last-payload length per topic"
+                        default 96
+                        range 16 256
+                        help
+                            Last payload per subscription, shown by mqtt_tool status
+                            so the agent can answer "what is the current value".
+
+                    config PKG_AGENT_TOOL_MQTT_HISTORY_DEPTH
+                        int "Recent messages kept per topic (mqtt_history)"
+                        default 8
+                        range 1 32
+                        help
+                            Per-topic ring of recent raw payloads. This is the data
+                            source of the mqtt_history tool, which summarizes recent
+                            readings plus numeric min/max/avg/last for the agent -
+                            including messages that were filtered locally and never
+                            sent to the LLM. mqtt_history is read-only; mqtt_receive
+                            consumes the separate buffered-message window.
+
+                    config PKG_AGENT_TOOL_MQTT_HISTORY_PAYLOAD_LEN
+                        int "Payload length kept in history"
+                        default 128
+                        range 16 512
+                        help
+                            Longer payloads are stored truncated in the history.
+
+                    config PKG_AGENT_TOOL_MQTT_RX_QUEUE_DEPTH
+                        int "Receive queue depth (callback -> rx thread)"
+                        default 16
+                        range 2 64
+                        help
+                            Messages queue here while the agent is busy; the oldest
+                            is dropped when full.
+
+                    config PKG_AGENT_TOOL_MQTT_POLL_DEPTH
+                        int "Rolling window depth"
+                        default 8
+                        range 1 32
+                        help
+                            Ring buffer for poll mode and for locally filtered
+                            messages, consumed on demand with mqtt_receive.
+
+                endmenu
+
+                menu "MQTT Throttling & Alerts"
+
+                    config PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS
+                        int "Min interval between two agent injections (ms)"
+                        default 1000
+                        range 0 60000
+                        help
+                            Guards the LLM endpoint: requests sent too frequently
+                            get reset by the server/proxy, which shows up as
+                            "mbedtls_client_read data error -0x4c" plus
+                            "chat: POST failed http status=-76".
+
+                    config PKG_AGENT_TOOL_MQTT_INJECT_BATCH_MAX
+                        int "Max messages merged into one injection"
+                        default 5
+                        range 1 16
+
+                    config PKG_AGENT_TOOL_MQTT_BUSY_WAIT_MS
+                        int "Max wait for an idle agent before buffering (ms)"
+                        default 180000
+                        range 0 900000
+                        help
+                            While the agent is handling a previous round, incoming
+                            messages wait (and are merged) instead of interrupting
+                            it. On timeout they go to the rolling window instead.
+
+                    config PKG_AGENT_TOOL_MQTT_ALERT_COOLDOWN_MS
+                        int "Alert cooldown per rule (ms)"
+                        default 60000
+                        range 0 3600000
+                        help
+                            A rule alerts on the rising edge, and again after this
+                            cooldown while it stays out of range.
+
+                    config PKG_AGENT_TOOL_MQTT_LOCK_WAIT_MS
+                        int "State lock wait timeout (ms)"
+                        default 1000
+                        range 1 10000
+                        help
+                            The tool never waits forever on its state lock, so a
+                            stuck peer cannot freeze the agent loop or MSH.
+
+                endmenu
+
+                menu "MQTT Timeouts & Thread"
+
+                    config PKG_AGENT_TOOL_MQTT_CONNECT_WAIT_MS
+                        int "Wait for connection before publish (ms)"
+                        default 3000
+                        range 0 60000
+
+                    config PKG_AGENT_TOOL_MQTT_SUB_WAIT_MS
+                        int "Wait for subscription to take effect (ms)"
+                        default 3000
+                        range 0 60000
+
+                    config PKG_AGENT_TOOL_MQTT_RX_THREAD_STACK
+                        int "RX thread stack size"
+                        default 3072
+                        range 2048 16384
+
+                    config PKG_AGENT_TOOL_MQTT_RX_THREAD_PRIO
+                        int "RX thread priority"
+                        default 15
+                        range 1 31
+                        help
+                            Lower number = higher priority.
+                            RT_THREAD_PRIORITY_MAX defaults to 32, so keep this in
+                            1..31: a priority >= RT_THREAD_PRIORITY_MAX makes
+                            rt_thread_create() trip its assertion (the previous
+                            range 1 254 allowed unusable values).
+
+                endmenu
+
+            endif
+
+        endmenu
+
+        menu "Agent Tool: Device Framework"
+
+            # 设备工具按设备类拆成一个目录一个 .c：core 是通用层，其余每类一个模块。
+            # 每个模块文件自己用 #ifdef PKG_AGENT_TOOL_DEVICE_XXX 包住全文，并用
+            # AGENT_TOOL_MODULE_EXPORT 登记到模块表，所以关掉某个模块 = 不编译该文件，
+            # 注册表和工具列表里自然没有它，不需要改中心文件。
+            config PKG_AGENT_TOOL_DEVICE
+                bool "Enable device framework tools"
+                depends on RT_USING_DEVICE
+                default n
+                help
+                    Let the agent drive peripherals through the RT-Thread device framework.
+                    Turn on the generic layer (core) first, then pick the device classes the
+                    project actually has drivers for.
+
+            if PKG_AGENT_TOOL_DEVICE
+
+                config PKG_AGENT_TOOL_DEVICE_CORE
+                    bool "Generic layer (device_list/info/open/close/read/write/control)"
+                    default y
+                    help
+                        The class-independent tools over rt_device_*. Keep this on: every
+                        other module tells the model to call device_list first to get exact
+                        device names, and the console/read-only guards live here.
+
+                config PKG_AGENT_TOOL_DEVICE_PIN
+                    bool "GPIO pin tools (pin_mode/pin_write/pin_read)"
+                    depends on RT_USING_PIN
+                    default y
+                    help
+                        Uses the global pin controller installed by rt_pin_attach_irq's
+                        companion driver, so a pin driver must be registered; pin numbers
+                        accept 12345 or the "P3.4" style name.
+
+                config PKG_AGENT_TOOL_DEVICE_PWM
+                    bool "PWM tools (pwm_set/get/enable/disable)"
+                    depends on RT_USING_PWM
+                    default y
+                    help
+                        Period and duty are nanoseconds on a 'pwm0' class pwm device.
+                        With no PWM driver attached, device_list shows no pwm device and
+                        these tools report that instead of guessing a channel.
+
+                config PKG_AGENT_TOOL_DEVICE_ADC
+                    bool "ADC tools (adc_read)"
+                    depends on RT_USING_ADC && !RT_USING_ADC_V2
+                    default y
+                    help
+                        One shot read: enable the channel, return raw plus millivolt, then
+                        disable again. Needs the v1 ADC framework; ADC V2 replaces the
+                        channel API with batch streams, so this module compiles out there.
+
+                config PKG_AGENT_TOOL_DEVICE_DAC
+                    bool "DAC tools (dac_write/dac_enable/dac_disable)"
+                    depends on RT_USING_DAC
+                    default y
+                    help
+                        Values are raw codes; the tool clamps them against the resolution
+                        reported by the driver before writing.
+
+                config PKG_AGENT_TOOL_DEVICE_I2C
+                    bool "I2C tools (i2c_write/read/writeread)"
+                    depends on RT_USING_I2C
+                    default y
+                    help
+                        Talks to a 7-bit or 10-bit address on an i2cbus device such as
+                        'i2c1'. writeread is the combined transaction most register-map
+                        chips need.
+
+                config PKG_AGENT_TOOL_DEVICE_SPI
+                    bool "SPI tools (spi_configure/spi_transfer)"
+                    depends on RT_USING_SPI
+                    default y
+                    help
+                        These act on SPI slave devices (class spidevice, e.g. 'spi10'),
+                        not on the bus itself; a bus needs its driver attached first.
+
+                config PKG_AGENT_TOOL_DEVICE_SENSOR
+                    bool "Sensor tools (sensor_read/info/control)"
+                    depends on RT_USING_SENSOR && !RT_USING_SENSOR_V2
+                    default y
+                    help
+                        Reads struct rt_sensor_data through rt_device_read and decodes
+                        data.type into a value with its unit. Sensor framework v2 has a
+                        different frame API, so this module compiles out there.
+
+                config PKG_AGENT_TOOL_DEVICE_LED
+                    bool "LED tools (led_set/led_get/led_brightness)"
+                    depends on RT_USING_LED
+                    default y
+                    help
+                        Uses the LED framework's text protocol on the 'led0'.. char devices,
+                        so the device has to be opened with device_open before use. The LED
+                        framework itself sits under RT_USING_DM, so without device model this
+                        module has no devices to talk to.
+
+            endif
+
+        endmenu
+
+        menu "Agent Tool: MCP Client"
+
+            config PKG_AGENT_TOOL_MCP_ENABLE
+                bool "Enable MCP client tools"
+                default n
+                help
+                    Let the agent talk to one MCP (Model Context Protocol) server
+                    over Streamable HTTP. At agent startup the client runs the
+                    initialize / notifications/initialized / tools/list handshake
+                    and registers every remote tool into the agent tool table with
+                    an "mcp_" prefix, so the model can call them like local tools.
+
+                    The server side lives in the package mcp/ directory: a bundled
+                    HTTP server plus a stdio-to-HTTP bridge for the servers Windows
+                    registers through the On-Device Registry (odr.exe list) and for
+                    servers started from the command line, such as Windows-MCP
+                    (CursorTouch/Windows-MCP), which drives the local desktop.
+
+                    If the server cannot be reached the agent still starts, just
+                    without the remote tools.
+
+            if PKG_AGENT_TOOL_MCP_ENABLE
+
+                config PKG_AGENT_MCP_MAX_TOOLS
+                    int "Maximum number of remote tools to register"
+                    default 40
+                    range 1 64
+                    help
+                        tools/list may offer more tools than the model should see.
+                        Only the first N are registered. Windows-MCP alone offers
+                        20 tools, and the bundled file tools add 11 more.
+
+                config PKG_AGENT_MCP_TIMEOUT_MS
+                    int "HTTP request timeout (ms)"
+                    default 30000
+                    range 1000 120000
+
+                config PKG_AGENT_MCP_RESP_BUFSZ
+                    int "Response body buffer size (bytes)"
+                    default 32768
+                    range 2048 65536
+                    help
+                        Upper limit for one MCP response body, covering the
+                        tools/list result and the text of a tools/call reply.
+                        Raise it when tools/list does not fit. The tool table of
+                        Windows-MCP plus the file tools is about 27 KB, so the
+                        default only fits a small server.
+
+            endif
+
+        endmenu
+
+    endmenu
+
+
+    # Package source version choice
+    # NOTE: currently only master branch option, extend more tag/commit later
+    choice PKG_AGENT_VERSION_SEL
+        prompt "Agent package source version"
+        default PKG_USING_AGENT_LATEST_VERSION
+        help
+            Select git source version for agent package.
+
+        config PKG_USING_AGENT_LATEST_VERSION
+            bool "latest (master branch)"
+    endchoice
+
+    config PKG_AGENT_VER
+        string
+        default "latest" if PKG_USING_AGENT_LATEST_VERSION
+
+endif
