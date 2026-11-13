@@ -2,6 +2,9 @@ package com.agentconsole.device;
 
 import com.agentconsole.a2a.A2aClient;
 import com.agentconsole.a2a.A2aModels;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,12 +28,14 @@ public class DeviceService {
     private final A2aClient a2a;
     private final HttpClient http;
     private final Duration httpTimeout;
+    private final ObjectMapper json;
 
-    public DeviceService(DeviceRepository repo, A2aClient a2a,
+    public DeviceService(DeviceRepository repo, A2aClient a2a, ObjectMapper json,
                          @Value("${agent.a2a.connect-timeout-seconds:5}") long connectSeconds,
                          @Value("${agent.a2a.read-timeout-seconds:60}") long readSeconds) {
         this.repo = repo;
         this.a2a = a2a;
+        this.json = json;
         this.httpTimeout = Duration.ofSeconds(readSeconds);
         this.http = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
@@ -114,6 +119,55 @@ public class DeviceService {
             return "ok";
         } catch (Exception e) {
             return "配置下发失败：" + e.getMessage();
+        }
+    }
+
+    /**
+     * 能力卡下发：POST 到设备的 /card。板端写进 SD 卡，重启后还是这份。
+     *
+     * <p>name 必填；description 与 version 留空就保持板端当前的值。
+     * 下发的是 A2A 通道的端点，WebNet 通道的设备没有这个接口。
+     */
+    public String pushCard(long id, long userId, String name, String description, String version) {
+        Device device = get(id, userId);
+        if (name == null || name.isBlank()) {
+            return "能力卡名字不能为空";
+        }
+
+        ObjectNode payload = json.createObjectNode();
+        payload.put("name", name.trim());
+        if (description != null && !description.isBlank()) {
+            payload.put("description", description.trim());
+        }
+        if (version != null && !version.isBlank()) {
+            payload.put("version", version.trim());
+        }
+
+        String body;
+        try {
+            body = json.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            return "能力卡序列化失败：" + e.getMessage();
+        }
+
+        HttpRequest request = HttpRequest.newBuilder(URI.create(normalize(device.address()) + "/card"))
+                .timeout(httpTimeout)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .build();
+        try {
+            HttpResponse<String> response = http.send(request,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() / 100 != 2) {
+                String detail = response.body() == null ? "" : response.body();
+                if (detail.length() > 200) {
+                    detail = detail.substring(0, 200) + "…";
+                }
+                return "设备返回 HTTP " + response.statusCode() + "：" + detail;
+            }
+            return "ok";
+        } catch (Exception e) {
+            return "能力卡下发失败：" + e.getMessage();
         }
     }
 

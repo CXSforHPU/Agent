@@ -1,6 +1,8 @@
 #include "AgentA2aChannel.h"
 #include "webnet_util.h"
 #include "AgentStream.h"
+#include "dfs_posix.h"
+#include "unistd.h"
 
 #define LOG_TAG "Agent.channel.a2a"
 #define LOG_LVL LOG_LVL_INFO
@@ -10,6 +12,133 @@
 #define A2A_REPLY_TIMEOUT_MS 30000
 /* 等结果时的轮询间隔：既能及时把中间事件推给客户端，又不至于空转太频繁 */
 #define A2A_POLL_INTERVAL_MS 100
+
+/* 能力卡的运行时配置，控制台下发后落盘；路径由 Kconfig 决定，
+   Kconfig 里那两个名字与描述只当第一次启动的默认值 */
+#ifndef PKG_AGENT_A2A_CARD_PATH
+#define PKG_AGENT_A2A_CARD_PATH    "/agent_card.json"
+#endif
+#define A2A_CARD_BODY_MAX   1024
+#define A2A_CARD_NAME_MAX   64
+#define A2A_CARD_DESC_MAX   256
+#define A2A_CARD_VER_MAX    32
+
+typedef struct
+{
+    char name[A2A_CARD_NAME_MAX];
+    char description[A2A_CARD_DESC_MAX];
+    char version[A2A_CARD_VER_MAX];
+} a2a_card_config_t;
+
+static a2a_card_config_t g_card;
+
+/*
+ * @brief 能力卡回落到编译期默认值
+ */
+static void card_set_defaults(void)
+{
+    rt_snprintf(g_card.name, sizeof(g_card.name), "%s", PKG_AGENT_A2A_NAME);
+    rt_snprintf(g_card.description, sizeof(g_card.description), "%s",
+                PKG_AGENT_A2A_DESCRIPTION);
+    rt_snprintf(g_card.version, sizeof(g_card.version), "%s", "1.0.0");
+}
+
+/*
+ * @brief 启动时读上次下发的能力卡，读不到就用默认值
+ * @note  文件缺失是正常情况（第一次启动），不当错误报
+ */
+static void card_load(void)
+{
+    char buf[A2A_CARD_BODY_MAX];
+    cJSON *root;
+    cJSON *item;
+    int fd;
+    int len;
+
+    card_set_defaults();
+
+    fd = open(PKG_AGENT_A2A_CARD_PATH, O_RDONLY);
+    if (fd < 0)
+    {
+        return;
+    }
+    len = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (len <= 0)
+    {
+        LOG_W("agent card file %s is empty, using defaults", PKG_AGENT_A2A_CARD_PATH);
+        return;
+    }
+    buf[len] = '\0';
+
+    root = cJSON_Parse(buf);
+    if (root == RT_NULL)
+    {
+        LOG_W("agent card file %s is not valid JSON, using defaults", PKG_AGENT_A2A_CARD_PATH);
+        return;
+    }
+
+    item = cJSON_GetObjectItemCaseSensitive(root, "name");
+    if (cJSON_IsString(item) && item->valuestring[0] != '\0')
+    {
+        rt_snprintf(g_card.name, sizeof(g_card.name), "%s", item->valuestring);
+    }
+    item = cJSON_GetObjectItemCaseSensitive(root, "description");
+    if (cJSON_IsString(item))
+    {
+        rt_snprintf(g_card.description, sizeof(g_card.description), "%s", item->valuestring);
+    }
+    item = cJSON_GetObjectItemCaseSensitive(root, "version");
+    if (cJSON_IsString(item) && item->valuestring[0] != '\0')
+    {
+        rt_snprintf(g_card.version, sizeof(g_card.version), "%s", item->valuestring);
+    }
+
+    cJSON_Delete(root);
+    LOG_I("agent card loaded: name=%s, file=%s", g_card.name, PKG_AGENT_A2A_CARD_PATH);
+}
+
+/*
+ * @brief 把当前能力卡写回 SD 卡，下次启动还是这份
+ * @return RT_EOK 成功
+ */
+static rt_err_t card_save(void)
+{
+    cJSON *root;
+    char *encoded;
+    rt_size_t len;
+    int fd;
+    int written;
+
+    root = cJSON_CreateObject();
+    if (root == RT_NULL)
+    {
+        return -RT_ENOMEM;
+    }
+    cJSON_AddStringToObject(root, "name", g_card.name);
+    cJSON_AddStringToObject(root, "description", g_card.description);
+    cJSON_AddStringToObject(root, "version", g_card.version);
+
+    encoded = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (encoded == RT_NULL)
+    {
+        return -RT_ENOMEM;
+    }
+    len = rt_strlen(encoded);
+
+    fd = open(PKG_AGENT_A2A_CARD_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0)
+    {
+        cJSON_free(encoded);
+        return -RT_ERROR;
+    }
+    written = write(fd, encoded, len);
+    close(fd);
+    cJSON_free(encoded);
+
+    return (written == (int)len) ? RT_EOK : -RT_ERROR;
+}
 
 static MessageHub_t message_hub = RT_NULL;
 static Context_t context = RT_NULL;
@@ -257,11 +386,11 @@ static void cgi_agent_card(struct webnet_session *session)
         return;
     }
 
-    cJSON_AddStringToObject(card, "name", PKG_AGENT_A2A_NAME);
-    cJSON_AddStringToObject(card, "description", PKG_AGENT_A2A_DESCRIPTION);
+    cJSON_AddStringToObject(card, "name", g_card.name);
+    cJSON_AddStringToObject(card, "description", g_card.description);
     cJSON_AddStringToObject(card, "url",
                             agent_wn_safe_string(session->request->host));
-    cJSON_AddStringToObject(card, "version", "1.0.0");
+    cJSON_AddStringToObject(card, "version", g_card.version);
 
     caps = cJSON_CreateObject();
     /* 同上，cJSON_False 是 1，要写 0 */
@@ -283,6 +412,126 @@ static void cgi_agent_card(struct webnet_session *session)
                                   "error", "failed to serialize agent card");
     }
     cJSON_Delete(card);
+}
+
+/*
+ * @brief GET /card 读当前能力卡，POST /card 改并落盘
+ * @note  name 必填，description 与 version 不传就保持原值；
+ *        改完写 SD 卡，重启后还是这份，Kconfig 里那两个值只当默认
+ */
+static void cgi_card(struct webnet_session *session)
+{
+    char *body;
+    cJSON *root;
+    cJSON *item;
+
+    if (session == RT_NULL || session->request == RT_NULL)
+    {
+        return;
+    }
+
+    if (session->request->method == WEBNET_GET)
+    {
+        root = cJSON_CreateObject();
+        if (root == RT_NULL)
+        {
+            agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
+                                      "error", "out of memory");
+            return;
+        }
+        cJSON_AddStringToObject(root, "name", g_card.name);
+        cJSON_AddStringToObject(root, "description", g_card.description);
+        cJSON_AddStringToObject(root, "version", g_card.version);
+        if (agent_wn_send_json_object(session, 200, "OK", root) != RT_EOK)
+        {
+            agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
+                                      "error", "failed to serialize card");
+        }
+        cJSON_Delete(root);
+        return;
+    }
+
+    if (session->request->method != WEBNET_POST)
+    {
+        agent_wn_send_simple_json(session, 405, "Method Not Allowed", RT_FALSE,
+                                  "error", "use GET to read, POST to update");
+        return;
+    }
+
+    body = agent_wn_copy_request_body(session, A2A_CARD_BODY_MAX);
+    if (body == RT_NULL)
+    {
+        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                  "error", "invalid or oversized request body");
+        return;
+    }
+
+    root = cJSON_Parse(body);
+    rt_free(body);
+    if (root == RT_NULL || !cJSON_IsObject(root))
+    {
+        if (root != RT_NULL)
+        {
+            cJSON_Delete(root);
+        }
+        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                  "error", "body must be a JSON object");
+        return;
+    }
+
+    item = cJSON_GetObjectItemCaseSensitive(root, "name");
+    if (!cJSON_IsString(item) || item->valuestring[0] == '\0')
+    {
+        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                  "error", "name must be a non-empty string");
+        goto cleanup;
+    }
+    if (rt_strlen(item->valuestring) >= sizeof(g_card.name))
+    {
+        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                  "error", "name is too long");
+        goto cleanup;
+    }
+    rt_snprintf(g_card.name, sizeof(g_card.name), "%s", item->valuestring);
+
+    item = cJSON_GetObjectItemCaseSensitive(root, "description");
+    if (item != RT_NULL)
+    {
+        if (!cJSON_IsString(item) ||
+            rt_strlen(item->valuestring) >= sizeof(g_card.description))
+        {
+            agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                      "error", "description is too long");
+            goto cleanup;
+        }
+        rt_snprintf(g_card.description, sizeof(g_card.description), "%s",
+                    item->valuestring);
+    }
+
+    item = cJSON_GetObjectItemCaseSensitive(root, "version");
+    if (item != RT_NULL)
+    {
+        if (!cJSON_IsString(item) || rt_strlen(item->valuestring) >= sizeof(g_card.version))
+        {
+            agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                      "error", "version is too long");
+            goto cleanup;
+        }
+        rt_snprintf(g_card.version, sizeof(g_card.version), "%s", item->valuestring);
+    }
+
+    if (card_save() != RT_EOK)
+    {
+        agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
+                                  "error", "failed to write the card file");
+        goto cleanup;
+    }
+
+    LOG_I("agent card updated: name=%s, version=%s", g_card.name, g_card.version);
+    agent_wn_send_simple_json(session, 200, "OK", RT_TRUE, "status", "ok");
+
+cleanup:
+    cJSON_Delete(root);
 }
 
 /*
@@ -510,10 +759,14 @@ void a2a_agent_channel_init(MessageHub_t hub, Context_t ctx)
         return;
     }
 
+    /* 先读上次下发的能力卡，再注册 CGI，避免第一帧能力卡还是默认值 */
+    card_load();
+
     /* CGI 根切到 "/"，否则 webnet 只认包含 /cgi-bin/ 的路径，
        /.well-known/agent.json 和 /tasks/send 都匹配不上 */
     webnet_cgi_set_root("/");
     webnet_cgi_register(".well-known/agent.json", cgi_agent_card);
+    webnet_cgi_register("card", cgi_card);
     webnet_cgi_register("tasks/send", cgi_task_send);
     webnet_cgi_register("tasks/sendSubscribe", cgi_task_stream);
 

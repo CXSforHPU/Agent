@@ -254,6 +254,7 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 | DELETE | `/api/devices/{id}` | 删除设备 |
 | POST | `/api/devices/{id}/probe` | 探活一次，同时返回能力卡 |
 | POST | `/api/devices/{id}/config` | 配置下发 |
+| POST | `/api/devices/{id}/card` | 能力卡下发，板端存 SD 卡 |
 | GET | `/api/conversations` | 会话列表，可按 `deviceId` 过滤 |
 | GET | `/api/conversations/{id}` | 会话详情，含全部消息 |
 | POST | `/api/conversations` | 新建会话 |
@@ -309,6 +310,7 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 | `/.well-known/agent.json` | GET | 能力卡，探活也用它 |
 | `/tasks/send` | POST | 同步发任务 |
 | `/tasks/sendSubscribe` | POST | 流式发任务，SSE 返回 |
+| `/card` | GET / POST | 读、改能力卡。POST 改完写 SD 卡，重启后还是这份 |
 
 消息体是 `{"message": {"role": "user", "parts": [{"type": "text", "text": "..."}]}}`。同步接口返回 `{"id", "status": {"state"}, "artifacts": [{"parts": [...]}]}`，`state` 取 `working`、`completed`、`failed`。SSE 每一帧也是这个结构，空行分隔。
 
@@ -321,6 +323,8 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 板子这边的实现在两个地方：`AgentStream` 收中间事件，`AgentA2aChannel` 每 100 ms 把队列取空推一帧，取到最后结果那帧结束。
 
 探活就是 GET 能力卡，200 算在线。设备的 `address` 字段填服务根地址，能力卡自动拼在后面。
+
+能力卡的 `name`、`description`、`version` 可以在设备页的「能力卡」里改，走 `POST /api/devices/{id}/card` 下发到板子的 `POST /card`。板端写进 SD 卡的 `/agent_card.json`，启动时读，Kconfig 里的 `PKG_AGENT_A2A_NAME`、`PKG_AGENT_A2A_DESCRIPTION` 只当第一次的默认值。`url` 不参与下发，始终按请求里的 Host 现算；`capabilities` 与 `skills` 目前还是固定的。打开对话框时会先探活，把板子上那份预填进来，描述与版本留空表示不改。
 
 端侧的 A2A 通道在 agent 包里，menuconfig 里选 `Agent interaction communication channel → A2A channel (Agent-to-Agent over HTTP)`。它跑在 WebNet 之上，端口用 `WEBNET_PORT`（默认 80），另外把 CGI 根切到 `/`，这样 `/.well-known/agent.json` 这种带点号的路径才能被匹配到。配套选项 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 填能力卡里的名字和描述。
 

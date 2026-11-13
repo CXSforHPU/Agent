@@ -42,6 +42,11 @@ public class DeviceController {
                                 @Size(max = 256) String baseUrl) {
     }
 
+    public record CardPayload(@NotBlank @Size(max = 64) String name,
+                              @Size(max = 256) String description,
+                              @Size(max = 32) String version) {
+    }
+
     @GetMapping
     public ApiResponse<List<Device>> list(JwtService.Claims claims) {
         return ApiResponse.ok(service.list(claims.userId()));
@@ -101,6 +106,23 @@ public class DeviceController {
         try {
             String result = service.pushConfig(id, claims.userId(),
                     body.apiKey(), body.modelName(), body.baseUrl());
+            if ("ok".equals(result)) {
+                return ResponseEntity.ok(ApiResponse.ok(result));
+            }
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(ApiResponse.fail(result));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
+        }
+    }
+
+    /** 能力卡下发，走设备的 POST /card，板端存 SD 卡后重启仍然生效。 */
+    @PostMapping("/{id}/card")
+    public ResponseEntity<ApiResponse<String>> pushCard(@PathVariable long id,
+                                                        @Valid @RequestBody CardPayload body,
+                                                        JwtService.Claims claims) {
+        try {
+            String result = service.pushCard(id, claims.userId(), body.name(),
+                    body.description(), body.version());
             if ("ok".equals(result)) {
                 return ResponseEntity.ok(ApiResponse.ok(result));
             }

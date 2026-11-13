@@ -27,6 +27,7 @@ import {
   CreateOutline,
   TrashOutline,
   PulseOutline,
+  IdCardOutline,
 } from '@vicons/ionicons5'
 import { api } from '../api.js'
 
@@ -46,6 +47,11 @@ const saving = ref(false)
 const configForm = ref({ id: 0, name: '', apiKey: '', modelName: '', baseUrl: '' })
 const configOpen = ref(false)
 const configSaving = ref(false)
+
+const cardForm = ref({ id: 0, deviceName: '', name: '', description: '', version: '' })
+const cardOpen = ref(false)
+const cardSaving = ref(false)
+const cardLoading = ref(false)
 
 const formRules = {
   name: [{ required: true, message: '请填设备名', trigger: ['blur', 'input'] }],
@@ -181,6 +187,56 @@ async function sendConfig() {
   }
 }
 
+async function openCard(d) {
+  cardForm.value = { id: d.id, deviceName: d.name, name: '', description: '', version: '' }
+  cardOpen.value = true
+  cardLoading.value = true
+  try {
+    // 先探活拿板子当前那份能力卡预填，离线就只能手填
+    const result = await api.probeDevice(d.id)
+    if (result.card) {
+      cardForm.value = {
+        id: d.id,
+        deviceName: d.name,
+        name: result.card.name || '',
+        description: result.card.description || '',
+        version: result.card.version || '',
+      }
+    } else {
+      message.warning(`${d.name} 不在线，下面填的是要下发的新值`)
+    }
+    await load()
+  } catch (e) {
+    message.error(e.message)
+  } finally {
+    cardLoading.value = false
+  }
+}
+
+async function sendCard() {
+  const name = cardForm.value.name.trim()
+  if (!name) {
+    message.warning('能力卡名字不能为空')
+    return
+  }
+  const body = { name }
+  const description = cardForm.value.description.trim()
+  const version = cardForm.value.version.trim()
+  if (description) body.description = description
+  if (version) body.version = version
+
+  cardSaving.value = true
+  try {
+    await api.pushDeviceCard(cardForm.value.id, body)
+    message.success(`能力卡已下发到 ${cardForm.value.deviceName}`)
+    cardOpen.value = false
+  } catch (e) {
+    message.error(e.message)
+  } finally {
+    cardSaving.value = false
+  }
+}
+
 const columns = computed(() => [
   {
     title: '设备',
@@ -231,7 +287,7 @@ const columns = computed(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 172,
+    width: 200,
     render: (row) =>
       h(NSpace, { size: 4, wrap: false }, {
         default: () => [
@@ -239,6 +295,11 @@ const columns = computed(() => [
             NButton,
             { size: 'small', secondary: true, title: '探活', onClick: () => probe(row) },
             { icon: () => h(NIcon, null, { default: () => h(PulseOutline) }) },
+          ),
+          h(
+            NButton,
+            { size: 'small', secondary: true, title: '能力卡', onClick: () => openCard(row) },
+            { icon: () => h(NIcon, null, { default: () => h(IdCardOutline) }) },
           ),
           h(
             NButton,
@@ -425,6 +486,58 @@ const columns = computed(() => [
         <NSpace justify="end">
           <NButton :disabled="configSaving" @click="configOpen = false">取消</NButton>
           <NButton type="primary" :loading="configSaving" @click="sendConfig">下发</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <NModal
+      v-model:show="cardOpen"
+      preset="card"
+      :title="`能力卡 · ${cardForm.deviceName}`"
+      style="width: 520px"
+      :mask-closable="!cardSaving"
+    >
+      <NText depth="3" class="tip">
+        下发到设备的 POST /card，板端写进 SD 卡，重启后还是这份。打开时先探活，把板子上那份预填进来；
+        描述与版本留空就保持板端当前值，名字必填。
+      </NText>
+      <NForm label-placement="top">
+        <NFormItem label="名字">
+          <NInput
+            v-model:value="cardForm.name"
+            placeholder="例如：实验室 A 板"
+            :disabled="cardLoading"
+          />
+        </NFormItem>
+        <NFormItem label="描述">
+          <NInput
+            v-model:value="cardForm.description"
+            type="textarea"
+            :rows="3"
+            placeholder="告诉对端这个 agent 是干什么的"
+            :disabled="cardLoading"
+          />
+        </NFormItem>
+        <NFormItem label="版本">
+          <NInput
+            v-model:value="cardForm.version"
+            placeholder="例如：1.0.0"
+            :disabled="cardLoading"
+          />
+        </NFormItem>
+      </NForm>
+
+      <template #footer>
+        <NSpace justify="end">
+          <NButton :disabled="cardSaving" @click="cardOpen = false">取消</NButton>
+          <NButton
+            type="primary"
+            :loading="cardSaving"
+            :disabled="cardLoading"
+            @click="sendCard"
+          >
+            下发
+          </NButton>
         </NSpace>
       </template>
     </NModal>

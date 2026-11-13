@@ -104,6 +104,7 @@ export const api = {
   deleteDevice: (id) => request(`/devices/${id}`, { method: 'DELETE' }),
   probeDevice: (id) => request(`/devices/${id}/probe`, { method: 'POST' }),
   pushDeviceConfig: (id, data) => request(`/devices/${id}/config`, { method: 'POST', body: data }),
+  pushDeviceCard: (id, data) => request(`/devices/${id}/card`, { method: 'POST', body: data }),
 
   listConversations: (deviceId) =>
     request(`/conversations${deviceId ? `?deviceId=${deviceId}` : ''}`),
