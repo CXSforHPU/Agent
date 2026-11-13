@@ -168,7 +168,10 @@ public class ChatController {
             }
         };
 
+        // StreamingResponseBody 直接写响应流，produces 不会替它设 Content-Type，
+        // 这里显式给，否则响应头里只有 chunked
         return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_EVENT_STREAM)
                 .header("Cache-Control", "no-cache")
                 .body(stream);
     }
