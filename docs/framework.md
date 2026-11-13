@@ -412,6 +412,27 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 `msh_agent_endpoint` 打印当前地址和来源，`msh_agent_endpoint refresh` 再问控制台一次。
 
+### 3.15 自发上报通道
+
+文件：`src/utils/agent_report.c`、`inc/utils/agent_report.h`
+
+端侧 agent 有两类产出：一类是别人问出来的答案，走通道回复；另一类是自己得出的结论，比如 MQTT 规则命中、传感器越限。这类结论没人等的时候也要送到网页端去，这就是上报通道。
+
+链路分成两段：
+
+1. 控制台经 `POST /tasks/pushNotificationConfig` 下发回调地址，板端写进 `PKG_AGENT_A2A_PUSH_PATH` 指定的文件（默认 `/agent_push.json`），启动时读回这个文件。
+2. 端侧 agent 每产出一条结论就调 `agent_report_push()` 入队，上报线程把队里的结论逐条 POST 到回调地址。
+
+调用关系：
+
+- `init_agent()` 里调 `agent_report_init()`，先读回上次下发的地址，配过地址就起上报线程。
+- 通道侧在处理 `POST /tasks/pushNotificationConfig` 时调 `agent_report_set_callback()`。地址变了才写文件。
+- 产出结论的地方（MQTT 规则命中、工具调用结束后的自述）调 `agent_report_push()`，只入队，真正发出去由上报线程做。
+
+队列深 4，正文上限 512 字节，满了丢最旧的一条。没配回调地址时结论留在队列里，配上以后自然发出去。发送失败重试一次，还不行就丢掉这条，不阻塞 agent 主循环。
+
+上报走独立线程，不占 webnet 的连接线程，也不占 agent 主循环。
+
 ## 4. 数据流
 
 ### 4.1 一次请求
@@ -539,6 +560,7 @@ sequenceDiagram
 | `PKG_AGENT_A2A_CHANNEL` | A2A 通道 |
 | `PKG_AGENT_A2A_NAME` / `PKG_AGENT_A2A_DESCRIPTION` | 能力卡的默认名字与描述，控制台改过以后以板端存的文件为准 |
 | `PKG_AGENT_A2A_CARD_PATH` | 能力卡落盘路径，默认 `/agent_card.json`，要落在可写文件系统上 |
+| `PKG_AGENT_A2A_PUSH_PATH` | 上报回调地址的落盘路径，默认 `/agent_push.json`，要落在可写文件系统上 |
 
 ### LLM 与缓冲
 

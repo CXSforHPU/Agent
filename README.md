@@ -12,6 +12,7 @@
 - 技能模块：`skills/*.md` 在构建时编进固件，目录注入系统提示词，模型按需加载正文。
 - 上下文管理：历史超过阈值时用滚动摘要压缩，压缩失败保留原始历史。
 - 多通道：CLI、WebNet、A2A、Debug、LVGL 五种通道，通过 `AgentChannelOps` 统一接入。
+- 自发上报：端侧 agent 自己得出的结论（MQTT 规则命中、传感器越限）直接推给控制台，不用等人来问。控制台经 `POST /tasks/pushNotificationConfig` 下发回调地址，板端落盘，重启后照样上报。
 - 多模态：图片、视频和未启用 STT 的音频上传到文件服务器，按 URL 交给模型。
 - 本地语音转写：音频消息可在本机转成文本，再按普通文本发给模型。
 - 音频驱动：封装 `wavplay` / `wavrecord`，支持播放、暂停、继续、停止与录音。
@@ -257,7 +258,7 @@ draw.io 源文件：[llm-protocol.drawio](./docs/diagrams/llm-protocol.drawio)
 
 WebNet 与 A2A 都跑在 webnet 上，共用 `WEBNET_PORT`（默认 80）。A2A 通道启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。
 
-A2A 通道有五个端点：
+A2A 通道有六个端点：
 
 | 端点 | 方法 | 说明 |
 |---|---|---|
@@ -266,8 +267,11 @@ A2A 通道有五个端点：
 | `/card` | POST | 改能力卡，改完落盘，重启后还是这份 |
 | `/tasks/send` | POST | 同步发任务，等端侧 agent 跑完才返回 |
 | `/tasks/sendSubscribe` | POST | 流式发任务，按 SSE 分帧推 |
+| `/tasks/pushNotificationConfig` | GET / POST | 读或下发上报回调地址，改完落盘 |
 
 能力卡的落盘路径由 Kconfig 选项 `PKG_AGENT_A2A_CARD_PATH` 决定，默认 `/agent_card.json`，要放在可写文件系统上。启动时读这个文件，读不到就用 Kconfig 的 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 当默认值。控制台下发一次以后，板端读到的就是下发的这份。
+
+上报回调地址的落盘路径由 `PKG_AGENT_A2A_PUSH_PATH` 决定，默认 `/agent_push.json`。控制台探活时发现板子上没有这份地址，就重新下一次；板端收到以后，agent 每产出一条结论就 POST 一次到那个地址。地址没变就不写文件。
 
 流式接口边跑边推：任务开始先推一帧 `working`，之后每 100 ms 把 `AgentStream` 队列里的事件取空、各推一帧，直到最终结果那帧为止。帧里的 `artifacts[].name` 取 `reasoning`、`tool`、`content`、`response`，前三个是增量，`response` 是完整答案，`append` 为真表示和前一段续接。
 
@@ -441,6 +445,7 @@ resource/web/
 | `PKG_AGENT_COMMUNICATION_CHANNEL_SEL` | 通道选择，默认 CLI |
 | `PKG_AGENT_A2A_NAME` / `PKG_AGENT_A2A_DESCRIPTION` | 能力卡的默认名字与描述，只当第一次启动的默认值 |
 | `PKG_AGENT_A2A_CARD_PATH` | 能力卡落盘路径，默认 `/agent_card.json`，要放在可写文件系统上 |
+| `PKG_AGENT_A2A_PUSH_PATH` | 上报回调地址落盘路径，默认 `/agent_push.json`，要放在可写文件系统上 |
 | `PKG_AGENT_MULTIMODAL_ENABLE` | 多模态总开关，默认关闭 |
 | `PKG_AGENT_STT_ENABLE` | 本地语音转写开关 |
 | `PKG_AGENT_DRIVER_AUDIO` | 音频驱动，独立于多模态 |

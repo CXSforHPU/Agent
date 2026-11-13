@@ -406,6 +406,7 @@ draw.io 源文件：[vsnprintf-select-flow.drawio](diagrams/vsnprintf-select-flo
 | 输入 mailbox 满 | 注入失败时消息回落到 poll 缓冲，不会泄漏内存（`AgentLoop` 对 `put_message` 失败也会自行释放） |
 | 长度限制 | 发布长度 = `min(MAX_PUB_LEN, buf_size, pipe_buf) - sizeof(MQTTMessage) - topic - 1`，超出直接返回错误而不截断 |
 | 发布限速 | 所有发布走同一条路径，两次发布至少间隔 `MQTT_PUB_MIN_GAP_MS`（100 ms），避免连续工具调用把 paho 管道打满 |
+| 发布阻塞 | 启动时打开 paho 的阻塞发布（`MQTT_CTRL_PUBLISH_BLOCK`）：上一条消息被 paho 工作线程取走以后才允许写下一条，管道里始终只有一条完整消息。原因见 9.4 |
 | 状态锁 | 锁等待上限为 `PKG_AGENT_TOOL_MQTT_LOCK_WAIT_MS`（默认 1 s），超时返回 `error: mqtt state busy, retry later`；未启动时只读查询也能拿锁 |
 | 工具结果 | 以 `role=tool` 文本回填。结果只支持文本，图片、音频等多模态内容不能放进工具结果 |
 | QoS | paho(pipe) 仅支持 QoS1，工具统一使用 QoS1，不跟随 `PKG_AGENT_TOOL_MQTT_QOS` |
@@ -683,8 +684,24 @@ W/Agent.Fsm: repeated tool calls detected, forcing a final answer
 
 ---
 
-## 10. 验证记录
+### 9.4 案例：发布管道写满导致板端 data abort（真实案例）
 
+现象：板端启动后订阅六个传感器话题，6 秒左右崩在 `data abort`，串口打印的回溯地址用 `arm-none-eabi-addr2line` 还原后落在 `strlen`，再往上是 `MQTTstrlen`，再往上是 paho 发布管道的读取线程。
+
+原因：paho 的 pipe 模式把发布通道做成一根 512 字节的字节流管道（`RT_PIPE_BUFSZ`），管道里放的是 `[MQTTMessage][payload][topic\0]` 这样的原始字节。读取端按「一次 read 是一条完整消息」来解析（`MQTTClient-RT/paho_mqtt_pipe.c` 的读取循环），但写入端只写一次：
+
+- 管道空间不够时，`rt_pipe_write` 只把放得下的部分拷进去就返回（`rt-thread/components/drivers/ipc/pipe.c`），半条消息留在管道里。
+- 下一次 read 拿到的就是两条消息拼接的数据，或者半条消息。解析出的 `payloadlen` 是垃圾，`topic` 指针越界，`strlen` 直接跑飞。
+
+触发条件不是偶发：传感器线程每秒往六个话题各发一条，每条约 86 字节，合计约 516 字节/秒，已经超过管道容量。paho 工作线程忙的时候（订阅握手、等 PINGRESP 时会停 5 秒），管道就被写满。
+
+修复：在本包内打开 paho 自带的阻塞发布（`MQTT_CTRL_PUBLISH_BLOCK`）。paho 发布前先取信号量，工作线程消费掉一条消息才放行下一次，管道里始终只有一条完整消息。改动在 `src/tools/tool_mqtt/tool_mqtt_client.c` 的 `mqtt_tool_start()` 里。
+
+上游的坑没动：pipe 模式的读取端仍然假设「一次 read 一条消息」，管道里出现半条消息仍会解析错。本包用阻塞发布把这个前提挡住了。要彻底修，得改 `packages/pahomqtt-latest` 里读取端的分帧逻辑。
+
+验证：改动后重新编译，烧同样的固件，跑过原来必崩的那个时间点（启动后 6 秒内）以及之后的订阅、发布、收消息全过程，没有再出现 abort。
+
+## 10. 验证记录
 以下功能在 QEMU（vexpress-a9）+ 公网 broker 上验证通过，broker 地址取 `rtconfig.h` 里的 `PKG_AGENT_TOOL_MQTT_BROKER_URL`：
 
 | 验证项 | 结果 |
@@ -713,3 +730,4 @@ W/Agent.Fsm: repeated tool calls detected, forcing a final answer
 | **启动前只读查询** | `mqtt_tool status` 在 `started=0` 时即输出订阅表/计数（原为 `warning: mqtt state busy, subscription table unavailable`） |
 | **MQTT 全链路回归**（`qemu_msh_test.ps1`，改动后重跑） | start → 4 话题订阅（含通配符）→ pub → 回调 → recv → sim → unsub → status 全部正常，`free` 无泄漏迹象 |
 | 稳定性 | 连续 `start → 订阅 → 发布 → 收消息 → 退订` 无卡死、无内存异常增长 |
+| **阻塞发布不再 data abort**（改动后重跑启动订阅流程） | 板端连上 broker、订阅六个话题、传感器线程每秒发布约 516 字节，跑过原来必崩的启动后 6 秒窗口并继续运行十分钟，全程无 abort（原因见 9.4） |

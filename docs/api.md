@@ -550,12 +550,16 @@ agent_send_message <type> <content>
 | `/card` | POST | 改能力卡，改完写进文件 |
 | `/tasks/send` | POST | 同步发任务，一直等到端侧 agent 跑完 |
 | `/tasks/sendSubscribe` | POST | 流式发任务，先推一帧 `working`，再按 SSE 推最终结果 |
+| `/tasks/pushNotificationConfig` | GET | 读当前生效的上报回调地址 |
+| `/tasks/pushNotificationConfig` | POST | 下发上报回调地址，改完写进文件 |
 
 请求体是 `{"message": {"role": "user", "parts": [{"type": "text", "text": "..."}]}}`。同步接口返回 `{"id", "status": {"state"}, "artifacts": [{"parts": [...]}]}`，`state` 取 `working`、`completed`、`failed`。SSE 每一帧也是这个结构，空行分帧。
 
 流式接口的中间帧，`artifacts[].name` 取四种值：`reasoning` 是思考过程，`tool` 是工具调用，`content` 是正文分片，`response` 是最终完整答案。前三种是增量，`append` 为真表示与前一段续接；`response` 那帧没有 `append` 字段。任务开始时先推一帧 `state` 为 `working` 的空结果，之后每 100 ms 把 `AgentStream` 队列里的事件取空推出去。
 
 `POST /card` 的请求体是 `{"name": "...", "description": "...", "version": "..."}`。`name` 必填，`description` 与 `version` 不传就保持原值。改完写进 `PKG_AGENT_A2A_CARD_PATH` 指定的文件（默认 `/agent_card.json`），重启后还是这份。Kconfig 里的 `PKG_AGENT_A2A_NAME` 与 `PKG_AGENT_A2A_DESCRIPTION` 只当第一次启动的默认值。板端读不到文件、文件为空或不是合法 JSON 时用默认值，不当错误报。
+
+`POST /tasks/pushNotificationConfig` 的请求体是 `{"url": "...", "id": "..."}`。`url` 是控制台给的回调地址，空串表示关闭上报；`id` 是回调标识，控制台靠回调地址里的令牌认设备，这个字段只做记录。地址写进 `PKG_AGENT_A2A_PUSH_PATH` 指定的文件（默认 `/agent_push.json`），重启后还是这份。`GET` 读回当前地址和标识，没配过时两个字段都是空串。自发结论的上报过程见 6.8 节。
 
 webnet 是单线程的，`/tasks/send` 会占住整个线程直到 agent 跑完。同一台设备并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。控制台的做法是给每台设备加一把锁，探活与聊天不同时进行。
 
@@ -737,6 +741,28 @@ typedef struct
 `init_agent()` 在 `init_tools()` 之前调 `agent_endpoint_init()`，MCP 客户端握手要用地址。
 
 MSH 命令 `msh_agent_endpoint` 打印当前地址和来源，带 `refresh` 参数再问控制台一次。
+
+### 6.8 自发上报通道
+
+头文件：`inc/utils/agent_report.h` 实现：`src/utils/agent_report.c`
+
+端侧 agent 自己得出的结论（MQTT 规则命中、传感器越限）不用谁来问，直接推给控制台。这个模块负责排队和发送。
+
+| 函数 | 说明 |
+|---|---|
+| `void agent_report_init(void)` | 初始化。读回上次下发的回调地址 |
+| `void agent_report_deinit(void)` | 停掉上报线程，释放队列与信号量 |
+| `rt_err_t agent_report_push(const char *text)` | 入队一条结论。文本为空或模块没初始化返回 `RT_ERROR` |
+| `rt_err_t agent_report_set_callback(const char *url, const char *id)` | 设置回调地址。`url` 传空串表示关闭上报 |
+| `const char *agent_report_callback(void)` | 当前回调地址，没配过时返回空串 |
+| `const char *agent_report_callback_id(void)` | 当前回调标识 |
+| `rt_bool_t agent_report_ready(void)` | 是否配了回调地址 |
+
+回调地址由控制台经 `POST /tasks/pushNotificationConfig` 下发，板端存在 `PKG_AGENT_A2A_PUSH_PATH` 指定的文件里，默认 `/agent_push.json`。启动时读回这个文件，所以板子重启以后照样上报。地址没变就不写文件，重复下发不会反复擦写 SD 卡。
+
+一条结论的正文上限 512 字节，回调地址上限 192 字节，标识上限 64 字节。队列深 4，满了丢最旧的一条。没配回调地址时结论留在队列里，配上以后由上报线程发出去。
+
+发送走 HTTP POST，正文是 `{"kind": "report", "id": "...", "text": "..."}`，超时 5 秒。控制台收不到应答时重试一次，还不行就丢掉这条。
 
 ## 7. AgentAudio：音频驱动
 

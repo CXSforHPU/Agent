@@ -255,6 +255,9 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 | POST | `/api/devices/{id}/probe` | 探活一次，同时返回能力卡 |
 | POST | `/api/devices/{id}/config` | 配置下发 |
 | POST | `/api/devices/{id}/card` | 能力卡下发，板端存 SD 卡 |
+| POST | `/api/devices/push/{token}` | 板端上报入口，免登录，令牌在回调地址里 |
+| GET | `/api/devices/{id}/events` | 这台设备最近的上报事件，新的在前 |
+| GET | `/api/devices/{id}/events/stream` | 上报事件流，板端一上报网页立刻收到 |
 | GET | `/api/conversations` | 会话列表，可按 `deviceId` 过滤 |
 | GET | `/api/conversations/{id}` | 会话详情，含全部消息 |
 | POST | `/api/conversations` | 新建会话 |
@@ -334,8 +337,22 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 
 同一台设备的请求在服务端是串行的：`A2aClient` 给每台设备加了一把锁，探活与聊天不会同时开两条连接。端侧 webnet 是单线程的，A2A 同步接口会占住整个线程直到 agent 跑完，并发时后到的连接会把先到那条的响应顶掉，客户端只收到空响应。
 
-### 网站侧 agent 与端侧 agent 通信
+### 端侧上报
 
+端侧 agent 自己得出的结论（MQTT 规则命中、传感器越限）不用等人来问，直接推给控制台。
+
+链路分两段：
+
+1. 控制台给板子下发一个回调地址 `http://<板端可见的控制台地址>:8080/api/devices/push/<令牌>`，走板子的 `POST /tasks/pushNotificationConfig`。板端写进 `PKG_AGENT_A2A_PUSH_PATH` 指定的文件，默认 `/agent_push.json`，重启后还是这份。
+2. 板端每产出一条结论就 POST 一次到这个地址，正文是 `{"kind": "report", "id": "...", "text": "..."}`。控制台按地址里的令牌认出是哪块板子，落进 `device_event` 表，再推给正在看这块板子的网页。
+
+归属按板子地址算，不按设备行算。同一块板子被几个账号各登记一次时，网页打开哪一行都看到同一份上报，事件挂在最早登记的那一行上。
+
+下发时机在探活的时候：定时探活每 15 秒一轮，探到能力卡声明了 `pushNotifications` 的设备就先读一次板端当前的回调地址，和控制台这份不一致就重新下一次。同一块板子的读操作按地址限频，5 分钟一次，避免把板端单线程的 webnet 占满。板子刷了固件、SD 卡上的地址没了，5 分钟内会自动补下一次。
+
+板端刷固件或换板子以后，控制台也会主动下发新地址。
+
+### 网站侧 agent 与端侧 agent 通信
 不选设备时对话走网站侧的 agent，它带一个 `ask_device` 工具：模型按设备名找到地址，经 A2A 把问题转给端侧 agent，拿到回答再作答，最多来回 4 轮。这个账号的设备列表会进系统提示词，模型才知道能对哪台设备提问。
 
 端侧 agent 跑在设备上，能读传感器、下发指令、连 MQTT 和 MCP；网站侧 agent 只是控制台里的助手，问不到设备内部的东西，需要转一手。工具实现是 `server/src/main/java/com/agentconsole/agent/DeviceTool.java`。
@@ -359,6 +376,18 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 上面的四步手工跑过一遍以后，还能用脚本再跑一遍。脚本在 BSP 工作区的 `build/llm_probe/` 下，不随本包发布。它起 QEMU、起控制台、按顺序打六项：注册登录、建会话、带 `Origin` 头的 PATCH 改名、建设备、下发能力卡、板端读回下发的能力卡。六项都过才退出码为 0。
 
 带 `Origin` 头的那一项就是以前报 403 的那条路径，现在返回 200。
+
+### 上报链路的验证
+
+上报链路要五步走通，缺一步的表现各不相同：
+
+1. **板端拿到回调地址**：串口里出现 `I/Agent.report: report: callback set: http://...`，这是控制台下发的地址。
+2. **板端存住了**：板子上有 `/agent_push.json`，里面是 `{"url": "...", "id": "..."}`。重启板子以后还在，就说明存对了。
+3. **板端会自发上报**：在板端串口建一条阈值规则，例如 `mqtt_tool rule device/sensors/temperature val > 27.0`。规则命中后 agent 会给出一段结论，串口里出现 `I/Agent.report: report: sent, N bytes`。
+4. **控制台收到了**：数据库 `device_event` 表里有对应的一行，`device_id` 指向最早登记那块板子的那一行。
+5. **网页收到了**：`GET /api/devices/{id}/events` 能取到最近的事件；`GET /api/devices/{id}/events/stream` 是 SSE，板端一上报就推一帧 `data: {"kind":"report","text":"..."}`。
+
+板子刷了固件以后，第 1 步会断：`/agent_push.json` 没了，板端读到空地址。控制台的定时探活会在 5 分钟内发现并重新下发，第 1 步的日志重新出现，上报随之恢复。
 
 ### 运维页的验证
 
