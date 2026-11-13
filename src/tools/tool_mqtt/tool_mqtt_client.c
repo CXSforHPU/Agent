@@ -312,6 +312,22 @@ rt_err_t mqtt_tool_start(void)
     s_client.offline_callback = mqtt_offline_callback;
     s_client.defaultMessageHandler = mqtt_sub_callback;
 
+    /*
+     * 发布改成阻塞模式：上一条消息被 paho 工作线程取走后才允许写下一条。
+     *
+     * paho(pipe) 的发布通道是字节流，读取端按「一次 read 一条消息」解析
+     * （packages/pahomqtt-latest/MQTTClient-RT/paho_mqtt_pipe.c）。
+     * 工作线程忙的时候（订阅握手、等 PINGRESP）管道里会堆起多条消息，
+     * 下一次 read 拿到的是好几条拼接的数据，只解析了第一条，
+     * 再读就从消息中间起步，解析出的 payloadlen 是垃圾，
+     * topic 指针越界后 strlen 直接跑飞（data abort）。
+     * 阻塞发布保证管道里始终只有一条完整消息。
+     */
+    {
+        int publish_block = 1;
+        paho_mqtt_control(&s_client, MQTT_CTRL_PUBLISH_BLOCK, &publish_block);
+    }
+
     /* 预注册默认订阅话题（默认 filter 模式：只有咨询/命中阈值规则才交给 agent） */
 #if MQTT_TOOL_AUTO_SUB_DEFAULT
     if (sub_register(MQTT_SUBTOPIC, mqtt_mode_from_string(PKG_AGENT_TOOL_MQTT_DEFAULT_MODE)) != RT_EOK)
