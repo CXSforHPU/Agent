@@ -489,7 +489,7 @@ resource/web/
 
 整个包当前是 193 554 字节，占固件 flash 的 6.8%。
 
-MQTT 工具是最大的一块，在 `src/tools/tool_mqtt/` 下分成五个文件：`tool_mqtt_ops.o` 13 742 字节、`tool_mqtt_tools.o` 9 248 字节、`tool_mqtt_client.o` 6 788 字节、`tool_mqtt_filter.o` 6 083 字节、`tool_mqtt_cmd.o` 4 892 字节。不用 MQTT 就整块关掉。
+MQTT 工具是最大的一块，在 `src/tools/tool_mqtt/` 下分成七个文件。占得最多的是 `tool_mqtt_ops.o` 13 742 字节、`tool_mqtt_tools.o` 9 248 字节、`tool_mqtt_client.o` 6 788 字节、`tool_mqtt_filter.o` 6 083 字节、`tool_mqtt_cmd.o` 4 892 字节，剩下两个是 `tool_mqtt.o` 4 404 字节和 `tool_mqtt_route.o` 3 192 字节。不用 MQTT 就整块关掉。
 
 设备框架工具里，通用层 `tool_device_core.o` 是 19 972 字节，I2C 模块 6 596 字节，SPI 模块 5 924 字节，PIN 模块 5 100 字节。关掉的模块编出来是空壳，链接后不占固件空间。
 
