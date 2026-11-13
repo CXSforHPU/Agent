@@ -392,7 +392,7 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 ## 管理控制台
 
-`resource/web/` 是给这套 agent 配的管理网站，不参与固件编译。它做四件事：账号注册登录、设备管理、和 agent 对话、运维板外的两个服务。对话有两条路，不选设备时走网站侧的 agent，选了设备就经 A2A 转给端侧 agent。
+`resource/web/` 是给这套 agent 配的管理网站，不参与固件编译。它做四件事：账号注册登录、设备管理、和 agent 对话、运维板外的两个服务。对话有两条路，不选设备时走网站侧的 agent，选了设备就经 A2A 转给端侧 agent。对话页是一个面板一个会话，一屏可以并排开多个，端侧 agent 的上报流按设备复用。
 
 ```
 resource/web/

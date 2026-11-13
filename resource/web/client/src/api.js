@@ -178,8 +178,9 @@ export const api = {
    * 流式聊天。onEvent 收到 {kind, text, conversationId}，
    * kind 取 status / reasoning / tool / content / final / error。
    * 端侧 agent 的思考、工具调用、正文分片随到随推，final 是完整答案。
+   * 传 signal 可以在面板关闭时中止这次请求。
    */
-  async chatStream(data, onEvent) {
+  async chatStream(data, onEvent, signal) {
     const headers = { 'Content-Type': 'application/json' }
     const token = getToken()
     if (token) {
@@ -192,8 +193,10 @@ export const api = {
         method: 'POST',
         headers,
         body: JSON.stringify(data),
+        signal,
       })
     } catch (e) {
+      if (e.name === 'AbortError') throw e
       throw new ApiError(`连不上后端：${e.message}`, 0)
     }
 
