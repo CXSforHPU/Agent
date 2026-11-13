@@ -184,11 +184,6 @@ at least 8192 bytes (see PKG_PAHOMQTT thread stack option)"
 #define PKG_AGENT_TOOL_MQTT_INJECT_BATCH_MAX        5
 #endif
 
-/* agent 忙时最多等待其空闲多久（毫秒）再投递，超时则转入 poll 缓冲不丢消息 */
-#ifndef PKG_AGENT_TOOL_MQTT_BUSY_WAIT_MS
-#define PKG_AGENT_TOOL_MQTT_BUSY_WAIT_MS            180000
-#endif
-
 /*
  * 默认订阅话题（PKG_AGENT_TOOL_MQTT_SUB_TOPIC）的投递模式：filter / auto / poll
  * menuconfig 用 choice 单选（PKG_AGENT_TOOL_MQTT_DEFAULT_MODE_FILTER/AUTO/POLL），

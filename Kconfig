@@ -862,15 +862,6 @@ if PKG_USING_AGENT
                         default 5
                         range 1 16
 
-                    config PKG_AGENT_TOOL_MQTT_BUSY_WAIT_MS
-                        int "Max wait for an idle agent before buffering (ms)"
-                        default 180000
-                        range 0 900000
-                        help
-                            While the agent is handling a previous round, incoming
-                            messages wait (and are merged) instead of interrupting
-                            it. On timeout they go to the rolling window instead.
-
                     config PKG_AGENT_TOOL_MQTT_ALERT_COOLDOWN_MS
                         int "Alert cooldown per rule (ms)"
                         default 60000

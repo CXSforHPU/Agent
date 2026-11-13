@@ -60,7 +60,7 @@ draw.io 源文件：[mqtt-modules.drawio](diagrams/mqtt-modules.drawio)
 | `tool_mqtt_internal.h` | ~260 | 内部常量（缓冲/超时/原因长度）、内部类型、共享状态 `extern`、跨模块函数声明 |
 | `tool_mqtt.c` | ~530 | 引擎核心：全局状态、加解锁与话题匹配等基础工具、paho 回调、轮询缓冲、消息注入 |
 | `tool_mqtt_client.c` | ~600 | 订阅表与 paho 槽位同步、客户端/接收线程生命周期、订阅生效确认 |
-| `tool_mqtt_route.c` | ~310 | 接收线程主循环、消息路由、门控放行、错峰与批量合并 |
+| `tool_mqtt_route.c` | ~330 | 接收线程主循环、消息路由、门控放行、待注入队列与批量合并 |
 | `tool_mqtt_filter.c` | ~530 | 本地过滤（咨询识别）与阈值规则（数值提取、比较、边沿 + 冷却、规则管理） |
 | `tool_mqtt_ops.c` | ~820 | 业务操作：发布/订阅/退订/列表/收取（不含 LLM 封装与命令行解析） |
 | `tool_mqtt_tools.c` | ~450 | LLM 工具入口：7 个工具的注册与参数解析 |
@@ -328,7 +328,6 @@ Summarize the trend above and give the user a short assessment of the recent sit
 | `PKG_AGENT_TOOL_MQTT_POLL_DEPTH` | 8 | poll 模式环形缓冲深度 |
 | `PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS` | 1000 | 两次注入 agent 的最小间隔（防止请求过密被对端重置） |
 | `PKG_AGENT_TOOL_MQTT_INJECT_BATCH_MAX` | 5 | 单次注入最多合并的消息条数 |
-| `PKG_AGENT_TOOL_MQTT_BUSY_WAIT_MS` | 180000 | agent 忙时最多等待其空闲多久再投递，超时转 poll 缓冲 |
 | `PKG_AGENT_TOOL_MQTT_CONNECT_WAIT_MS` | 3000 | 发布前等待连接超时 |
 | `PKG_AGENT_TOOL_MQTT_SUB_WAIT_MS` | 3000 | 订阅生效确认超时 |
 | `PKG_AGENT_TOOL_MQTT_KEEPALIVE_SEC` | 60 | keepalive 间隔 |
@@ -396,7 +395,8 @@ draw.io 源文件：[vsnprintf-select-flow.drawio](diagrams/vsnprintf-select-flo
 | 订阅生效 | 已连接时立即发送 SUBSCRIBE；未连接时先登记，连上后由接收线程补订阅（工具返回 `pending`） |
 | 去重 | 重叠过滤器（如 `a/#` 与 `a/b`）会让 paho 对同一报文回调多次，回调内按 `话题+报文ID+内容` 去重 |
 | 限速与合并 | auto 模式下两次注入间隔不小于 `INJECT_MIN_INTERVAL_MS`（默认 1s），一次注入最多合并 `INJECT_BATCH_MAX`（默认 5）条；同一批内 topic+payload 完全相同的重复报文只报 1 条并注明条数 |
-| 忙时错峰 | agent 正在处理上一次用户请求（LLM 请求 + 工具执行）时，接收线程会等待其空闲再投递（最长 `BUSY_WAIT_MS`），期间消息留在队列里、空闲后合并成一次请求；日志 `agent busy, hold mqtt message ...` 可见 |
+| 忙时错峰 | agent 正在处理上一次用户请求（LLM 请求 + 工具执行）时，放行的消息先存进待注入队列（深度 6），接收线程继续收下一条；agent 空闲后合并成一次注入。原始接收队列始终在排空，不会因为等待而堆满 |
+| 限速等待不阻塞 | 两次注入之间的间隔没到时，消息继续留在待注入队列，接收线程照常收下一条，不用 `rt_thread_mdelay` 干等 |
 | 本地门控 | `filter` 模式下由接收线程判定「是否值得打扰 agent」：命中咨询关键词或阈值规则才放行；其余只累加 `suppressed` 计数并进滚动窗口。门控在「agent 是否运行」判断之前执行，因此 agent 未运行时也能统计 |
 | 阈值告警语义 | 边沿触发 + 冷却：越界首次告警、持续越界不重复、回落复位、冷却到期可再告警；原因写进注入文本的 `forward reason` 字段 |
 | 按需总结 | 例行数据不丢：每话题保留最近 `HISTORY_DEPTH`(默认 8) 条原始报文，`mqtt_history` **只读**汇总「最近消息 + 数值 min/max/avg/last + 收发计数」，`mqtt_receive` 则取出并消费缓冲；`mqtt_tool status` 另给出每话题 `last payload`、`suppressed` 计数与规则状态 |
@@ -581,13 +581,13 @@ else
 | `error: mqtt not connected` | 网络/域名解析不通、broker 地址或账号错误；看 `mqtt connecting/online/offline` 日志 |
 | `error: payload too long` | 缩短消息，或调大 `BUF_SIZE` / `MAX_PUB_LEN` / pipe 缓冲 |
 | 订阅返回 `pending` | 客户端尚未连上；连上后自动生效，可用 `mqtt_tool status` 观察 `subscribed=1` |
-| 收到消息但 agent 无反应 | **先确认投递模式**：`filter`（默认）下例行数据本来就不会打扰 agent，这是设计行为。看 `mqtt_tool status` 的 `suppressed` 计数是否在增长；需要每条都分析就 `mode=auto`。此外确认 agent 正在运行（`main_loop_entry`）；日志出现 `agent busy, hold mqtt message` 属正常错峰，当前对话结束后会自动合并投递。**想让 agent 总结这些被过滤的数据，用 `mqtt_history`（只读，能看到原始 payload）** |
+| 收到消息但 agent 无反应 | **先确认投递模式**：`filter`（默认）下例行数据本来就不会打扰 agent，这是设计行为。看 `mqtt_tool status` 的 `suppressed` 计数是否在增长；需要每条都分析就 `mode=auto`。此外确认 agent 正在运行（`main_loop_entry`）；`status` 里的 `pending` 是等着注入的条数，agent 空闲后会合并投递。**想让 agent 总结这些被过滤的数据，用 `mqtt_history`（只读，能看到原始 payload）** |
 | `status`/`history` 等 MSH 输出被截断在 255 字节左右 | `rt_kprintf` 使用共享的 `rt_log_buf[RT_CONSOLEBUF_SIZE]`（默认 256），一次性打印超长文本会被静默截断。工具内部已改为按行分段打印；自己写 MSH 输出时同理需要分段 |
 | 阈值告警没触发 | 检查：规则字段名与报文 JSON 字段是否一致（大小写敏感）、话题过滤器是否匹配、payload 是否为合法 JSON（`{hum:35}` 少了引号不是合法 JSON，规则不参与判定）；`status` 里 `triggered_now` 可看当前是否处于越界状态 |
 | 想临时每条都看 | `mqtt_tool sub <topic> auto`（或让 agent 用 `mqtt_subscribe mode=auto`），验证完改回 `filter` |
 | 消息被截断 | payload 超过 `PAYLOAD_MAX_LEN`（256），`mqtt_receive` 会标注 `(truncated)` |
 | 只订阅成功 1 个话题 | `PKG_PAHOMQTT_SUBSCRIBE_HANDLERS` 被改回 1，改回 4 即可 |
-| **`mbedtls_client_read data error, return -0x4c` → `chat: POST failed, http status=-76` → `Chat request failed, terminating this case`** | `-0x4c` = `MBEDTLS_ERR_NET_RECV_FAILED`，即 HTTPS/TLS 连接在读取响应时被对端或网络重置，与 MQTT 消息内容无关。常见诱因是**请求过于密集**（设备周期性上报 → 每条消息触发一次 LLM 请求，容易被服务端/代理限流重置）。已在两侧缓解：① 注入侧错峰 + 合并（default 1s 间隔、批量 5 条、agent 忙时等待空闲）；② 框架侧状态机 `THINK` 节点失败自动重试 3 次。若仍频繁出现，可调大 `PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS`，或在设备侧降低上报频率/只上报变化量 |
+| **`mbedtls_client_read data error, return -0x4c` → `chat: POST failed, http status=-76` → `Chat request failed, terminating this case`** | `-0x4c` = `MBEDTLS_ERR_NET_RECV_FAILED`，即 HTTPS/TLS 连接在读取响应时被对端或网络重置，与 MQTT 消息内容无关。常见诱因是**请求过于密集**（设备周期性上报 → 每条消息触发一次 LLM 请求，容易被服务端/代理限流重置）。已在两侧缓解：① 注入侧错峰 + 合并（default 1s 间隔、批量 5 条、agent 忙时消息进待注入队列）；② 框架侧状态机 `THINK` 节点失败自动重试 3 次。若仍频繁出现，可调大 `PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS`，或在设备侧降低上报频率/只上报变化量 |
 | **`mqtt_tool start` 后整机卡死（shell 无响应）** | paho 工作线程栈不足：`RT_PKG_MQTT_THREAD_STACK_SIZE` 需 ≥ 8192。栈溢出会破坏堆元数据，导致后续 `rt_malloc` 在大块请求上死循环。已本项目中修复；排查方法见下 |
 | 终端输入较长一句话后出现 `Function[_rt_mutex_take]: scheduler is not available` 断言（CLI 通道） | `CLI_THREAD_STACK_SIZE` 过小（原 1024）：CLI 线程栈上有 512 字节输入缓冲，且每敲一键都要经 `rt_kprintf` 重绘整行，长输入会栈溢出，溢出被内核栈检查捕获后又在调度器上下文中调用 ulog 进而断言。已调整为 4096（`inc/channels/CLI.h`） |
 
@@ -701,6 +701,18 @@ W/Agent.Fsm: repeated tool calls detected, forcing a final answer
 
 验证：改动后重新编译，烧同样的固件，跑过原来必崩的那个时间点（启动后 6 秒内）以及之后的订阅、发布、收消息全过程，没有再出现 abort。
 
+### 9.5 案例：agent 忙时接收队列整片丢消息（真实案例）
+
+现象：串口里成片出现 `mqtt rx queue full, drop message on topic device/sensors/xxx`，六个话题一起被丢；紧跟着是 `agent busy, hold mqtt message ... until it is idle`。同时 `Context compression failed; original history retained.` 反复出现，历史越滚越大，每一轮 LLM 请求越来越慢，形成「越丢越忙、越忙越丢」的循环。
+
+原因：接收线程原来遇到 agent 正在处理上一轮时会**原地等待**它空闲（最长 `BUSY_WAIT_MS`，默认 3 分钟）。等待期间原始接收队列没人消费，而 paho 回调还在往里塞消息：六个话题每秒各一条，队列深度 16，零点几秒就满了。丢掉的正是例行数据，正是本来要走本地门控的那批。
+
+修复：接收线程不再阻塞。放行的消息存进待注入队列（深度 6），线程继续收下一条；agent 空闲且过了最小注入间隔时，把攒着的消息合并成一次注入。原始接收队列始终在排空，队列深度 16 足够。两次注入之间也不再 `rt_thread_mdelay` 干等，消息留在队列里等下一个循环周期。队列满时丢最旧的一条并计数，日志 `mqtt pending queue full, drop the oldest alert on topic ...`；`mqtt_tool status` 的 `summary` 里新增 `pending=` 一列，可以直接看到攒着几条。原本的 `PKG_AGENT_TOOL_MQTT_BUSY_WAIT_MS` 配置项随行为一起删掉。
+
+同一条日志里的压缩失败是另一回事：摘要请求返回空正文。原因是摘要提示词太长，模型思考就把 `max_tokens` 用光，正文一个字没写。提示词改短、`max_tokens` 提到 2048、字节上限写进提示词（取原文四分之一、最多 1200 字节）以后，实测不再出现空摘要。详见 `docs/framework.md` 3.3。
+
+验证：QEMU 上跑六个话题的传感器数据，温度阈值规则每分钟命中一次。改动前一个运行期里出现成百上千行 `rx queue full`；改动后同一场景 `dropped=0`、`pending=0`，`rx_total` 一路涨到 9746 而没有一条丢弃。
+
 ## 10. 验证记录
 以下功能在 QEMU（vexpress-a9）+ 公网 broker 上验证通过，broker 地址取 `rtconfig.h` 里的 `PKG_AGENT_TOOL_MQTT_BROKER_URL`：
 
@@ -714,6 +726,7 @@ W/Agent.Fsm: repeated tool calls detected, forcing a final answer
 | `auto` 模式自动交给 agent 分析 | agent 运行中收到 PC 端发布后打印 `mqtt -> agent: 1 message(s) delivered for analysis`，随后 LLM 输出分析 |
 | `poll` 模式 + `mqtt_receive` | 缓冲/过滤/计数正确（`buffered=` / `rx_total=` / `dropped=`） |
 | **filter 门控**（9 条消息：3 例行 + 3 越界 + 1 提问 + 2 恢复/再越界） | 结果 `rx=9 suppressed=6`：3 条例行全部本地拦截不调用 LLM；`hum=35` 首次越界放行；`hum=36/37` 冷却内不重复打扰；提问报文放行；回落复位后冷却到期 `hum=41` 再次放行 |
+| agent 忙时的接收线程（六个话题持续上报 + 阈值规则每分钟告警） | `dropped=0`，`summary` 的 `pending=` 在 0 与 1 之间变化，没有再出现 `mqtt rx queue full` |
 | **对话式建规则** | 用自然语言要求「盯着湿度超过 30 就提醒」时，模型自行调用 `mqtt_rule`：`[Local Tool mqtt_rule Execution Result] rule set: topic=agent/sub value=hum > 30` |
 | **请求失败自动重试** | 实测同一次对话中出现 `mbedtls ... -0x4c` → `W/Agent.Fsm: Chat request failed (attempt 1/3), retry in 1000 ms` → 重试后成功完成工具调用（不再 `terminating this case`） |
 | **近期汇总可读原始 payload** | `mqtt_tool sim agent/sub {"hum":41}` 等 4 条（全部被 filter 拦截，`forwarded=0 filtered=4`）后 `mqtt_tool history` 输出：逐条 `Ns ago: {"hum":47}` + `numeric summary: hum: n=4 min=38 max=47 avg=42.5 last=47`，只读、可重复读取 |

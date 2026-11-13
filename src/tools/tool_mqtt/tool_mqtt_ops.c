@@ -408,10 +408,11 @@ void mqtt_do_list(char *out, rt_size_t out_size)
 
     buf_append(out, out_size, &used,
                "\nsummary: active=%d/%d rx_total=%d injected_total=%d suppressed_total=%d "
-               "alerts=%d dropped=%d buffered=%d overwritten=%d",
+               "alerts=%d dropped=%d buffered=%d overwritten=%d pending=%d",
                active, MQTT_TOOL_MAX_SUB_TOPICS, (int)s_rx_total, (int)s_inject_total,
                (int)s_suppressed_total, (int)s_alert_total,
-               (int)s_rx_dropped, s_poll_count, (int)s_poll_overwrites);
+               (int)s_rx_dropped, s_poll_count, (int)s_poll_overwrites,
+               mqtt_pending_count());
     lock_give();
 }
 

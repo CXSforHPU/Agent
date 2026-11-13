@@ -44,6 +44,8 @@
 #ifndef PKG_AGENT_TOOL_MQTT_LOCK_WAIT_MS
 #define PKG_AGENT_TOOL_MQTT_LOCK_WAIT_MS    1000
 #endif
+/* 待注入队列深度：agent 忙时攒着的放行消息，攒满了丢最旧的一条 */
+#define MQTT_TOOL_PENDING_DEPTH      6
 
 /* ==========================================================================
  * 内部数据结构
@@ -98,6 +100,13 @@ typedef struct
     rt_uint16_t raw_len;                 /* 原始长度，用于判断是否被截断 */
     rt_uint8_t truncated;
 } mqtt_rx_item_t;
+
+/* 待注入队列中的一条：消息 + 放行原因 */
+typedef struct
+{
+    mqtt_rx_item_t item;
+    char reason[MQTT_TOOL_REASON_MAX_LEN];
+} mqtt_pending_t;
 
 /* ==========================================================================
  * 三、共享状态（定义于 tool_mqtt.c）
@@ -261,5 +270,8 @@ void mqtt_sub_callback(MQTTClient *c, MessageData *msg_data);
 
 /* 接收线程入口（定义于 tool_mqtt_route.c，由 tool_mqtt_client.c 创建） */
 void mqtt_rx_thread(void *param);
+
+/* 当前攒着几条待注入的消息（定义于 tool_mqtt_route.c） */
+int mqtt_pending_count(void);
 
 #endif /* __AGENT_TOOL_MQTT_INTERNAL_H__ */
