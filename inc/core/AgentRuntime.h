@@ -28,4 +28,12 @@ rt_bool_t agent_is_running(void);
  */
 rt_bool_t agent_is_busy(void);
 
+/*
+ * @brief 查询当前这一轮是不是外部注入发起的
+ * @return RT_TRUE 自发轮次，RT_FALSE 通道请求发起的轮次
+ * @note  自发轮次（MQTT 告警、传感器事件等）没有人等它的回答，
+ *        答案要走上报通道，投进 output mailbox 会被下一次提问当成自己的回复取走
+ */
+rt_bool_t agent_turn_is_spontaneous(void);
+
 #endif /* __AGENT_RUNTIME_H__ */

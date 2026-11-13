@@ -13,6 +13,7 @@
  *   protocol/     LLM 协议模块，按 OpenAI 与 Anthropic 分文件，统一入口 utils/protocol.h
  *   webclient_util.c  webclient 超时设置，绕开 v2.2.0 的两个坑
  *   agent_endpoint.c  外部服务器地址，手动填或向控制台自动获取
+ *   agent_report.c  自发结论上报通道，把板端自己产生的告警推给控制台
  *   file_op.c     文件上传下载线程，需要 PKG_AGENT_MULTIMODAL_ENABLE
  *   stt.c         本地语音转写，需要 PKG_AGENT_STT_ENABLE
  *   tts.c         文本转语音与回复播报，需要 PKG_AGENT_TTS_ENABLE
@@ -33,6 +34,7 @@
 #include "utils/tool_json.h"
 #include "utils/protocol.h"
 #include "utils/webclient_util.h"
+#include "utils/agent_report.h"
 
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
 #include "utils/file_op.h"

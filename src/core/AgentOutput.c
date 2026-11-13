@@ -10,20 +10,32 @@
 /*
  * @brief 向输出通道投递一段纯文本（工具循环兜底、空回答兜底用）
  * @param text 文本内容，RT_NULL/空串时用默认提示
+ * @note  自发轮次（MQTT 告警、传感器越限）没有人等它的回答，答案要走上报
+ *        通道；投进 output mailbox 会被下一次网页请求当成自己的回复取走
  */
 static void agent_put_text(const char *text)
 {
-    MessageHub_t hub = agent_get_message_hub();
+    MessageHub_t hub;
     Messages_t messages;
-
-    if (hub == RT_NULL)
-    {
-        return;
-    }
 
     if (text == RT_NULL || text[0] == '\0')
     {
         text = "(no answer generated)";
+    }
+
+    if (agent_turn_is_spontaneous())
+    {
+        if (agent_report_push(text) != RT_EOK)
+        {
+            LOG_W("report: spontaneous answer not queued");
+        }
+        return;
+    }
+
+    hub = agent_get_message_hub();
+    if (hub == RT_NULL)
+    {
+        return;
     }
 
     messages = messages_create(1);

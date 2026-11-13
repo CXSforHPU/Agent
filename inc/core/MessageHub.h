@@ -32,6 +32,10 @@ typedef struct Messages
     MessageItem_t message_ptr;
     int max_size;
     int current_size;
+    /* 本条消息是不是外部主动注入的（MQTT 告警、传感器事件等）。
+       注入发起的轮次没有人在等它的回答，答案要走上报通道，
+       放进 output mailbox 会被下一次提问当成自己的回复取走 */
+    rt_bool_t spontaneous;
 } Messages, *Messages_t;
 
 /* 消息中心结构 */
@@ -67,6 +71,13 @@ rt_err_t messages_append(Messages_t messages, MessageType message_type, const ch
 void messages_destroy(Messages_t messages);
 MessageType messages_get_type_idx(Messages_t messages, int idx);
 char *messages_get_content_idx(Messages_t messages, int idx);
+
+/*
+ * @brief 标记这条消息是外部注入发起的
+ * @param messages     消息数组句柄
+ * @param spontaneous  RT_TRUE 表示注入发起
+ */
+void messages_set_spontaneous(Messages_t messages, rt_bool_t spontaneous);
 
 /* 获取消息类型字符串 */
 char *get_agent_content_type(MessageType message_type);

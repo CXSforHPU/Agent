@@ -94,6 +94,8 @@ rt_err_t agent_inject_text(const char *text)
         messages_destroy(messages);
         return RT_ERROR;
     }
+    /* 标记为自发：这条消息没有人等着听回答，答案要走上报通道 */
+    messages_set_spontaneous(messages, RT_TRUE);
 
     /* 所有权移交：成功后由 agent 主循环消费并释放 */
     if (hub->put_message(hub, messages, hub->input_mailbox) != RT_EOK)

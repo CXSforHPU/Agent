@@ -51,6 +51,7 @@ Messages_t messages_create(int max_size)
 
     messages->max_size = max_size;
     messages->current_size = 0;
+    messages->spontaneous = RT_FALSE;
     return messages;
 }
 
@@ -96,6 +97,20 @@ rt_err_t messages_append(Messages_t messages, MessageType message_type, const ch
     messages->current_size++;
 
     return RT_EOK;
+}
+
+/*
+ * @brief 标记这条消息是外部注入发起的
+ * @param messages     消息数组句柄
+ * @param spontaneous  RT_TRUE 表示注入发起
+ */
+void messages_set_spontaneous(Messages_t messages, rt_bool_t spontaneous)
+{
+    if (messages == RT_NULL)
+    {
+        return;
+    }
+    messages->spontaneous = spontaneous;
 }
 
 /*

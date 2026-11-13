@@ -19,6 +19,8 @@ static rt_thread_t g_main_agent_loop = RT_NULL;
 static rt_bool_t g_agent_running = RT_FALSE;
 /* agent 是否正在处理一轮对话：供外部注入方（如 MQTT 接收线程）错峰投递 */
 static volatile rt_bool_t g_agent_busy = RT_FALSE;
+/* 当前这一轮是不是外部注入发起的：自发轮次的答案走上报通道 */
+static volatile rt_bool_t g_turn_spontaneous = RT_FALSE;
 /* 通道 ops 函数指针：init/reset 统一经此分发，宏选择只在 AgentChannels.h 一处 */
 static const AgentChannelOps *g_channel_ops = RT_NULL;
 
@@ -59,6 +61,17 @@ rt_bool_t agent_is_busy(void)
 }
 
 /*
+ * @brief 查询当前这一轮是不是外部注入发起的
+ * @return RT_TRUE 自发轮次，RT_FALSE 通道请求发起的轮次
+ * @note  自发轮次（MQTT 告警、传感器事件等）没有人等它的回答，
+ *        答案要走上报通道，不能投进 output mailbox
+ */
+rt_bool_t agent_turn_is_spontaneous(void)
+{
+    return g_turn_spontaneous;
+}
+
+/*
  * @brief 初始化 agent（工具、消息中心、上下文、通道）
  */
 static void init_agent(void)
@@ -70,6 +83,9 @@ static void init_agent(void)
 
     /* 流式事件队列：通道侧边等结果边把思考、工具、正文推给客户端 */
     agent_stream_init();
+
+    /* 自发结论上报通道：读回控制台下发的回调地址 */
+    agent_report_init();
 
     init_tools();
     g_message_hub = message_hub_create();
@@ -165,6 +181,7 @@ static void main_loop(void *param)
 
         g_context->append_user_message(g_context, messages);
         /* 输入消息所有权在 main_loop（消费者），使用完毕后释放 */
+        g_turn_spontaneous = messages->spontaneous;
         messages_destroy(messages);
 
         g_agent_busy = RT_TRUE;
@@ -249,10 +266,12 @@ static void cleanup_agent(void)
     agent_tools_cleanup();
 
     agent_stream_deinit();
+    agent_report_deinit();
 
     g_main_agent_loop = RT_NULL;
     g_agent_running = RT_FALSE;
     g_agent_busy = RT_FALSE;
+    g_turn_spontaneous = RT_FALSE;
     g_channel_ops = RT_NULL;
 #ifdef PKG_AGENT_MULTIMODAL_ENABLE
     if (g_file_op_thread)

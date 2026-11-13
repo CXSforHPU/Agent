@@ -583,6 +583,16 @@ if PKG_USING_AGENT
                         first-boot defaults. Needs a writable file system, the
                         SD card mounted at / for example.
 
+                config PKG_AGENT_A2A_PUSH_PATH
+                    string "Push callback file path"
+                    default "/agent_push.json"
+                    help
+                        Where POST /tasks/pushNotificationConfig stores the
+                        callback URL. The file is read when the agent starts,
+                        so the board keeps reporting after a reboot. Needs a
+                        writable file system, the SD card mounted at / for
+                        example.
+
             endmenu
         endif
 

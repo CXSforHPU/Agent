@@ -395,7 +395,7 @@ static void cgi_agent_card(struct webnet_session *session)
     caps = cJSON_CreateObject();
     /* 同上，cJSON_False 是 1，要写 0 */
     cJSON_AddBoolToObject(caps, "streaming", 1);
-    cJSON_AddBoolToObject(caps, "pushNotifications", 0);
+    cJSON_AddBoolToObject(caps, "pushNotifications", 1);
     cJSON_AddBoolToObject(caps, "stateTransitionHistory", 1);
     cJSON_AddItemToObject(card, "capabilities", caps);
 
@@ -738,6 +738,98 @@ static void cgi_task_stream(struct webnet_session *session)
 }
 
 /*
+ * @brief POST /tasks/pushNotificationConfig，下发上报回调地址
+ * @note  请求体形如 {"url":"http://192.168.137.1:8080/api/devices/push/xxx","id":"dev-1"}
+ *        url 传空串表示关闭上报
+ */
+static void cgi_push_config(struct webnet_session *session)
+{
+    char *body;
+    cJSON *root;
+    cJSON *item;
+    const char *url;
+    const char *id;
+
+    if (session == RT_NULL || session->request == RT_NULL)
+    {
+        return;
+    }
+
+    if (session->request->method == WEBNET_GET)
+    {
+        root = cJSON_CreateObject();
+        if (root == RT_NULL)
+        {
+            agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
+                                      "error", "out of memory");
+            return;
+        }
+        cJSON_AddStringToObject(root, "url", agent_report_callback());
+        cJSON_AddStringToObject(root, "id", agent_report_callback_id());
+        if (agent_wn_send_json_object(session, 200, "OK", root) != RT_EOK)
+        {
+            agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
+                                      "error", "failed to serialize the push config");
+        }
+        cJSON_Delete(root);
+        return;
+    }
+
+    if (session->request->method != WEBNET_POST)
+    {
+        agent_wn_send_simple_json(session, 405, "Method Not Allowed", RT_FALSE,
+                                  "error", "use GET to read, POST to update");
+        return;
+    }
+
+    body = agent_wn_copy_request_body(session, A2A_REQUEST_MAX_SIZE);
+    if (body == RT_NULL)
+    {
+        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                  "error", "invalid or oversized request body");
+        return;
+    }
+
+    root = cJSON_Parse(body);
+    rt_free(body);
+    if (root == RT_NULL || !cJSON_IsObject(root))
+    {
+        if (root != RT_NULL)
+        {
+            cJSON_Delete(root);
+        }
+        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                  "error", "body must be a JSON object");
+        return;
+    }
+
+    item = cJSON_GetObjectItemCaseSensitive(root, "url");
+    if (!cJSON_IsString(item))
+    {
+        cJSON_Delete(root);
+        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                  "error", "url must be a string");
+        return;
+    }
+    url = item->valuestring;
+
+    item = cJSON_GetObjectItemCaseSensitive(root, "id");
+    id = cJSON_IsString(item) ? item->valuestring : RT_NULL;
+
+    if (agent_report_set_callback(url, id) != RT_EOK)
+    {
+        cJSON_Delete(root);
+        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
+                                  "error", "the push callback url is invalid");
+        return;
+    }
+
+    cJSON_Delete(root);
+    LOG_I("push notification config updated");
+    agent_wn_send_simple_json(session, 200, "OK", RT_TRUE, "status", "ok");
+}
+
+/*
  * @brief A2A 通道初始化
  * @param hub 消息中心句柄
  * @param ctx 上下文管理器句柄
@@ -769,6 +861,7 @@ void a2a_agent_channel_init(MessageHub_t hub, Context_t ctx)
     webnet_cgi_register("card", cgi_card);
     webnet_cgi_register("tasks/send", cgi_task_send);
     webnet_cgi_register("tasks/sendSubscribe", cgi_task_stream);
+    webnet_cgi_register("tasks/pushNotificationConfig", cgi_push_config);
 
     webnet_init();
     started = RT_TRUE;
