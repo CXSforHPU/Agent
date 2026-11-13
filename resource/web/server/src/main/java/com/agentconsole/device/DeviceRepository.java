@@ -34,6 +34,11 @@ public class DeviceRepository {
                 this::map, userId);
     }
 
+    /** 所有设备行，不分账号。判断两块板子是不是同一台时用。 */
+    public List<Device> findAll() {
+        return jdbc.query("SELECT " + COLUMNS + " FROM device ORDER BY id", this::map);
+    }
+
     public Optional<Device> findById(long id, long userId) {
         var rows = jdbc.query("SELECT " + COLUMNS + " FROM device WHERE id = ? AND user_id = ?",
                 this::map, id, userId);

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, computed, nextTick, watch } from 'vue'
+import { ref, onMounted, computed, nextTick, watch, onBeforeUnmount } from 'vue'
 import {
   NCard,
   NButton,
@@ -113,13 +113,57 @@ onMounted(async () => {
   } catch (e) {
     message.error(e.message)
   }
+  startEventStream()
+})
+
+onBeforeUnmount(() => {
+  stopEventStream()
 })
 
 watch(deviceId, async () => {
   conversationId.value = 0
   messages.value = []
   try { await loadConversations() } catch (e) { message.error(e.message) }
+  startEventStream()
 })
+
+/* 端侧 agent 自发上报的结论（告警、传感器越限）从这条流过来 */
+const eventController = ref(null)
+
+function stopEventStream() {
+  if (eventController.value) {
+    eventController.value.abort()
+    eventController.value = null
+  }
+}
+
+async function startEventStream() {
+  stopEventStream()
+  if (!isEdge.value) return
+  const controller = new AbortController()
+  eventController.value = controller
+  const id = deviceId.value
+  for (;;) {
+    try {
+      await api.deviceEventStream(id, (event) => {
+        if (event.kind === 'error' || !event.text) return
+        messages.value.push({
+          id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          role: 'assistant',
+          content: event.text,
+          report: true,
+        })
+        scrollToBottom()
+      }, controller.signal)
+    } catch (e) {
+      if (controller.signal.aborted) return
+      console.warn('设备上报流断开：', e.message)
+    }
+    if (controller.signal.aborted) return
+    await new Promise((resolve) => setTimeout(resolve, 3000))
+    if (controller.signal.aborted) return
+  }
+}
 
 async function loadConversations() {
   const result = await api.listConversations(
@@ -259,7 +303,7 @@ function scrollToBottom() {
       <div ref="logRef" class="log" role="log" aria-label="对话消息" :aria-busy="sending">
         <NEmpty v-if="!messages.length" description="开始新的对话，输入你想了解的问题" />
         <div v-for="m in messages" :key="m.id" class="msg" :class="m.role">
-          <div class="who">{{ m.role === 'user' ? '我' : targetName }}</div>
+          <div class="who">{{ m.role === 'user' ? '我' : m.report ? '设备上报' : targetName }}</div>
           <div v-if="m.reasoning" class="reasoning">
             <button class="reasoning-head" type="button" @click="toggleReasoning(m)">
               {{ m.reasoningOpen ? '收起思考过程' : '思考过程' }}
@@ -464,6 +508,11 @@ function scrollToBottom() {
   background: #6366f1;
   color: #fff;
   border-color: #6366f1;
+}
+
+.msg.report .text {
+  background: #fff8e6;
+  border-color: #f5d78e;
 }
 
 .composer {

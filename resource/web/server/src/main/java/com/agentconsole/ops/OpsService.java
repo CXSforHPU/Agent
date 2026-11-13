@@ -341,6 +341,15 @@ public class OpsService {
         return "http://" + deviceHost + ":" + mcpPort + "/mcp";
     }
 
+    /**
+     * 板端上报的回调地址。
+     *
+     * <p>板子在控制台外面，主机名得用 deviceHost，不是控制台自己用的那个。
+     */
+    public String pushCallbackUrl(String token, int consolePort) {
+        return "http://" + deviceHost + ":" + consolePort + "/api/devices/push/" + token;
+    }
+
     private boolean portOpen(String host, int port) {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(host, port), 800);

@@ -20,4 +20,24 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 public record Device(long id, long userId, String name, String address, String groupName,
                      String note, boolean enabled, String createdAt, String lastSeenAt,
                      boolean online) {
+
+    /**
+     * 地址归一化：补上协议头，去掉结尾斜杠。
+     *
+     * <p>同一个板子可能被几个账号各登记一次，地址写法可能不完全一样，
+     * 判断是不是同一台板子时都按这个结果比。
+     */
+    public static String normalizeAddress(String address) {
+        String s = address == null ? "" : address.trim();
+        if (s.isEmpty()) {
+            return "";
+        }
+        if (!s.startsWith("http://") && !s.startsWith("https://")) {
+            s = "http://" + s;
+        }
+        while (s.endsWith("/")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s;
+    }
 }

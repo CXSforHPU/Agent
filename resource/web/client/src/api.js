@@ -106,6 +106,65 @@ export const api = {
   pushDeviceConfig: (id, data) => request(`/devices/${id}/config`, { method: 'POST', body: data }),
   pushDeviceCard: (id, data) => request(`/devices/${id}/card`, { method: 'POST', body: data }),
 
+  /** 这台设备最近的上报事件，新的在前。 */
+  listDeviceEvents: (id) => request(`/devices/${id}/events`),
+
+  /**
+   * 设备上报事件流。端侧 agent 自己产生的结论（告警、传感器越限）从这条流过来。
+   * onEvent 收到 {kind, text, createdAt}。流断开时正常返回，调用方自己决定要不要重连。
+   */
+  async deviceEventStream(id, onEvent, signal) {
+    const headers = {}
+    const token = getToken()
+    if (token) {
+      headers.Authorization = `Bearer ${token}`
+    }
+
+    let resp
+    try {
+      resp = await fetch(`/api/devices/${id}/events/stream`, { headers, signal })
+    } catch (e) {
+      if (e.name === 'AbortError') return
+      throw new ApiError(`连不上后端：${e.message}`, 0)
+    }
+
+    if (resp.status === 401) {
+      setToken('')
+      throw new ApiError('登录已过期，请重新登录', 401)
+    }
+    if (!resp.ok) {
+      throw new ApiError(`请求失败（HTTP ${resp.status}）`, resp.status)
+    }
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder('utf-8')
+    let buffer = ''
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let index
+        while ((index = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, index)
+          buffer = buffer.slice(index + 2)
+          for (const line of frame.split('\n')) {
+            if (!line.startsWith('data:')) continue
+            const payload = line.slice(5).trim()
+            if (!payload) continue
+            try {
+              onEvent(JSON.parse(payload))
+            } catch {
+              // 坏帧丢掉，不影响后面的事件
+            }
+          }
+        }
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') throw e
+    }
+  },
+
   listConversations: (deviceId) =>
     request(`/conversations${deviceId ? `?deviceId=${deviceId}` : ''}`),
   getConversation: (id) => request(`/conversations/${id}`),

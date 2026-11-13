@@ -1,6 +1,8 @@
 package com.agentconsole.a2a;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -127,6 +129,51 @@ public class A2aClient {
             }
             return last;
         }
+    }
+
+    /**
+     * 下发上报回调地址。板端存进 SD 卡，此后自发产生的结论都 POST 到这个地址。
+     *
+     * <p>url 传空串表示关闭上报。
+     */
+    public void setPushConfig(String baseUrl, String url, String id) throws Exception {
+        ObjectNode payload = json.createObjectNode();
+        payload.put("url", url == null ? "" : url);
+        payload.put("id", id == null ? "" : id);
+        String body = json.writeValueAsString(payload);
+        HttpRequest request = HttpRequest.newBuilder(URI.create(trim(baseUrl) + "/tasks/pushNotificationConfig"))
+                .timeout(readTimeout)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                .build();
+        HttpResponse<String> response = send(baseUrl, request);
+        if (response.statusCode() / 100 != 2) {
+            throw new IllegalStateException("下发回调地址返回 HTTP " + response.statusCode());
+        }
+    }
+
+    /**
+     * 读板端当前的上报回调地址。
+     *
+     * <p>板端刷过固件以后 SD 卡上的地址就没了，控制台得知道自己下发的地址还在不在，
+     * 不在就重新下一次。
+     */
+    public PushConfig readPushConfig(String baseUrl) throws Exception {
+        HttpRequest request = HttpRequest.newBuilder(URI.create(trim(baseUrl) + "/tasks/pushNotificationConfig"))
+                .timeout(readTimeout)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+        HttpResponse<String> response = send(baseUrl, request);
+        if (response.statusCode() / 100 != 2) {
+            throw new IllegalStateException("读回调地址返回 HTTP " + response.statusCode());
+        }
+        JsonNode node = json.readTree(response.body());
+        return new PushConfig(node.path("url").asText(""), node.path("id").asText(""));
+    }
+
+    /** 板端当前记着的回调地址。 */
+    public record PushConfig(String url, String id) {
     }
 
     /** 发一个请求，同一台设备同一时刻只发一条。 */

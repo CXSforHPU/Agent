@@ -2,6 +2,8 @@ package com.agentconsole.agent;
 
 import com.agentconsole.conversation.Message;
 import com.agentconsole.device.Device;
+import com.agentconsole.device.DeviceEvent;
+import com.agentconsole.device.DeviceEventService;
 import com.agentconsole.device.DeviceRepository;
 import com.agentconsole.settings.RtConfigDefaults;
 import com.agentconsole.settings.SettingService;
@@ -25,6 +27,9 @@ public class WebsiteAgent {
     /** 工具调用最多来回几轮，防止模型绕圈。 */
     private static final int MAX_TOOL_ROUNDS = 4;
 
+    /** 系统提示词里每台设备带几条最近的上报。 */
+    private static final int RECENT_EVENT_COUNT = 3;
+
     private static final String DEFAULT_PROMPT =
             "你是设备管理控制台的助手。回答要简短、具体，用中文。"
                     + "当用户问到具体设备时，先看上下文里给出的设备信息；信息不足就直接说明缺什么，不要编造。"
@@ -34,18 +39,21 @@ public class WebsiteAgent {
     private final SettingService settings;
     private final DeviceTool deviceTool;
     private final DeviceRepository devices;
+    private final DeviceEventService events;
     private final RtConfigDefaults rtConfig;
     private final ObjectMapper json;
     private final int maxTokens;
     private final long timeoutSeconds;
 
     public WebsiteAgent(SettingService settings, DeviceTool deviceTool,
-                        DeviceRepository devices, RtConfigDefaults rtConfig, ObjectMapper json,
+                        DeviceRepository devices, DeviceEventService events,
+                        RtConfigDefaults rtConfig, ObjectMapper json,
                         @Value("${agent.website-agent.max-tokens:0}") int maxTokens,
                         @Value("${agent.website-agent.timeout-seconds:60}") long timeoutSeconds) {
         this.settings = settings;
         this.deviceTool = deviceTool;
         this.devices = devices;
+        this.events = events;
         this.rtConfig = rtConfig;
         this.json = json;
         this.maxTokens = maxTokens;
@@ -143,7 +151,22 @@ public class WebsiteAgent {
                     .append("（地址 ").append(device.address())
                     .append(device.online() ? "，在线" : "，离线")
                     .append("）\n");
+            for (DeviceEvent event : events.list(device.id(), RECENT_EVENT_COUNT)) {
+                sb.append("  · 设备上报（").append(event.createdAt()).append("）：")
+                        .append(abbreviate(event.text())).append("\n");
+            }
         }
+        sb.append("\n上面标着「设备上报」的是端侧 agent 自己产生的结论，"
+                + "问起这些告警时直接引用，不要再去问设备。\n");
         return sb.toString();
+    }
+
+    /** 提示词里每条上报最多带这么多字。 */
+    private static String abbreviate(String text) {
+        if (text == null) {
+            return "";
+        }
+        String s = text.replace('\n', ' ').trim();
+        return s.length() > 120 ? s.substring(0, 120) + "…" : s;
     }
 }

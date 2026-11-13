@@ -69,3 +69,26 @@ CREATE TABLE IF NOT EXISTS ops_setting (
     value      TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+-- 端侧 agent 的上报回调配置。一台设备一行。
+-- token 是回调地址里的那串随机串，板端拿着它来上报，不带登录令牌。
+-- url 是已经下发给板端的地址，pushed_at 是下发时刻的毫秒时间戳。
+CREATE TABLE IF NOT EXISTS device_push (
+    device_id INTEGER PRIMARY KEY,
+    token     TEXT    NOT NULL UNIQUE,
+    url       TEXT    NOT NULL DEFAULT '',
+    pushed_at INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE
+);
+
+-- 端侧 agent 自发上报的事件：MQTT 告警、传感器越限等等。
+CREATE TABLE IF NOT EXISTS device_event (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id  INTEGER NOT NULL,
+    kind       TEXT    NOT NULL DEFAULT 'report',
+    text       TEXT    NOT NULL,
+    created_at TEXT    NOT NULL DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (device_id) REFERENCES device (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_device_event_device ON device_event (device_id, id DESC);
