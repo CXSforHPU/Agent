@@ -649,9 +649,15 @@ static rt_bool_t anthropic_parse_event(cJSON *json, agent_protocol_stream_t *str
                 {
                     stream->saw_tool_call = RT_TRUE;
                 }
+                else if (rt_strcmp(stop_reason, "max_tokens") == 0)
+                {
+                    /* 写到 max_tokens 就停了，内容本身是好的，只是没写完 */
+                    stream->truncated = RT_TRUE;
+                    stream->content_lost = RT_TRUE;
+                }
                 else
                 {
-                    /* max_tokens / stop_sequence / refusal 等都不算完整收尾 */
+                    /* stop_sequence / refusal 等都不算完整收尾 */
                     stream->content_lost = RT_TRUE;
                 }
             }

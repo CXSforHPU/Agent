@@ -32,6 +32,7 @@ typedef struct agent_protocol_stream
     rt_bool_t content_lost;       /* 报文不完整或解析失败 */
     rt_bool_t saw_tool_call;      /* 本轮是否出现工具调用 */
     rt_bool_t natural_stop;       /* 正常收尾，不是被工具调用打断 */
+    rt_bool_t truncated;          /* 输出被 max_tokens 截断（内容可用，只是没写完） */
     rt_bool_t stream_done;        /* 流已正常结束 */
     void (*on_reasoning)(const char *text);
     void (*on_tool_call)(const char *text);

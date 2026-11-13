@@ -128,6 +128,11 @@ static rt_bool_t openai_parse_event(cJSON *json, agent_protocol_stream_t *stream
         if (cJSON_IsString(finish))
         {
             stream->natural_stop = (rt_strcmp(finish->valuestring, "stop") == 0);
+            /* length：写到 max_tokens 就停了，内容本身是好的，只是没写完 */
+            if (rt_strcmp(finish->valuestring, "length") == 0)
+            {
+                stream->truncated = RT_TRUE;
+            }
             if (!stream->natural_stop) stream->content_lost = RT_TRUE;
         }
         if (!cJSON_IsObject(delta) && !cJSON_IsString(finish))

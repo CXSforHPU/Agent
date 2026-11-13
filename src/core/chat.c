@@ -220,6 +220,7 @@ __success:
     response->tool_call = stream.tool_calls;
     response->complete = stream.stream_done && stream.natural_stop &&
                          !stream.content_lost && !stream.saw_tool_call;
+    response->truncated = stream.truncated;
     /* 响应接管这三个缓冲区，释放流状态时别再释放一次 */
     stream.content = RT_NULL;
     stream.reasoning = RT_NULL;

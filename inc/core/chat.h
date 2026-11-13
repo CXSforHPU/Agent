@@ -13,6 +13,7 @@ typedef struct ChatResponse
     char *context;        /* 回答内容文本 */
     cJSON *tool_call;     /* 工具调用数组 [list[Dict]] */
     rt_bool_t complete;   /**< Natural text completion without dropped content. */
+    rt_bool_t truncated;  /**< 输出被 max_tokens 截断：内容可用，只是没写完 */
 } ChatResponse, *ChatResponse_t;
 
 /*
