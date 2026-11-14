@@ -1,870 +1,613 @@
 #include "AgentA2aChannel.h"
-#include "webnet_util.h"
+#include "AgentWebSocket.h"
+#include "utils/agent_report.h"
+#include <cJSON.h>
 #include "AgentStream.h"
-#include "dfs_posix.h"
-#include "unistd.h"
+#include <sys/socket.h>
+#include <sys/select.h>
+#include <netdb.h>
+#include <unistd.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <dfs_posix.h>
 
-#define LOG_TAG "Agent.channel.a2a"
-#define LOG_LVL LOG_LVL_INFO
-#include <ulog.h>
+/*
+ * A2A WebSocket 通道：板端主动连 Web。生命周期三态：
+ *   未激活  —— 没有 token，不自动连（不每 3 秒乱连），等 a2a_activate；
+ *   激活中  —— a2a_activate 用账号密码握手，服务端签发一次性设备 token；
+ *   已激活  —— token 落 SD 卡，之后凭 token 自动连接，密码不再出现。
+ * 同一设备只能激活一次：服务端对重复激活回 already_activated 错误帧，板端原样打印原因。
+ */
 
-#define A2A_REQUEST_MAX_SIZE 4096
-#define A2A_REPLY_TIMEOUT_MS 30000
-/* 等结果时的轮询间隔：既能及时把中间事件推给客户端，又不至于空转太频繁 */
-#define A2A_POLL_INTERVAL_MS 100
+#define A2A_FRAME_MAX 8192
 
-/* 能力卡的运行时配置，控制台下发后落盘；路径由 Kconfig 决定，
-   Kconfig 里那两个名字与描述只当第一次启动的默认值 */
-#ifndef PKG_AGENT_A2A_CARD_PATH
-#define PKG_AGENT_A2A_CARD_PATH    "/agent_card.json"
+#ifndef PKG_AGENT_A2A_CRED_FILE
+#define PKG_AGENT_A2A_CRED_FILE "/agent_a2a_cred"
 #endif
-#define A2A_CARD_BODY_MAX   1024
-#define A2A_CARD_NAME_MAX   64
-#define A2A_CARD_DESC_MAX   256
-#define A2A_CARD_VER_MAX    32
+#ifndef PKG_AGENT_A2A_ENDPOINT_FILE
+#define PKG_AGENT_A2A_ENDPOINT_FILE "/agent_a2a_endpoint"
+#endif
 
-typedef struct
+static MessageHub_t a2a_hub;
+static volatile rt_bool_t a2a_running;
+static rt_thread_t a2a_thread;
+static int a2a_fd = -1;
+static rt_sem_t a2a_done;
+/* a2a_activate 激活完成后踢醒等工作线程，让它用新 token 去连 */
+static rt_sem_t a2a_kick;
+/* Web 下发的绑定能力卡（RAM 缓存，每次 welcome 后服务端会重推） */
+static cJSON *bound_card;
+
+static int send_frame(int fd, cJSON *frame)
 {
-    char name[A2A_CARD_NAME_MAX];
-    char description[A2A_CARD_DESC_MAX];
-    char version[A2A_CARD_VER_MAX];
-} a2a_card_config_t;
-
-static a2a_card_config_t g_card;
-
-/*
- * @brief 能力卡回落到编译期默认值
- */
-static void card_set_defaults(void)
-{
-    rt_snprintf(g_card.name, sizeof(g_card.name), "%s", PKG_AGENT_A2A_NAME);
-    rt_snprintf(g_card.description, sizeof(g_card.description), "%s",
-                PKG_AGENT_A2A_DESCRIPTION);
-    rt_snprintf(g_card.version, sizeof(g_card.version), "%s", "1.0.0");
+    char *bytes = cJSON_PrintUnformatted(frame);
+    int result = -1;
+    if (bytes) { result = agent_ws_send(fd, 1, bytes, strlen(bytes)); cJSON_free(bytes); }
+    return result;
 }
 
-/*
- * @brief 启动时读上次下发的能力卡，读不到就用默认值
- * @note  文件缺失是正常情况（第一次启动），不当错误报
- */
-static void card_load(void)
+static cJSON *read_frame(int fd)
 {
-    char buf[A2A_CARD_BODY_MAX];
-    cJSON *root;
-    cJSON *item;
-    int fd;
-    int len;
-
-    card_set_defaults();
-
-    fd = open(PKG_AGENT_A2A_CARD_PATH, O_RDONLY);
-    if (fd < 0)
+    char *bytes = rt_malloc(A2A_FRAME_MAX + 1);
+    cJSON *frame = RT_NULL;
+    if (!bytes) return RT_NULL;
     {
-        return;
+        int n = agent_ws_read(fd, bytes, A2A_FRAME_MAX + 1);
+        if (n > 0) frame = cJSON_Parse(bytes);
+        else if (n == -2) frame = cJSON_Parse("{\"type\":\"control\"}");
     }
-    len = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (len <= 0)
-    {
-        LOG_W("agent card file %s is empty, using defaults", PKG_AGENT_A2A_CARD_PATH);
-        return;
-    }
-    buf[len] = '\0';
-
-    root = cJSON_Parse(buf);
-    if (root == RT_NULL)
-    {
-        LOG_W("agent card file %s is not valid JSON, using defaults", PKG_AGENT_A2A_CARD_PATH);
-        return;
-    }
-
-    item = cJSON_GetObjectItemCaseSensitive(root, "name");
-    if (cJSON_IsString(item) && item->valuestring[0] != '\0')
-    {
-        rt_snprintf(g_card.name, sizeof(g_card.name), "%s", item->valuestring);
-    }
-    item = cJSON_GetObjectItemCaseSensitive(root, "description");
-    if (cJSON_IsString(item))
-    {
-        rt_snprintf(g_card.description, sizeof(g_card.description), "%s", item->valuestring);
-    }
-    item = cJSON_GetObjectItemCaseSensitive(root, "version");
-    if (cJSON_IsString(item) && item->valuestring[0] != '\0')
-    {
-        rt_snprintf(g_card.version, sizeof(g_card.version), "%s", item->valuestring);
-    }
-
-    cJSON_Delete(root);
-    LOG_I("agent card loaded: name=%s, file=%s", g_card.name, PKG_AGENT_A2A_CARD_PATH);
+    rt_free(bytes);
+    if (!cJSON_IsObject(frame)) { cJSON_Delete(frame); return RT_NULL; }
+    return frame;
 }
 
-/*
- * @brief 把当前能力卡写回 SD 卡，下次启动还是这份
- * @return RT_EOK 成功
- */
-static rt_err_t card_save(void)
+static int reports(int fd)
 {
-    cJSON *root;
-    char *encoded;
-    rt_size_t len;
-    int fd;
-    int written;
-
-    root = cJSON_CreateObject();
-    if (root == RT_NULL)
+    char text[AGENT_REPORT_TEXT_MAX];
+    while (agent_report_take(text, sizeof(text)) == RT_EOK)
     {
-        return -RT_ENOMEM;
+        cJSON *event = cJSON_CreateObject();
+        int rc;
+        cJSON_AddStringToObject(event, "type", "report");
+        cJSON_AddStringToObject(event, "kind", "report");
+        cJSON_AddStringToObject(event, "text", text);
+        rc = send_frame(fd, event); cJSON_Delete(event);
+        if (rc) return -1;
     }
-    cJSON_AddStringToObject(root, "name", g_card.name);
-    cJSON_AddStringToObject(root, "description", g_card.description);
-    cJSON_AddStringToObject(root, "version", g_card.version);
-
-    encoded = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    if (encoded == RT_NULL)
-    {
-        return -RT_ENOMEM;
-    }
-    len = rt_strlen(encoded);
-
-    fd = open(PKG_AGENT_A2A_CARD_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0)
-    {
-        cJSON_free(encoded);
-        return -RT_ERROR;
-    }
-    written = write(fd, encoded, len);
-    close(fd);
-    cJSON_free(encoded);
-
-    return (written == (int)len) ? RT_EOK : -RT_ERROR;
+    return 0;
 }
 
-static MessageHub_t message_hub = RT_NULL;
-static Context_t context = RT_NULL;
-static rt_bool_t started = RT_FALSE;
-static rt_uint32_t task_seq = 0;
-
-/*
- * @brief A2A 通道 ops.init 包装（统一返回 int）
- */
-static int a2a_channel_init_wrapper(MessageHub_t hub, Context_t ctx)
+static const char *field(cJSON *frame, const char *name)
 {
-    a2a_agent_channel_init(hub, ctx);
-    return RT_EOK;
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(frame, name);
+    return cJSON_IsString(item) ? item->valuestring : "";
 }
 
-/*
- * @brief A2A 通道清理（置空缓存的 hub/context 指针，幂等）
- */
-void agent_a2a_reset(void)
+/* 能力卡：基础字段取 Kconfig；Web 绑定并推送过能力卡时优先用推送内容。 */
+static cJSON *card(void)
 {
-    message_hub = RT_NULL;
-    context = RT_NULL;
-}
+    cJSON *value = cJSON_CreateObject(), *caps;
+    const char *name = PKG_AGENT_A2A_NAME;
+    const char *description = PKG_AGENT_A2A_DESCRIPTION;
+    const char *version = "1.0.0";
+    cJSON *skills = cJSON_CreateArray();
+    cJSON *pushed;
 
-AgentChannelOps agent_a2a_ops = { a2a_channel_init_wrapper, agent_a2a_reset };
-
-/*
- * @brief 造一个任务 id，形如 task-1、task-2
- * @return 任务 id 字符串
- */
-static const char *next_task_id(void)
-{
-    static char id[24];
-
-    task_seq++;
-    rt_snprintf(id, sizeof(id), "task-%u", (unsigned int)task_seq);
-    return id;
-}
-
-/*
- * @brief 从请求体里取出用户消息文本
- * @param  session webnet 会话
- * @param  body    已复制的请求体
- * @return 消息文本，失败返回 NULL
- */
-static char *extract_text(const char *body)
-{
-    cJSON *root;
-    cJSON *message;
-    cJSON *parts;
-    cJSON *part;
-    cJSON *text;
-    char *copy;
-
-    root = cJSON_Parse(body);
-    if (root == RT_NULL)
+    if (bound_card)
     {
-        return RT_NULL;
-    }
-
-    message = cJSON_GetObjectItemCaseSensitive(root, "message");
-    parts = message != RT_NULL ? cJSON_GetObjectItemCaseSensitive(message, "parts") : RT_NULL;
-    part = (parts != RT_NULL && cJSON_GetArraySize(parts) > 0)
-         ? cJSON_GetArrayItem(parts, 0) : RT_NULL;
-    text = part != RT_NULL ? cJSON_GetObjectItemCaseSensitive(part, "text") : RT_NULL;
-
-    copy = (text != RT_NULL && cJSON_IsString(text) && text->valuestring != RT_NULL
-            && text->valuestring[0] != '\0')
-         ? rt_strdup(text->valuestring) : RT_NULL;
-
-    cJSON_Delete(root);
-    return copy;
-}
-
-/*
- * @brief 把用户消息投给 agent
- * @param text 用户输入
- * @return RT_EOK 成功
- */
-static rt_err_t task_submit(const char *text)
-{
-    Messages_t input;
-
-    if (message_hub == RT_NULL || message_hub->put_message == RT_NULL ||
-        message_hub->get_message == RT_NULL)
-    {
-        return -RT_ERROR;
-    }
-
-    input = messages_create(1);
-    if (input == RT_NULL)
-    {
-        return -RT_ENOMEM;
-    }
-    if (messages_append(input, TYPE_TEXT, text) != RT_EOK)
-    {
-        messages_destroy(input);
-        return -RT_ERROR;
-    }
-
-    /* put 成功后所有权移交 main_loop，本地置空防止误释放 */
-    if (message_hub->put_message(message_hub, input, message_hub->input_mailbox) != RT_EOK)
-    {
-        messages_destroy(input);
-        return -RT_ERROR;
-    }
-
-    return RT_EOK;
-}
-
-/*
- * @brief 造一条状态更新帧（思考、工具调用、正文分片）
- * @param id   任务 id
- * @param kind 事件类型名，reasoning / tool / content
- * @param text 文本内容
- * @return 任务结果，调用方负责 cJSON_Delete
- */
-static cJSON *build_task_update(const char *id, const char *kind, const char *text)
-{
-    cJSON *root = cJSON_CreateObject();
-    cJSON *status;
-    cJSON *artifacts;
-    cJSON *artifact;
-    cJSON *parts;
-    cJSON *part;
-
-    if (root == RT_NULL)
-    {
-        return RT_NULL;
-    }
-
-    cJSON_AddStringToObject(root, "id", id);
-
-    status = cJSON_CreateObject();
-    cJSON_AddStringToObject(status, "state", "working");
-    cJSON_AddItemToObject(root, "status", status);
-
-    artifacts = cJSON_AddArrayToObject(root, "artifacts");
-    artifact = cJSON_CreateObject();
-    parts = cJSON_AddArrayToObject(artifact, "parts");
-    part = cJSON_CreateObject();
-    cJSON_AddStringToObject(part, "type", "text");
-    cJSON_AddStringToObject(part, "text", text);
-    cJSON_AddItemToArray(parts, part);
-    /* name 标出这是哪类内容，append 表示与前面的内容续接 */
-    cJSON_AddStringToObject(artifact, "name", kind);
-    cJSON_AddBoolToObject(artifact, "append", 1);
-    cJSON_AddItemToArray(artifacts, artifact);
-
-    return root;
-}
-
-/*
- * @brief 把队列里的中间事件推给客户端
- * @param session webnet 会话
- * @param id      任务 id
- */
-static void flush_stream_events(struct webnet_session *session, const char *id)
-{
-    agent_stream_event_t event;
-
-    while (agent_stream_take(&event))
-    {
-        cJSON *update = build_task_update(id, agent_stream_kind_name(event.kind),
-                                          event.text);
-        if (update == RT_NULL)
+        pushed = cJSON_GetObjectItemCaseSensitive(bound_card, "name");
+        if (cJSON_IsString(pushed)) name = pushed->valuestring;
+        pushed = cJSON_GetObjectItemCaseSensitive(bound_card, "description");
+        if (cJSON_IsString(pushed)) description = pushed->valuestring;
+        pushed = cJSON_GetObjectItemCaseSensitive(bound_card, "version");
+        if (cJSON_IsString(pushed)) version = pushed->valuestring;
+        pushed = cJSON_GetObjectItemCaseSensitive(bound_card, "skills");
+        if (cJSON_IsArray(pushed))
         {
+            cJSON_Delete(skills);
+            skills = cJSON_Duplicate(pushed, 1);
+        }
+    }
+
+    cJSON_AddStringToObject(value, "name", name);
+    cJSON_AddStringToObject(value, "description", description);
+    cJSON_AddStringToObject(value, "version", version);
+    cJSON_AddStringToObject(value, "url", "ws://" PKG_AGENT_A2A_DEVICE_ID);
+    caps = cJSON_AddObjectToObject(value, "capabilities");
+    cJSON_AddBoolToObject(caps, "streaming", 0);
+    cJSON_AddBoolToObject(caps, "pushNotifications", 1);
+    cJSON_AddItemToObject(value, "skills", skills);
+    return value;
+}
+
+/* Exactly one submitted mailbox task may be outstanding, across reconnects.
+ * On deadline, quarantine it until its late output is consumed. Never relabel
+ * an old output as the result of a new request. */
+static rt_bool_t outstanding;
+static int handle(int fd, cJSON *request)
+{
+    const char *type = field(request, "type"), *id = field(request, "id");
+    cJSON *reply;
+    if (!strcmp(type, "control")) return 0;
+    reply = cJSON_CreateObject();
+    int result;
+    if (!*id || strlen(id) > 64) { cJSON_Delete(reply); return -1; }
+    cJSON_AddStringToObject(reply, "id", id);
+    if (!strcmp(type, "ping"))
+        cJSON_AddStringToObject(reply, "type", "pingResult");
+    else if (!strcmp(type, "card"))
+    {
+        /* 服务端既会查询能力卡，也会把绑定的能力卡推下来（带 card 字段）。 */
+        cJSON *pushed = cJSON_GetObjectItemCaseSensitive(request, "card");
+        if (cJSON_IsObject(pushed))
+        {
+            if (bound_card) cJSON_Delete(bound_card);
+            bound_card = cJSON_Duplicate(pushed, 1);
+        }
+        cJSON_AddStringToObject(reply, "type", "cardResult");
+        cJSON_AddItemToObject(reply, "card", card());
+    }
+    else if (!strcmp(type, "task"))
+    {
+        const char *text = field(request, "text");
+        Messages_t input = RT_NULL, output = RT_NULL;
+        rt_tick_t start = rt_tick_get();
+        cJSON_AddStringToObject(reply, "type", "taskResult");
+        if (outstanding)
+        {
+            output = message_hub_get_timeout(a2a_hub, a2a_hub->output_mailbox, 0);
+            if (output) { messages_destroy(output); outstanding = RT_FALSE; }
+        }
+        if (outstanding || !*text) cJSON_AddStringToObject(reply, "error", "busy or empty task");
+        else
+        {
+            input = messages_create(1);
+            if (!input || messages_append(input, TYPE_TEXT, text) != RT_EOK ||
+                a2a_hub->put_message(a2a_hub, input, a2a_hub->input_mailbox) != RT_EOK)
+            {
+                if (input) messages_destroy(input);
+                cJSON_AddStringToObject(reply, "error", "task submit failed");
+            }
+            else
+            {
+                outstanding = RT_TRUE;
+                do {
+                    fd_set fds;
+                    struct timeval wait = {0, 0};
+                    int ready;
+                    agent_stream_clear();
+                    FD_ZERO(&fds); FD_SET(fd, &fds);
+                    ready = select(fd + 1, &fds, RT_NULL, RT_NULL, &wait);
+                    if (ready > 0) {
+                        char unexpected[256];
+                        if (agent_ws_read(fd, unexpected, sizeof(unexpected)) != -2) break;
+                    }
+                    if (ready < 0 || reports(fd)) break;
+                    output = message_hub_get_timeout(a2a_hub, a2a_hub->output_mailbox,
+                                                     rt_tick_from_millisecond(100));
+                } while (a2a_running && !output && rt_tick_get() - start <
+                         rt_tick_from_millisecond(PKG_AGENT_A2A_TASK_TIMEOUT_MS));
+                if (output)
+                {
+                    const char *text_out = messages_get_content_idx(output, 0);
+                    outstanding = RT_FALSE;
+                    cJSON_AddStringToObject(reply, "state", "completed");
+                    cJSON_AddStringToObject(reply, "text", text_out ? text_out : "");
+                    messages_destroy(output);
+                }
+                else cJSON_AddStringToObject(reply, "error", "task timed out; outcome unknown");
+            }
+        }
+    }
+    else cJSON_AddStringToObject(reply, "error", "unsupported request");
+    result = send_frame(fd, reply);
+    cJSON_Delete(reply);
+    return result;
+}
+
+/* 读一行文件内容（去掉换行）。成功返回 0。 */
+static int read_line(const char *path, char *buffer, int capacity)
+{
+    int fd = open(path, O_RDONLY);
+    int n;
+    if (fd < 0) return -1;
+    n = read(fd, buffer, capacity - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    buffer[n] = 0;
+    buffer[strcspn(buffer, "\r\n")] = 0;
+    return 0;
+}
+
+/* 读设备 token。返回长度，0 表示未激活。 */
+static int read_token(char *token, int capacity)
+{
+    if (read_line(PKG_AGENT_A2A_TOKEN_FILE, token, capacity)) return 0;
+    return (int)strlen(token);
+}
+
+/* 端点：命令参数 > 激活时保存的端点文件 > Kconfig。 */
+static void resolve_endpoint(char *host, int host_capacity, int *port,
+                             const char *host_arg, int port_arg)
+{
+    char line[96];
+    if (host_arg && *host_arg)
+    {
+        rt_strncpy(host, host_arg, host_capacity - 1);
+        *port = port_arg > 0 ? port_arg : PKG_AGENT_A2A_PORT;
+        return;
+    }
+    if (read_line(PKG_AGENT_A2A_ENDPOINT_FILE, line, sizeof(line)) == 0)
+    {
+        char *space = strchr(line, ' ');
+        if (space)
+        {
+            *space = 0;
+            rt_strncpy(host, line, host_capacity - 1);
+            *port = atoi(space + 1);
+            if (*port <= 0) *port = PKG_AGENT_A2A_PORT;
+            return;
+        }
+    }
+    rt_strncpy(host, PKG_AGENT_A2A_HOST, host_capacity - 1);
+    *port = PKG_AGENT_A2A_PORT;
+}
+
+/*
+ * 激活凭据：命令参数 > Kconfig > 凭据文件（首行 "账号 密码"）。
+ * 密码绝不打印，也绝不写进日志。
+ */
+static void resolve_credentials(char *username, int user_capacity,
+                                char *password, int pass_capacity,
+                                const char *user_arg, const char *pass_arg)
+{
+    char line[192];
+    char *space;
+
+    username[0] = 0;
+    password[0] = 0;
+    if (read_line(PKG_AGENT_A2A_CRED_FILE, line, sizeof(line)) == 0)
+    {
+        space = strchr(line, ' ');
+        if (space)
+        {
+            *space = 0;
+            rt_strncpy(username, line, user_capacity - 1);
+            rt_strncpy(password, space + 1, pass_capacity - 1);
+        }
+    }
+    if (*PKG_AGENT_A2A_PASSWORD)
+        rt_strncpy(password, PKG_AGENT_A2A_PASSWORD, pass_capacity - 1);
+    if (*PKG_AGENT_A2A_USERNAME)
+        rt_strncpy(username, PKG_AGENT_A2A_USERNAME, user_capacity - 1);
+    if (user_arg && *user_arg) rt_strncpy(username, user_arg, user_capacity - 1);
+    if (pass_arg && *pass_arg) rt_strncpy(password, pass_arg, pass_capacity - 1);
+}
+
+/* TCP 连接 + WS 升级，失败返回 -1。 */
+static int open_socket(const char *host, int port)
+{
+    struct addrinfo hints, *addresses = RT_NULL;
+    char port_text[8];
+    int fd;
+    struct timeval timeout = {5, 0};
+
+    rt_memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    rt_snprintf(port_text, sizeof(port_text), "%d", port);
+    if (getaddrinfo(host, port_text, &hints, &addresses)) return -1;
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { freeaddrinfo(addresses); return -1; }
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    if (connect(fd, addresses->ai_addr, addresses->ai_addrlen))
+    {
+        freeaddrinfo(addresses);
+        close(fd);
+        return -1;
+    }
+    freeaddrinfo(addresses);
+    if (agent_ws_upgrade(fd, host, PKG_AGENT_A2A_WS_ENDPOINT))
+    {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+/* 保存激活签发的 token 与端点，重启后凭 token 自动连接。 */
+static int save_activation(const char *token, const char *host, int port)
+{
+    char endpoint[96];
+    int fd, n;
+    fd = open(PKG_AGENT_A2A_TOKEN_FILE, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) return -1;
+    n = write(fd, token, strlen(token));
+    close(fd);
+    if (n != (int)strlen(token)) return -1;
+    rt_snprintf(endpoint, sizeof(endpoint), "%s %d", host, port);
+    fd = open(PKG_AGENT_A2A_ENDPOINT_FILE, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) return -1;
+    n = write(fd, endpoint, strlen(endpoint));
+    close(fd);
+    return n == (int)strlen(endpoint) ? 0 : -1;
+}
+
+/*
+ * 执行一次激活：账号密码 hello → 服务端签发 token → 落 SD 卡。
+ * 返回 0 成功；失败返回 -1，原因已打印（不含密码）。
+ */
+static int do_activate(const char *host, int port, const char *username, const char *password)
+{
+    char token[257];
+    cJSON *hello, *response;
+    int fd;
+    const char *type;
+
+    if (agent_ws_random_init())
+    {
+        rt_kprintf("a2a_activate: [FAIL:seed] 缺少随机种子 %s（先写入 48 字节随机数）\n",
+                   "/agent_a2a_seed");
+        return -1;
+    }
+    fd = open_socket(host, port);
+    if (fd < 0)
+    {
+        rt_kprintf("a2a_activate: [FAIL:connect] 连不上 %s:%d\n", host, port);
+        return -1;
+    }
+    a2a_fd = fd;
+    hello = cJSON_CreateObject();
+    cJSON_AddStringToObject(hello, "type", "hello");
+    cJSON_AddStringToObject(hello, "deviceId", PKG_AGENT_A2A_DEVICE_ID);
+    cJSON_AddStringToObject(hello, "username", username);
+    cJSON_AddStringToObject(hello, "password", password);
+    if (send_frame(fd, hello)) { cJSON_Delete(hello); goto failed; }
+    cJSON_Delete(hello);
+
+    response = read_frame(fd);
+    if (!response)
+    {
+        rt_kprintf("a2a_activate: [FAIL:no-response] 服务端无响应\n");
+        goto failed;
+    }
+    type = field(response, "type");
+    if (!strcmp(type, "welcome"))
+    {
+        const char *issued = field(response, "token");
+        if (strlen(issued) < 16)
+        {
+            cJSON_Delete(response);
+            rt_kprintf("a2a_activate: [FAIL:no-token] 服务端未下发设备 token\n");
+            goto failed;
+        }
+        rt_strncpy(token, issued, sizeof(token) - 1);
+        token[sizeof(token) - 1] = 0;
+        cJSON_Delete(response);
+        if (save_activation(token, host, port))
+        {
+            rt_memset(token, 0, sizeof(token));
+            rt_kprintf("a2a_activate: [FAIL:save] token 保存到 %s 出错\n", PKG_AGENT_A2A_TOKEN_FILE);
+            goto failed;
+        }
+        rt_memset(token, 0, sizeof(token));
+        rt_kprintf("a2a_activate: [OK] 激活成功，设备 %s，token 已保存到 %s\n",
+                   PKG_AGENT_A2A_DEVICE_ID, PKG_AGENT_A2A_TOKEN_FILE);
+        close(fd); a2a_fd = -1;
+        if (a2a_kick) rt_sem_release(a2a_kick);
+        return 0;
+    }
+    if (!strcmp(type, "error"))
+    {
+        const char *code = field(response, "code");
+        const char *message = field(response, "message");
+        rt_kprintf("a2a_activate: [FAIL:%s] 激活失败，%s\n", code, message);
+        cJSON_Delete(response);
+        goto failed;
+    }
+    rt_kprintf("a2a_activate: [FAIL:unexpected] 意外的应答类型 %s\n", type);
+    cJSON_Delete(response);
+
+failed:
+    close(fd); a2a_fd = -1;
+    return -1;
+}
+
+/* MSH：a2a_activate [host [port [username [password]]]]
+ * 密码只从参数/配置/文件取，任何输出都不回显密码。 */
+static int a2a_activate(int argc, char **argv)
+{
+    char host[64], username[65], password[129], token[257];
+    int port = PKG_AGENT_A2A_PORT;
+    const char *host_arg = argc > 1 ? argv[1] : RT_NULL;
+    const char *user_arg = argc > 3 ? argv[3] : RT_NULL;
+    const char *pass_arg = argc > 4 ? argv[4] : RT_NULL;
+
+    if (argc > 2)
+    {
+        port = atoi(argv[2]);
+        if (port <= 0 || port > 65535)
+        {
+            rt_kprintf("usage: a2a_activate [host [port [username [password]]]]\n");
+            return -1;
+        }
+    }
+    if (read_token(token, sizeof(token)) >= 16)
+    {
+        rt_kprintf("a2a_activate: [ACTIVE] 已激活（token 在 %s），跳过重复激活\n",
+                   PKG_AGENT_A2A_TOKEN_FILE);
+        if (a2a_kick) rt_sem_release(a2a_kick);
+        return 0;
+    }
+    resolve_endpoint(host, sizeof(host), &port, host_arg, argc > 2 ? port : 0);
+    resolve_credentials(username, sizeof(username), password, sizeof(password),
+                        user_arg, pass_arg);
+    if (!*username || !*password)
+    {
+        rt_kprintf("a2a_activate: [NO-CRED] 未配置账号密码（menuconfig 的 PKG_AGENT_A2A_USERNAME/"
+                   "PASSWORD，或文件 %s）\n", PKG_AGENT_A2A_CRED_FILE);
+        return -1;
+    }
+    if (!a2a_running)
+        rt_kprintf("a2a_activate: [INFO] agent 未启动，仅执行激活；启动 main_loop_entry 后自动连接\n");
+    return do_activate(host, port, username, password);
+}
+MSH_CMD_EXPORT(a2a_activate,
+               activate device: a2a_activate [host [port [username [password]]]]);
+
+/* 凭 token 连接并进入服务循环。返回时连接已断。 */
+static void serve_with_token(const char *host, int port)
+{
+    char token[257];
+    cJSON *hello, *welcome;
+    int fd;
+
+    if (read_token(token, sizeof(token)) < 16) return;
+    if (agent_ws_random_init())
+    {
+        rt_kprintf("A2A: 缺少随机种子 /agent_a2a_seed，无法连接\n");
+        return;
+    }
+    fd = open_socket(host, port);
+    if (fd < 0) return;
+    a2a_fd = fd;
+    hello = cJSON_CreateObject();
+    cJSON_AddStringToObject(hello, "type", "hello");
+    cJSON_AddStringToObject(hello, "deviceId", PKG_AGENT_A2A_DEVICE_ID);
+    cJSON_AddStringToObject(hello, "token", token);
+    rt_memset(token, 0, sizeof(token));
+    if (send_frame(fd, hello)) { cJSON_Delete(hello); goto disconnected; }
+    cJSON_Delete(hello);
+
+    welcome = read_frame(fd);
+    if (!welcome)
+    {
+        rt_kprintf("A2A: 服务端无响应\n");
+        goto disconnected;
+    }
+    if (!strcmp(field(welcome, "type"), "error"))
+    {
+        const char *code = field(welcome, "code");
+        const char *message = field(welcome, "message");
+        rt_kprintf("A2A: [REJECTED:%s] 连接被拒绝，%s\n", code, message);
+        cJSON_Delete(welcome);
+        if (!strcmp(code, "bad_token") || !strcmp(code, "device_not_found"))
+        {
+            /* 服务端已不认这个 token（设备被删除重建等），回到未激活等重新激活 */
+            unlink(PKG_AGENT_A2A_TOKEN_FILE);
+            rt_kprintf("A2A: token 已失效并清除，请重新执行 a2a_activate\n");
+        }
+        goto disconnected;
+    }
+    if (strcmp(field(welcome, "type"), "welcome"))
+    {
+        cJSON_Delete(welcome);
+        rt_kprintf("A2A: 意外的应答类型\n");
+        goto disconnected;
+    }
+    cJSON_Delete(welcome);
+    rt_kprintf("A2A WebSocket connected.\n");
+
+    while (a2a_running)
+    {
+        fd_set fds;
+        struct timeval wait = {1, 0};
+        int ready;
+        FD_ZERO(&fds); FD_SET(fd, &fds);
+        ready = select(fd + 1, &fds, RT_NULL, RT_NULL, &wait);
+        if (reports(fd) || ready < 0) break;
+        if (!ready) continue;
+        {
+            cJSON *request = read_frame(fd);
+            if (!request) break;
+            ready = handle(fd, request);
+            cJSON_Delete(request);
+            if (ready) break;
+        }
+    }
+
+disconnected:
+    closesocket(fd);
+    a2a_fd = -1;
+}
+
+static void a2a_worker(void *arg)
+{
+    char host[64];
+    int port;
+    rt_bool_t hinted = RT_FALSE;
+    (void)arg;
+
+    while (a2a_running)
+    {
+        char token[257];
+        int token_length;
+
+        resolve_endpoint(host, sizeof(host), &port, RT_NULL, 0);
+        token_length = read_token(token, sizeof(token));
+        rt_memset(token, 0, sizeof(token));
+
+        if (token_length < 16)
+        {
+            /* 未激活：不自动连接，不每 3 秒重试，阻塞等 a2a_activate 踢醒 */
+            if (!hinted)
+            {
+                rt_kprintf("A2A 未激活 [IDLE]：执行 a2a_activate 激活（设备 ID %s）\n",
+                           PKG_AGENT_A2A_DEVICE_ID);
+                hinted = RT_TRUE;
+            }
+            if (a2a_kick) rt_sem_take(a2a_kick, RT_WAITING_FOREVER);
             continue;
         }
-        char *encoded = cJSON_PrintUnformatted(update);
-        cJSON_Delete(update);
-        if (encoded != RT_NULL)
-        {
-            agent_wn_send_sse_event(session, RT_NULL, encoded);
-            cJSON_free(encoded);
-        }
+        hinted = RT_FALSE;
+        serve_with_token(host, port);
+        if (a2a_running) rt_thread_mdelay(3000);
     }
+    if (a2a_done) rt_sem_release(a2a_done);
 }
 
-/*
- * @brief 等 agent 的最终结果
- * @param session webnet 会话，为 NULL 时不推中间事件
- * @param id      任务 id
- * @param out     回复文本，失败时为 NULL
- * @return RT_EOK 成功
- */
-static rt_err_t task_wait(struct webnet_session *session, const char *id, char **out)
+static int a2a_init(MessageHub_t hub, Context_t ctx)
 {
-    Messages_t output;
-    rt_tick_t start = rt_tick_get();
-    rt_int32_t timeout_tick = rt_tick_from_millisecond(A2A_REPLY_TIMEOUT_MS);
-    rt_int32_t poll_tick = rt_tick_from_millisecond(A2A_POLL_INTERVAL_MS);
-
-    *out = RT_NULL;
-
-    for (;;)
+    (void)ctx;
+    if (a2a_running) return RT_EOK;
+    a2a_hub = hub;
+    a2a_done = rt_sem_create("a2adone", 0, RT_IPC_FLAG_FIFO);
+    a2a_kick = rt_sem_create("a2akick", 0, RT_IPC_FLAG_FIFO);
+    if (!a2a_done || !a2a_kick)
     {
-        if (session != RT_NULL)
-        {
-            flush_stream_events(session, id);
-        }
-
-        output = message_hub_get_timeout(message_hub, message_hub->output_mailbox,
-                                         poll_tick);
-        if (output != RT_NULL)
-        {
-            const char *text = messages_get_content_idx(output, 0);
-
-            if (text != RT_NULL)
-            {
-                *out = rt_strdup(text);
-            }
-            messages_destroy(output);
-            return (*out != RT_NULL) ? RT_EOK : -RT_ENOMEM;
-        }
-
-        if ((rt_int32_t)(rt_tick_get() - start) > timeout_tick)
-        {
-            LOG_E("a2a task %s timed out", id);
-            return -RT_ETIMEOUT;
-        }
+        if (a2a_done) rt_sem_delete(a2a_done);
+        if (a2a_kick) rt_sem_delete(a2a_kick);
+        a2a_done = a2a_kick = RT_NULL;
+        return -RT_ENOMEM;
     }
+    a2a_thread = rt_thread_create("agenta2a", a2a_worker, RT_NULL, 8192, 15, 10);
+    if (!a2a_thread)
+    {
+        rt_sem_delete(a2a_done);
+        rt_sem_delete(a2a_kick);
+        a2a_done = a2a_kick = RT_NULL;
+        return -RT_ENOMEM;
+    }
+    a2a_running = RT_TRUE;
+    rt_thread_startup(a2a_thread);
+    return RT_EOK;
 }
 
-/*
- * @brief GET /.well-known/agent.json，返回能力卡
- */
-static void cgi_agent_card(struct webnet_session *session)
+static void a2a_reset(void)
 {
-    cJSON *card;
-    cJSON *caps;
-    cJSON *inputs;
-    cJSON *outputs;
-
-    if (session == RT_NULL || session->request == RT_NULL)
-    {
-        return;
-    }
-
-    card = cJSON_CreateObject();
-    if (card == RT_NULL)
-    {
-        agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
-                                  "error", "out of memory");
-        return;
-    }
-
-    cJSON_AddStringToObject(card, "name", g_card.name);
-    cJSON_AddStringToObject(card, "description", g_card.description);
-    cJSON_AddStringToObject(card, "url",
-                            agent_wn_safe_string(session->request->host));
-    cJSON_AddStringToObject(card, "version", g_card.version);
-
-    caps = cJSON_CreateObject();
-    /* 同上，cJSON_False 是 1，要写 0 */
-    cJSON_AddBoolToObject(caps, "streaming", 1);
-    cJSON_AddBoolToObject(caps, "pushNotifications", 1);
-    cJSON_AddBoolToObject(caps, "stateTransitionHistory", 1);
-    cJSON_AddItemToObject(card, "capabilities", caps);
-
-    inputs = cJSON_AddArrayToObject(card, "defaultInputModes");
-    cJSON_AddItemToArray(inputs, cJSON_CreateString("text"));
-    outputs = cJSON_AddArrayToObject(card, "defaultOutputModes");
-    cJSON_AddItemToArray(outputs, cJSON_CreateString("text"));
-
-    cJSON_AddItemToObject(card, "skills", cJSON_CreateArray());
-
-    if (agent_wn_send_json_object(session, 200, "OK", card) != RT_EOK)
-    {
-        agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
-                                  "error", "failed to serialize agent card");
-    }
-    cJSON_Delete(card);
+    if (!a2a_done) return;
+    a2a_running = RT_FALSE;
+    if (a2a_fd >= 0) shutdown(a2a_fd, SHUT_RDWR);
+    if (a2a_kick) rt_sem_release(a2a_kick);
+    rt_sem_take(a2a_done, RT_WAITING_FOREVER);
+    rt_sem_delete(a2a_done);
+    rt_sem_delete(a2a_kick);
+    a2a_done = a2a_kick = RT_NULL;
+    a2a_thread = RT_NULL;
+    a2a_hub = RT_NULL;
+    if (bound_card) { cJSON_Delete(bound_card); bound_card = RT_NULL; }
 }
-
-/*
- * @brief GET /card 读当前能力卡，POST /card 改并落盘
- * @note  name 必填，description 与 version 不传就保持原值；
- *        改完写 SD 卡，重启后还是这份，Kconfig 里那两个值只当默认
- */
-static void cgi_card(struct webnet_session *session)
-{
-    char *body;
-    cJSON *root;
-    cJSON *item;
-
-    if (session == RT_NULL || session->request == RT_NULL)
-    {
-        return;
-    }
-
-    if (session->request->method == WEBNET_GET)
-    {
-        root = cJSON_CreateObject();
-        if (root == RT_NULL)
-        {
-            agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
-                                      "error", "out of memory");
-            return;
-        }
-        cJSON_AddStringToObject(root, "name", g_card.name);
-        cJSON_AddStringToObject(root, "description", g_card.description);
-        cJSON_AddStringToObject(root, "version", g_card.version);
-        if (agent_wn_send_json_object(session, 200, "OK", root) != RT_EOK)
-        {
-            agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
-                                      "error", "failed to serialize card");
-        }
-        cJSON_Delete(root);
-        return;
-    }
-
-    if (session->request->method != WEBNET_POST)
-    {
-        agent_wn_send_simple_json(session, 405, "Method Not Allowed", RT_FALSE,
-                                  "error", "use GET to read, POST to update");
-        return;
-    }
-
-    body = agent_wn_copy_request_body(session, A2A_CARD_BODY_MAX);
-    if (body == RT_NULL)
-    {
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "invalid or oversized request body");
-        return;
-    }
-
-    root = cJSON_Parse(body);
-    rt_free(body);
-    if (root == RT_NULL || !cJSON_IsObject(root))
-    {
-        if (root != RT_NULL)
-        {
-            cJSON_Delete(root);
-        }
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "body must be a JSON object");
-        return;
-    }
-
-    item = cJSON_GetObjectItemCaseSensitive(root, "name");
-    if (!cJSON_IsString(item) || item->valuestring[0] == '\0')
-    {
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "name must be a non-empty string");
-        goto cleanup;
-    }
-    if (rt_strlen(item->valuestring) >= sizeof(g_card.name))
-    {
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "name is too long");
-        goto cleanup;
-    }
-    rt_snprintf(g_card.name, sizeof(g_card.name), "%s", item->valuestring);
-
-    item = cJSON_GetObjectItemCaseSensitive(root, "description");
-    if (item != RT_NULL)
-    {
-        if (!cJSON_IsString(item) ||
-            rt_strlen(item->valuestring) >= sizeof(g_card.description))
-        {
-            agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                      "error", "description is too long");
-            goto cleanup;
-        }
-        rt_snprintf(g_card.description, sizeof(g_card.description), "%s",
-                    item->valuestring);
-    }
-
-    item = cJSON_GetObjectItemCaseSensitive(root, "version");
-    if (item != RT_NULL)
-    {
-        if (!cJSON_IsString(item) || rt_strlen(item->valuestring) >= sizeof(g_card.version))
-        {
-            agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                      "error", "version is too long");
-            goto cleanup;
-        }
-        rt_snprintf(g_card.version, sizeof(g_card.version), "%s", item->valuestring);
-    }
-
-    if (card_save() != RT_EOK)
-    {
-        agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
-                                  "error", "failed to write the card file");
-        goto cleanup;
-    }
-
-    LOG_I("agent card updated: name=%s, version=%s", g_card.name, g_card.version);
-    agent_wn_send_simple_json(session, 200, "OK", RT_TRUE, "status", "ok");
-
-cleanup:
-    cJSON_Delete(root);
-}
-
-/*
- * @brief 造一个任务结果对象
- * @param id      任务 id
- * @param state   状态：working / completed / failed
- * @param reply   回复文本，可为 NULL
- * @return 任务结果，调用方负责 cJSON_Delete
- */
-static cJSON *build_task_response(const char *id, const char *state, const char *reply)
-{
-    cJSON *root = cJSON_CreateObject();
-    cJSON *status;
-    cJSON *artifacts;
-    cJSON *artifact;
-    cJSON *parts;
-    cJSON *part;
-
-    if (root == RT_NULL)
-    {
-        return RT_NULL;
-    }
-
-    cJSON_AddStringToObject(root, "id", id);
-
-    status = cJSON_CreateObject();
-    cJSON_AddStringToObject(status, "state", state);
-    cJSON_AddItemToObject(root, "status", status);
-
-    artifacts = cJSON_AddArrayToObject(root, "artifacts");
-    if (reply != RT_NULL)
-    {
-        artifact = cJSON_CreateObject();
-        parts = cJSON_AddArrayToObject(artifact, "parts");
-        part = cJSON_CreateObject();
-        cJSON_AddStringToObject(part, "type", "text");
-        cJSON_AddStringToObject(part, "text", reply);
-        cJSON_AddItemToArray(parts, part);
-        cJSON_AddStringToObject(artifact, "name", "response");
-        cJSON_AddItemToArray(artifacts, artifact);
-    }
-    return root;
-}
-
-/*
- * @brief 把任务投给 agent，把结果按 JSON 或 SSE 回出去
- * @param session webnet 会话
- * @param stream  为真时按 SSE 分帧
- */
-static void handle_task(struct webnet_session *session, rt_bool_t stream)
-{
-    char *body;
-    char *text;
-    char *reply = RT_NULL;
-    const char *id;
-    cJSON *response;
-    char *encoded;
-
-    if (session == RT_NULL || session->request == RT_NULL)
-    {
-        return;
-    }
-    if (session->request->method != WEBNET_POST)
-    {
-        agent_wn_send_simple_json(session, 405, "Method Not Allowed", RT_FALSE,
-                                  "error", "use POST");
-        return;
-    }
-
-    body = agent_wn_copy_request_body(session, A2A_REQUEST_MAX_SIZE);
-    if (body == RT_NULL)
-    {
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "invalid or oversized request body");
-        return;
-    }
-
-    text = extract_text(body);
-    rt_free(body);
-    if (text == RT_NULL)
-    {
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "message.parts[0].text must be a non-empty string");
-        return;
-    }
-
-    id = next_task_id();
-
-    /* 新任务开始，清掉上一轮可能残留的中间事件 */
-    agent_stream_clear();
-
-    if (stream)
-    {
-        /* 先推一帧 working，再等最终结果，让客户端看到任务确实在跑 */
-        session->request->result_code = 200;
-        webnet_session_set_header(session, "text/event-stream", 200, "OK", -1);
-        response = build_task_response(id, "working", RT_NULL);
-        if (response != RT_NULL)
-        {
-            encoded = cJSON_PrintUnformatted(response);
-            if (encoded != RT_NULL)
-            {
-                agent_wn_send_sse_event(session, RT_NULL, encoded);
-                cJSON_free(encoded);
-            }
-            cJSON_Delete(response);
-        }
-    }
-
-    if (task_submit(text) != RT_EOK)
-    {
-        LOG_E("a2a task %s submit failed", id);
-        response = build_task_response(id, "failed", RT_NULL);
-        if (response != RT_NULL)
-        {
-            encoded = cJSON_PrintUnformatted(response);
-            if (encoded != RT_NULL)
-            {
-                if (stream)
-                {
-                    agent_wn_send_sse_event(session, RT_NULL, encoded);
-                }
-                else
-                {
-                    agent_wn_send_raw_json(session, 502, "Bad Gateway", encoded);
-                }
-                cJSON_free(encoded);
-            }
-            cJSON_Delete(response);
-        }
-        rt_free(text);
-        return;
-    }
-
-    if (task_wait(stream ? session : RT_NULL, id, &reply) != RT_EOK)
-    {
-        LOG_E("a2a task %s failed", id);
-        response = build_task_response(id, "failed", RT_NULL);
-        if (response != RT_NULL)
-        {
-            encoded = cJSON_PrintUnformatted(response);
-            if (encoded != RT_NULL)
-            {
-                if (stream)
-                {
-                    agent_wn_send_sse_event(session, RT_NULL, encoded);
-                }
-                else
-                {
-                    agent_wn_send_raw_json(session, 502, "Bad Gateway", encoded);
-                }
-                cJSON_free(encoded);
-            }
-            cJSON_Delete(response);
-        }
-        rt_free(text);
-        return;
-    }
-
-    response = build_task_response(id, "completed", reply);
-    rt_free(text);
-    rt_free(reply);
-    if (response == RT_NULL)
-    {
-        agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
-                                  "error", "out of memory");
-        return;
-    }
-
-    encoded = cJSON_PrintUnformatted(response);
-    cJSON_Delete(response);
-    if (encoded == RT_NULL)
-    {
-        agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
-                                  "error", "failed to serialize task result");
-        return;
-    }
-
-    if (stream)
-    {
-        agent_wn_send_sse_event(session, RT_NULL, encoded);
-    }
-    else
-    {
-        agent_wn_send_raw_json(session, 200, "OK", encoded);
-    }
-    cJSON_free(encoded);
-}
-
-/*
- * @brief POST /tasks/send，同步等最终结果
- */
-static void cgi_task_send(struct webnet_session *session)
-{
-    handle_task(session, RT_FALSE);
-}
-
-/*
- * @brief POST /tasks/sendSubscribe，SSE 推状态与结果
- */
-static void cgi_task_stream(struct webnet_session *session)
-{
-    handle_task(session, RT_TRUE);
-}
-
-/*
- * @brief POST /tasks/pushNotificationConfig，下发上报回调地址
- * @note  请求体形如 {"url":"http://192.168.137.1:8080/api/devices/push/xxx","id":"dev-1"}
- *        url 传空串表示关闭上报
- */
-static void cgi_push_config(struct webnet_session *session)
-{
-    char *body;
-    cJSON *root;
-    cJSON *item;
-    const char *url;
-    const char *id;
-
-    if (session == RT_NULL || session->request == RT_NULL)
-    {
-        return;
-    }
-
-    if (session->request->method == WEBNET_GET)
-    {
-        root = cJSON_CreateObject();
-        if (root == RT_NULL)
-        {
-            agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
-                                      "error", "out of memory");
-            return;
-        }
-        cJSON_AddStringToObject(root, "url", agent_report_callback());
-        cJSON_AddStringToObject(root, "id", agent_report_callback_id());
-        if (agent_wn_send_json_object(session, 200, "OK", root) != RT_EOK)
-        {
-            agent_wn_send_simple_json(session, 500, "Internal Server Error", RT_FALSE,
-                                      "error", "failed to serialize the push config");
-        }
-        cJSON_Delete(root);
-        return;
-    }
-
-    if (session->request->method != WEBNET_POST)
-    {
-        agent_wn_send_simple_json(session, 405, "Method Not Allowed", RT_FALSE,
-                                  "error", "use GET to read, POST to update");
-        return;
-    }
-
-    body = agent_wn_copy_request_body(session, A2A_REQUEST_MAX_SIZE);
-    if (body == RT_NULL)
-    {
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "invalid or oversized request body");
-        return;
-    }
-
-    root = cJSON_Parse(body);
-    rt_free(body);
-    if (root == RT_NULL || !cJSON_IsObject(root))
-    {
-        if (root != RT_NULL)
-        {
-            cJSON_Delete(root);
-        }
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "body must be a JSON object");
-        return;
-    }
-
-    item = cJSON_GetObjectItemCaseSensitive(root, "url");
-    if (!cJSON_IsString(item))
-    {
-        cJSON_Delete(root);
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "url must be a string");
-        return;
-    }
-    url = item->valuestring;
-
-    item = cJSON_GetObjectItemCaseSensitive(root, "id");
-    id = cJSON_IsString(item) ? item->valuestring : RT_NULL;
-
-    if (agent_report_set_callback(url, id) != RT_EOK)
-    {
-        cJSON_Delete(root);
-        agent_wn_send_simple_json(session, 400, "Bad Request", RT_FALSE,
-                                  "error", "the push callback url is invalid");
-        return;
-    }
-
-    cJSON_Delete(root);
-    LOG_I("push notification config updated");
-    agent_wn_send_simple_json(session, 200, "OK", RT_TRUE, "status", "ok");
-}
-
-/*
- * @brief A2A 通道初始化
- * @param hub 消息中心句柄
- * @param ctx 上下文管理器句柄
- */
-void a2a_agent_channel_init(MessageHub_t hub, Context_t ctx)
-{
-    if (hub == RT_NULL || ctx == RT_NULL)
-    {
-        LOG_E("A2A channel requires a valid message hub and context");
-        return;
-    }
-
-    message_hub = hub;
-    context = ctx;
-
-    if (started)
-    {
-        LOG_W("A2A channel is already started");
-        return;
-    }
-
-    /* 先读上次下发的能力卡，再注册 CGI，避免第一帧能力卡还是默认值 */
-    card_load();
-
-    /* CGI 根切到 "/"，否则 webnet 只认包含 /cgi-bin/ 的路径，
-       /.well-known/agent.json 和 /tasks/send 都匹配不上 */
-    webnet_cgi_set_root("/");
-    webnet_cgi_register(".well-known/agent.json", cgi_agent_card);
-    webnet_cgi_register("card", cgi_card);
-    webnet_cgi_register("tasks/send", cgi_task_send);
-    webnet_cgi_register("tasks/sendSubscribe", cgi_task_stream);
-    webnet_cgi_register("tasks/pushNotificationConfig", cgi_push_config);
-
-    webnet_init();
-    started = RT_TRUE;
-
-    LOG_I("A2A channel up on port %d", WEBNET_PORT);
-}
+AgentChannelOps agent_a2a_ops = {a2a_init, a2a_reset};

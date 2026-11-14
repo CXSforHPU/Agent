@@ -547,52 +547,82 @@ if PKG_USING_AGENT
                     Interact with agent via LVGL GUI.
 
             config PKG_AGENT_A2A_CHANNEL
-                select PKG_USING_WEBNET
-                select WEBNET_USING_CGI
-                bool "A2A channel (Agent-to-Agent over HTTP)"
+                bool "A2A channel (outbound WebSocket client, ws only)"
+                depends on RT_USING_SAL
                 help
-                    Serve the A2A protocol so a remote console can read the agent
-                    card and submit tasks. Runs on top of WebNet: the listen port
-                    is WEBNET_PORT, and the CGI root is switched to "/" so the
-                    A2A paths resolve. Pick only one channel.
+                    Board initiates an authenticated WebSocket connection to Web.
+                    Exclusive mailbox consumer. WSS is not implemented; use ws
+                    only on a trusted network. Provision 48 random bytes in
+                    /agent_a2a_seed before first connection (never clone seeds).
 
         endchoice
 
         if PKG_AGENT_A2A_CHANNEL
-            menu "A2A Channel"
-
+            menu "A2A Channel - board connects to Web"
+                config PKG_AGENT_A2A_HOST
+                    string "Web backend host (ws only, no scheme)"
+                    default "192.168.137.1"
+                config PKG_AGENT_A2A_PORT
+                    int "Web backend port"
+                    default 8080
+                    range 1 65535
+                config PKG_AGENT_A2A_WS_ENDPOINT
+                    string "WebSocket endpoint path"
+                    default "/api/a2a/ws"
+                config PKG_AGENT_A2A_DEVICE_ID
+                    string "Authorized device ID (logical address: ws://ID)"
+                    default "rtthread-agent"
+                config PKG_AGENT_A2A_USERNAME
+                    string "Activation username (issued by Web device page)"
+                    default ""
+                    help
+                        Username for the one-shot activation handshake
+                        (a2a_activate). Web stores only a salted hash; the
+                        board exchanges it once for a device token.
+                        WARNING: never commit a real password to git. Test
+                        values are for local builds only (keep them out of
+                        commits / use ignored files).
+                config PKG_AGENT_A2A_PASSWORD
+                    string "Activation password (issued by Web device page)"
+                    default ""
+                    help
+                        Password for the one-shot activation handshake.
+                        Sent exactly once over ws, then replaced by the
+                        device token stored in PKG_AGENT_A2A_TOKEN_FILE.
+                        WARNING: never commit a real password to git. Test
+                        values are for local builds only (keep them out of
+                        commits / use ignored files). Empty means read
+                        credentials from PKG_AGENT_A2A_CRED_FILE instead.
+                config PKG_AGENT_A2A_CRED_FILE
+                    string "Credential file fallback (lines: username password)"
+                    default "/agent_a2a_cred"
+                    help
+                        Used when PKG_AGENT_A2A_PASSWORD is empty. Keep this
+                        file on the SD card only; never commit it.
+                config PKG_AGENT_A2A_TOKEN_FILE
+                    string "Activated device token file"
+                    default "/agent_a2a_token"
+                    help
+                        Written once by a2a_activate after the server issues
+                        the unique device token; later reconnections use it
+                        instead of the username/password.
+                config PKG_AGENT_A2A_ENDPOINT_FILE
+                    string "Activated endpoint file (host port)"
+                    default "/agent_a2a_endpoint"
+                    help
+                        Saved by a2a_activate so reconnections reuse the
+                        activated host/port even when they differ from
+                        Kconfig defaults.
+                config PKG_AGENT_A2A_TASK_TIMEOUT_MS
+                    int "Task result deadline (ms)"
+                    default 60000
+                    range 1000 120000
                 config PKG_AGENT_A2A_NAME
                     string "Agent name"
-                    default "RT-Thread Agent"
-                    help
-                        name field of /.well-known/agent.json.
-
+                    default "RT-Thread WebSocket Agent"
                 config PKG_AGENT_A2A_DESCRIPTION
                     string "Agent description"
                     default "Embedded agent running on RT-Thread"
-                    help
-                        description field of the agent card.
-
-                config PKG_AGENT_A2A_CARD_PATH
-                    string "Agent card file path"
-                    default "/agent_card.json"
-                    help
-                        Where POST /card stores the card. The file is read when
-                        the channel starts, and /.well-known/agent.json serves
-                        what it holds; the two options above only provide the
-                        first-boot defaults. Needs a writable file system, the
-                        SD card mounted at / for example.
-
-                config PKG_AGENT_A2A_PUSH_PATH
-                    string "Push callback file path"
-                    default "/agent_push.json"
-                    help
-                        Where POST /tasks/pushNotificationConfig stores the
-                        callback URL. The file is read when the agent starts,
-                        so the board keeps reporting after a reboot. Needs a
-                        writable file system, the SD card mounted at / for
-                        example.
-
             endmenu
         endif
 
