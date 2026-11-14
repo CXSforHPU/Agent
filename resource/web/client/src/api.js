@@ -99,12 +99,35 @@ export const api = {
   me: () => request('/auth/me'),
 
   listDevices: () => request('/devices'),
+  wsStatus: () => request('/devices/ws/status'),
+  /**
+   * 新建设备。给了 username/password 时响应带一次性激活配置 activation
+   * （deviceId/username/password），只在这一刻返回一次，之后任何接口都不再回显密码。
+   */
   createDevice: (data) => request('/devices', { method: 'POST', body: data }),
+  /** 给已有设备补/换激活凭据，同样一次性返回激活配置；已激活设备返回 409。 */
+  setDeviceCredential: (id, data) =>
+    request(`/devices/${id}/credential`, { method: 'POST', body: data }),
   updateDevice: (id, data) => request(`/devices/${id}`, { method: 'PUT', body: data }),
   deleteDevice: (id) => request(`/devices/${id}`, { method: 'DELETE' }),
   probeDevice: (id) => request(`/devices/${id}/probe`, { method: 'POST' }),
   pushDeviceConfig: (id, data) => request(`/devices/${id}/config`, { method: 'POST', body: data }),
+  /** 旧的下发能力卡接口，后端会明确返回不支持；保留调用以便展示错误。 */
   pushDeviceCard: (id, data) => request(`/devices/${id}/card`, { method: 'POST', body: data }),
+  /** 设备当前绑定的能力卡，没绑返回 null。 */
+  deviceCard: (id) => request(`/devices/${id}/card`),
+  /** 绑定能力卡；cardId 传 null 解绑。设备只能绑一张，换卡先解绑。 */
+  bindDeviceCard: (id, cardId) =>
+    request(`/devices/${id}/card`, { method: 'PUT', body: { cardId } }),
+
+  listCards: () => request('/cards'),
+  createCard: (data) => request('/cards', { method: 'POST', body: data }),
+  updateCard: (id, data) => request(`/cards/${id}`, { method: 'PUT', body: data }),
+  deleteCard: (id) => request(`/cards/${id}`, { method: 'DELETE' }),
+  bindCardDevice: (cardId, deviceId) =>
+    request(`/cards/${cardId}/bind`, { method: 'POST', body: { deviceId } }),
+  unbindCardDevice: (cardId, deviceId) =>
+    request(`/cards/${cardId}/unbind`, { method: 'POST', body: { deviceId } }),
 
   /** 这台设备最近的上报事件，新的在前。 */
   listDeviceEvents: (id) => request(`/devices/${id}/events`),

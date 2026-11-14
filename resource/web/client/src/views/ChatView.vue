@@ -92,9 +92,20 @@ async function copyMessage(text) {
   catch { message.error('复制失败，请手动选择文本') }
 }
 
+/** 设备状态四态文案，和设备页保持一致。 */
+const STATUS_TEXT = {
+  unactivated: '未激活',
+  activating: '激活中',
+  online: '在线',
+  offline: '未在线',
+}
+
 const deviceOptions = computed(() => [
   { label: '网站侧 agent', value: 0 },
-  ...devices.value.map((d) => ({ label: `端侧：${d.name}`, value: d.id })),
+  ...devices.value.map((d) => ({
+    label: `端侧：${d.name}（${STATUS_TEXT[d.status] || d.status}）`,
+    value: d.id,
+  })),
 ])
 
 /** 面板的对话对象名称。 */

@@ -20,6 +20,7 @@ import {
 import {
   GridOutline,
   HardwareChipOutline,
+  IdCardOutline,
   ChatbubblesOutline,
   TimeOutline,
   SettingsOutline,
@@ -45,6 +46,7 @@ onUnmounted(() => narrowScreen.removeEventListener('change', syncNavigation))
 const menus = [
   { label: '总览仪表盘', key: 'dashboard', icon: GridOutline },
   { label: '设备管理', key: 'devices', icon: HardwareChipOutline },
+  { label: '能力卡', key: 'cards', icon: IdCardOutline },
   { label: '对话', key: 'chat', icon: ChatbubblesOutline },
   { label: '会话历史', key: 'history', icon: TimeOutline },
   { label: '设置', key: 'settings', icon: SettingsOutline },
