@@ -211,20 +211,61 @@ typedef struct AgentChannelOps
 | LVGL | `PKG_AGENT_LVGL_CHANNEL` | `agent_lvgl_ops` | 应用侧实现，保存 hub | 应用侧实现，清空 hub |
 | CLI | `PKG_AGENT_CLI_CHANNEL` | `agent_cli_ops` | 创建 readline 线程 | 停止线程并释放句柄 |
 | WebNet | `PKG_AGENT_WEBNET_CHANNEL` | `agent_webnet_ops` | 注册 CGI | 置空缓存指针 |
-| A2A | `PKG_AGENT_A2A_CHANNEL` | `agent_a2a_ops` | 注册 A2A CGI 并启动 webnet | 置空缓存指针 |
+| A2A | `PKG_AGENT_A2A_CHANNEL` | `agent_a2a_ops` | 主动连接 WebSocket 后端 | 停止线程并关闭连接 |
 | Debug | `PKG_AGENT_DEBUG_CHANNEL` | `agent_debug_ops` | 保存 hub 与 ctx | 置空缓存指针 |
 
 `inc/channels/AgentChannels.h` 是唯一的通道选择点，优先级为 LVGL → CLI → WebNet → A2A → Debug。Kconfig 的通道选项是单选，正常配置只会定义一个宏。
 
 **当前工程的通道选择**：本项目在 `rtconfig.h` 里定义了 `PKG_AGENT_A2A_CHANNEL`，实际选中的是 A2A 通道，其余通道暂时没开。
 
-A2A 通道跑在 webnet 之上，文件是 `src/channels/AgentA2aChannel.c`。它提供五个端点：`GET /.well-known/agent.json` 出能力卡，`GET /card` 读当前能力卡，`POST /card` 改能力卡并落盘，`POST /tasks/send` 同步等最终结果，`POST /tasks/sendSubscribe` 按 SSE 分帧推送。启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。端点与消息格式见 [api.md](./api.md) 的 5.5。
+板端选择 `PKG_AGENT_A2A_CHANNEL`，主动连接 Web 后端的 `/api/a2a/ws`。
+`PKG_AGENT_A2A_HOST`、`PKG_AGENT_A2A_PORT`、`PKG_AGENT_A2A_WS_ENDPOINT` 指定真实服务器。
+设备表里只填 `ws://设备ID`，这是逻辑标识，不能当作网络 URL 用。
 
-能力卡在启动时从 `PKG_AGENT_A2A_CARD_PATH` 指定的文件读，读不到就用 Kconfig 的默认值。`POST /card` 改完立刻写回同一个文件，所以重启后还是这份。
+A2A 通道由两个文件组成：`src/channels/AgentA2aChannel.c` 管连接与帧，
+`src/channels/AgentWebSocket.c` 是 RFC 6455 客户端，负责握手、加掩码发送、
+收帧拆包和 UTF-8 校验。板端不实现 WebSocket 服务端。
 
-流式接口的中间帧由 `AgentStream` 队列驱动。`task_wait()` 每 100 ms 醒一次，先把队列里的事件取空推给客户端，再等输出邮箱。这样思考过程、工具调用、正文分片都能边跑边推，不用等最终答案。
+通道有三个阶段：
 
-webnet 是单线程的，A2A 同步接口会一直等到 agent 跑完才返回，期间占住整个线程。同一台设备并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。
+1. 未激活。没有 token，不自动连，也不每 3 秒乱试。等 MSH 命令 `a2a_activate`。
+2. 激活中。命令带上账号密码，服务端校验后签发一次性设备 token。
+   板端把 token 写进 `PKG_AGENT_A2A_TOKEN_FILE`，端点写进 `PKG_AGENT_A2A_ENDPOINT_FILE`。
+3. 已激活。之后凭 token 重连，密码不再出现。服务端不认这个 token 时回 `bad_token`，
+   板端删掉本地 token 文件，回到未激活。
+
+账号密码的取值顺序是命令参数、Kconfig、凭据文件 `PKG_AGENT_A2A_CRED_FILE`。
+密码不回显，也不写进日志。控制台只存 PBKDF2 加盐摘要。
+
+一台设备只能激活一次。服务端回这些错误码后断开：
+
+| 错误码 | 含义 |
+|---|---|
+| `bad_credential` | 账号或密码不对 |
+| `already_online` | 同一个设备 ID 已经在线 |
+| `already_activated` | 已经激活过，不换密码也不换 token |
+| `device_not_found` | 控制台里没这台设备，或它没登记这份凭据 |
+| `bad_token` | token 不认识，或 hello 里既没账号密码也没 token |
+
+连接建立后板端发 `hello`，服务端回 `welcome`，再把绑定的能力卡推过来。
+之后板端收 `ping`、`card`、`task`，回 `pingResult`、`cardResult`、`taskResult`。
+任务只返回 final，能力卡 `streaming=false`。自发结论走同一连接的 `report` 事件，
+不再 POST 回调。
+
+同一设备请求串行执行。超时或断线不自动重放任务；旧任务超时后，必须先消费
+并丢弃迟到结果，才接受新任务。板端每 3 秒重连一次。主动上报用 4 条有界队列，
+满了丢最旧事件，发送失败不重放。
+
+掩码用的随机数由 HMAC-DRBG 生成，种子在 `/agent_a2a_seed`，48 字节。
+首次连接前要写好这个文件，每台板子各自一份，禁止克隆种子。
+种子和凭据只放 SD 卡或 ignored 文件，不能复用 LLM 密钥。
+
+当前板端只支持可信网络内的明文 `ws`，没有实现带证书校验的 `wss`。
+不要把它当作公网安全传输。独立 WebNet 通道保留，A2A 不再注册 HTTP CGI。
+
+![A2A WebSocket 链路](diagrams/a2a-websocket-flow.png)
+
+draw.io 源文件：[a2a-websocket-flow.drawio](diagrams/a2a-websocket-flow.drawio)
 
 Debug 通道由包内实现，文件是 `src/channels/AgentDebugChannel.c`。它提供 MSH 命令 `agent_send_message <type> <content>`，`type` 取 0 到 4，0 是文本。命令把消息投给 agent，再等输出，最多等 30 秒，超时返回 -1。
 
@@ -414,26 +455,21 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 `msh_agent_endpoint` 打印当前地址和来源，`msh_agent_endpoint refresh` 再问控制台一次。
 
-### 3.15 自发上报通道
+### 3.15 自发上报
 
 文件：`src/utils/agent_report.c`、`inc/utils/agent_report.h`
 
-端侧 agent 有两类产出：一类是别人问出来的答案，走通道回复；另一类是自己得出的结论，比如 MQTT 规则命中、传感器越限。这类结论没人等的时候也要送到网页端去，这就是上报通道。
+端侧 agent 有两类产出。一类是别人问出来的答案，走通道回复。另一类是自己得出的
+结论，比如 MQTT 规则命中、传感器越限。这类结论没人等的时候也要送到网页端去。
 
-链路分成两段：
+链路只有一段：产出结论的地方调 `agent_report_push()` 入队，A2A 工作线程在服务
+循环里调 `agent_report_take()` 取出来，用同一条 WebSocket 连接的 `report` 事件
+发给控制台。没有独立上报线程，也不走 HTTP 回调。
 
-1. 控制台经 `POST /tasks/pushNotificationConfig` 下发回调地址，板端写进 `PKG_AGENT_A2A_PUSH_PATH` 指定的文件（默认 `/agent_push.json`），启动时读回这个文件。
-2. 端侧 agent 每产出一条结论就调 `agent_report_push()` 入队，上报线程把队里的结论逐条 POST 到回调地址。
+队列深度 4，正文上限 512 字节，满了丢最旧的一条。发送失败就丢掉这条，
+不重放，不阻塞 agent 主循环。
 
-调用关系：
-
-- `init_agent()` 里调 `agent_report_init()`，先读回上次下发的地址，配过地址就起上报线程。
-- 通道侧在处理 `POST /tasks/pushNotificationConfig` 时调 `agent_report_set_callback()`。地址变了才写文件。
-- 产出结论的地方（MQTT 规则命中、工具调用结束后的自述）调 `agent_report_push()`，只入队，真正发出去由上报线程做。
-
-队列深 4，正文上限 512 字节，满了丢最旧的一条。没配回调地址时结论留在队列里，配上以后自然发出去。发送失败重试一次，还不行就丢掉这条，不阻塞 agent 主循环。
-
-上报走独立线程，不占 webnet 的连接线程，也不占 agent 主循环。
+`agent_report_ready()` 只在开了 A2A 通道时返回真。
 
 ## 4. 数据流
 
@@ -559,10 +595,23 @@ sequenceDiagram
 | `PKG_AGENT_WEBNET_CHANNEL` | WebNet 通道 |
 | `PKG_AGENT_DEBUG_CHANNEL` | Debug 通道 |
 | `PKG_AGENT_LVGL_CHANNEL` | LVGL 通道 |
-| `PKG_AGENT_A2A_CHANNEL` | A2A 通道 |
-| `PKG_AGENT_A2A_NAME` / `PKG_AGENT_A2A_DESCRIPTION` | 能力卡的默认名字与描述，控制台改过以后以板端存的文件为准 |
-| `PKG_AGENT_A2A_CARD_PATH` | 能力卡落盘路径，默认 `/agent_card.json`，要落在可写文件系统上 |
-| `PKG_AGENT_A2A_PUSH_PATH` | 上报回调地址的落盘路径，默认 `/agent_push.json`，要落在可写文件系统上 |
+| `PKG_AGENT_A2A_CHANNEL` | A2A 通道，板端主动连 Web |
+
+A2A 的选项在 `A2A Channel - board connects to Web` 菜单里。
+
+| 宏 | 说明 |
+|---|---|
+| `PKG_AGENT_A2A_HOST` | Web 后端主机名，不带协议，默认 `192.168.137.1` |
+| `PKG_AGENT_A2A_PORT` | Web 后端端口，默认 8080 |
+| `PKG_AGENT_A2A_WS_ENDPOINT` | WebSocket 端点路径，默认 `/api/a2a/ws` |
+| `PKG_AGENT_A2A_DEVICE_ID` | 设备 ID，对应设备表的逻辑地址 `ws://设备ID`，默认 `rtthread-agent` |
+| `PKG_AGENT_A2A_USERNAME` | 激活用的账号，留空就读凭据文件 |
+| `PKG_AGENT_A2A_PASSWORD` | 激活用的密码，留空就读凭据文件。真实密码不要提交到 git |
+| `PKG_AGENT_A2A_CRED_FILE` | 凭据文件路径，首行是"账号 密码"，默认 `/agent_a2a_cred` |
+| `PKG_AGENT_A2A_TOKEN_FILE` | 设备 token 的落盘路径，默认 `/agent_a2a_token` |
+| `PKG_AGENT_A2A_ENDPOINT_FILE` | 激活端点的落盘路径，内容是"主机 端口"，默认 `/agent_a2a_endpoint` |
+| `PKG_AGENT_A2A_TASK_TIMEOUT_MS` | 单个任务的超时，默认 60000 毫秒 |
+| `PKG_AGENT_A2A_NAME` / `PKG_AGENT_A2A_DESCRIPTION` | 能力卡的默认名字与描述。控制台推了绑定的能力卡时以推送内容为准 |
 
 ### LLM 与缓冲
 
@@ -637,6 +686,7 @@ MQTT 选项较多，见 [tool_mqtt.md](./tool_mqtt.md) 的配置章节。常用�
 
 - `src/*.c`
 - 通道：`CLI.c`、`AgentWebChannel.c`、`AgentDebugChannel.c`
+- A2A 通道开了以后多编 `AgentA2aChannel.c` 与 `AgentWebSocket.c`
 - 工具目录
 - MQTT 目录
 - 协议目录 `src/utils/protocol/`
@@ -665,5 +715,9 @@ LVGL 通道的实现不在包内，由应用工程编译。
 - LVGL 通道只提供接口，包内不包含聊天界面。
 - `utils.h` 中下载函数的声明名与实际定义不一致，详见 [api.md](./api.md) 的“已知差异”。
 - 上下文摘要会增加一次模型请求的耗时和 token 消耗，期间 agent 保持忙碌。压缩失败或仅有一轮超长对话时保留全部历史，后续对话可能使历史继续增长。`PKG_AGENT_MESSAGE_TRIM` 不是硬性容量上限。
-- 本项目当前选中 A2A 通道，`rtconfig.h` 里定义了 `PKG_AGENT_A2A_CHANNEL`。LVGL 通道暂时没开，它的 ops 要由应用工程实现；A2A 与 WebNet 共用 webnet，同一台设备上要串行访问。
+- 本项目当前选中 A2A 通道，`rtconfig.h` 里定义了 `PKG_AGENT_A2A_CHANNEL`。LVGL 通道暂时没开，它的 ops 要由应用工程实现。
+- A2A 只支持明文 `ws`，没有 `wss`。只放在可信网络里用。
+- 一台设备只能激活一次。控制台删掉设备行以后才能重新登记并激活。
+- A2A 通道的工作线程栈是 8192 字节。tShell 的栈不能太小，WebSocket 握手在
+  握手缓冲区上还要压一段栈。
 - 设备框架工具的完整说明见 [tool_device.md](./tool_device.md)，验证方法见 [testing.md](./testing.md)。

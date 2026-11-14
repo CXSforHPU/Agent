@@ -15,9 +15,10 @@ resource/web/
 │   └── src/main/
 │       ├── java/com/agentconsole/
 │       │   ├── auth/          注册、登录、JWT
-│       │   ├── device/        设备增删改查、探活、配置下发
+│       │   ├── device/        设备增删改查、激活凭据、探活、配置下发
+│       │   ├── card/          能力卡增删改查与设备绑定
 │       │   ├── conversation/  会话与消息
-│       │   ├── a2a/           A2A 协议模型与客户端
+│       │   ├── a2a/           A2A 协议模型与设备侧 WebSocket 服务
 │       │   ├── agent/         网站侧 agent
 │       │   ├── chat/          聊天入口，按 deviceId 分流
 │       │   ├── ops/           运维面板：装依赖、起停服务、试 TTS 与 STT
@@ -32,7 +33,7 @@ resource/web/
 │   │   ├── theme.js      品牌色与组件主题改写
 │   │   ├── style.css     全局基础样式与通用类
 │   │   ├── api.js        后端接口封装
-│   │   └── views/        六个页面
+│   │   └── views/        八个页面
 │   └── vite.config.js
 └── .run/             日志与运行产物，不进版本库
 ```
@@ -41,11 +42,13 @@ resource/web/
 
 Vue 3 加 Vite，组件库用 [naive-ui](https://www.naiveui.com/)，图标用 `@vicons/ionicons5`。naive-ui 按需引入，`<script setup>` 里直接 import 组件，不装额外的解析插件。
 
-页面骨架是一个左侧菜单加右侧内容区。登录页不套这个外壳，单独渲染。菜单五项对应五个页面：
+页面骨架是一个左侧菜单加右侧内容区。登录页不套这个外壳，单独渲染。菜单七项对应七个页面：
 
 | 页面 | 路径 | 内容 |
 |---|---|---|
-| 设备管理 | `/devices` | 设备增删改查、探活、配置下发。列表用表格，上面三块统计数字 |
+| 总览仪表盘 | `/dashboard` | 设备、能力卡、会话与事件的统计 |
+| 设备管理 | `/devices` | 设备增删改查、激活凭据、探活、配置下发。列表用表格，上面三块统计数字 |
+| 能力卡 | `/cards` | 能力卡增删改查，绑定或解绑设备。列表带每张卡绑了几台设备 |
 | 对话 | `/chat` | 一个面板一个会话，一屏可以并排开多个。左边选对话对象与会话记录，右侧是面板区，每个面板有独立的对话对象、会话、消息流与输入框。回复一段段推过来，思考过程与工具调用实时显示 |
 | 会话历史 | `/history` | 左边会话列表，右边消息详情 |
 | 设置 | `/settings` | 网站侧 agent 的五个配置项 |
@@ -109,7 +112,7 @@ Windows 下双击或在 cmd 里跑 `setup.bat`，参数一样：`--install`、`-
 
 值存在 SQLite 的 `user_setting` 表里，数据库文件在 `.gitignore` 的 `server/data/` 下，**个人配置不会进版本库**。`AGENT_JWT_SECRET` 和 `AGENT_CONSOLE_DB` 不在设置页里，改它们要动环境变量并重启。
 
-这五项只影响网站侧 agent。端侧设备的 LLM 配置走设备自己的 `/config` 接口，在设备管理页下发。
+这五项只影响网站侧 agent。端侧设备的 LLM 配置目前通过固件配置。
 
 ## 运维页
 
@@ -248,16 +251,25 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 | POST | `/api/auth/register` | 注册，返回 token |
 | POST | `/api/auth/login` | 登录，返回 token |
 | GET | `/api/auth/me` | 当前用户 |
-| GET | `/api/devices` | 设备列表 |
-| POST | `/api/devices` | 新建设备 |
+| GET | `/api/devices` | 设备列表，含激活状态与在线状态 |
+| GET | `/api/devices/ws/status` | 需 JWT；返回监听配置与当前账号已登记 WebSocket 设备的连接状态，不含 token |
+| POST | `/api/devices` | 新建设备。带 `username`、`password` 时一并登记激活凭据，响应里回一次激活配置 |
+| POST | `/api/devices/{id}/credential` | 重设激活账号密码。已经激活的设备改不了，返回 409 |
 | PUT | `/api/devices/{id}` | 修改设备 |
 | DELETE | `/api/devices/{id}` | 删除设备 |
 | POST | `/api/devices/{id}/probe` | 探活一次，同时返回能力卡 |
 | POST | `/api/devices/{id}/config` | 配置下发 |
+| GET | `/api/devices/{id}/card` | 读这台设备绑定的能力卡 |
+| PUT | `/api/devices/{id}/card` | 绑定或解绑能力卡，body 是 `{"cardId": 1}`，解绑传 `null` |
 | POST | `/api/devices/{id}/card` | 能力卡下发，板端存 SD 卡 |
-| POST | `/api/devices/push/{token}` | 板端上报入口，免登录，令牌在回调地址里 |
 | GET | `/api/devices/{id}/events` | 这台设备最近的上报事件，新的在前 |
 | GET | `/api/devices/{id}/events/stream` | 上报事件流，板端一上报网页立刻收到 |
+| GET | `/api/cards` | 能力卡列表，带各自的设备数 |
+| POST | `/api/cards` | 新建能力卡 |
+| PUT | `/api/cards/{id}` | 修改能力卡 |
+| DELETE | `/api/cards/{id}` | 删除能力卡 |
+| POST | `/api/cards/{id}/bind` | 绑定设备，body 是 `{"deviceId": 2}` |
+| POST | `/api/cards/{id}/unbind` | 解绑设备，body 是 `{"deviceId": 2}` |
 | GET | `/api/conversations` | 会话列表，可按 `deviceId` 过滤 |
 | GET | `/api/conversations/{id}` | 会话详情，含全部消息 |
 | POST | `/api/conversations` | 新建会话 |
@@ -304,53 +316,66 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 
 `kind` 取 `status`（开始处理）、`reasoning`（思考分片）、`tool`（工具调用）、`content`（正文分片）、`final`（完整答案，同时带上会话 id）、`error`（出错）。前面几类是增量，逐条追加显示；`final` 是权威答案，用来覆盖增量拼出来的文本。`conversationId` 为空表示这次还没落库。
 
-## 端侧对接
+## 设备主动连接的 WebSocket 通道
 
-网站经 A2A 协议和端侧 agent 通信，端点按协议约定：
+板端选择 `PKG_AGENT_A2A_CHANNEL`，主动连接 Web 后端的 `/api/a2a/ws`。
+`PKG_AGENT_A2A_HOST`、`PKG_AGENT_A2A_PORT`、`PKG_AGENT_A2A_WS_ENDPOINT` 指定真实服务器。
+设备表里只填 `ws://设备ID`，这是逻辑标识，不能当作网络 URL 用。
 
-| 路径 | 方法 | 用途 |
-|---|---|---|
-| `/.well-known/agent.json` | GET | 能力卡，探活也用它 |
-| `/tasks/send` | POST | 同步发任务 |
-| `/tasks/sendSubscribe` | POST | 流式发任务，SSE 返回 |
-| `/card` | GET / POST | 读、改能力卡。POST 改完写 SD 卡，重启后还是这份 |
+### 激活
 
-消息体是 `{"message": {"role": "user", "parts": [{"type": "text", "text": "..."}]}}`。同步接口返回 `{"id", "status": {"state"}, "artifacts": [{"parts": [...]}]}`，`state` 取 `working`、`completed`、`failed`。SSE 每一帧也是这个结构，空行分隔。
+设备有四个状态：未激活、激活中、在线、未在线。
 
-流式接口的帧可以带产出：`artifacts[].name` 标出这一段是什么，取 `reasoning`（思考分片）、`tool`（工具调用）、`content`（正文分片）、`response`（完整答案），`append` 为真表示和前一段续接。除 `response` 外都是增量，最后那帧 `state` 是 `completed`。
+未激活的板子不自动连。等板端执行 MSH 命令：
 
-### 半双工
+```
+a2a_activate [host [port [username [password]]]]
+```
 
-网页发一条、端侧回一条，同一时刻只有一个方向在传。网页发出去之后，端侧 agent 边跑边推思考、工具调用和正文分片，跑完补上最终答案。后端把 `/tasks/sendSubscribe` 的每一帧转成 `/api/chat/stream` 的事件发给网页，网页收到 `final` 才允许再发下一条。
+账号密码的取值顺序是命令参数、Kconfig、凭据文件 `/agent_a2a_cred`。
+密码不回显，也不写进日志。后端只存 PBKDF2 加盐摘要，不存明文。
 
-板子这边的实现在两个地方：`AgentStream` 收中间事件，`AgentA2aChannel` 每 100 ms 把队列取空推一帧，取到最后结果那帧结束。
+服务端校验后签发一次性设备 token。板端把它写进 `/agent_a2a_token`，
+之后凭 token 重连，密码不再出现。
 
-探活就是 GET 能力卡，200 算在线。设备的 `address` 字段填服务根地址，能力卡自动拼在后面。
+一台设备只能激活一次。后端对这些情况回错误帧后断开：
 
-能力卡的 `name`、`description`、`version` 可以在设备页的「能力卡」里改，走 `POST /api/devices/{id}/card` 下发到板子的 `POST /card`。板端写进 `PKG_AGENT_A2A_CARD_PATH` 指定的文件，默认是 `/agent_card.json`，启动时读，Kconfig 里的 `PKG_AGENT_A2A_NAME`、`PKG_AGENT_A2A_DESCRIPTION` 只当第一次的默认值。`url` 不参与下发，始终按请求里的 Host 现算；`capabilities` 与 `skills` 目前还是固定的。打开对话框时会先探活，把板子上那份预填进来，描述与版本留空表示不改。
+| 错误码 | 含义 |
+|---|---|
+| `bad_credential` | 账号或密码不对 |
+| `already_online` | 同一个设备 ID 已经在线 |
+| `already_activated` | 已经激活过，不换密码也不换 token |
+| `device_not_found` | 控制台里没这台设备，或它没登记这份凭据 |
+| `bad_token` | token 不认识 |
 
-端侧的 A2A 通道在 agent 包里，menuconfig 里选 `Agent interaction communication channel → A2A channel (Agent-to-Agent over HTTP)`。它跑在 WebNet 之上，端口用 `WEBNET_PORT`（默认 80），另外把 CGI 根切到 `/`，这样 `/.well-known/agent.json` 这种带点号的路径才能被匹配到。配套选项 `PKG_AGENT_A2A_NAME` 和 `PKG_AGENT_A2A_DESCRIPTION` 填能力卡里的名字和描述，`PKG_AGENT_A2A_CARD_PATH` 决定能力卡落在哪个文件。
+控制台删掉设备行以后才能重新登记并激活。改密码只在未激活时允许。
 
-通道是互斥的，选了 A2A 就不能同时用 CLI、WebNet、Debug、LVGL。webnet 要求 lwIP 的 tcpip 线程栈大于 1408，工程里已把 `RT_LWIP_TCPTHREAD_STACKSIZE` 提到 2048。
+### 帧格式
 
-配置下发走的是 WebNet 通道的 `POST /config`，端点是 `<address>/config`。只开了 A2A 通道的设备没有这个端点，接口会返回 502，不会假装成功。
+连接建立后板端发 `hello`，服务端回 `welcome`，再把绑定的能力卡推过来。
+之后板端收 `ping`、`card`、`task`，回 `pingResult`、`cardResult`、`taskResult`。
+每个请求带 `id`，应答回同一个 `id`。
 
-同一台设备的请求在服务端是串行的：`A2aClient` 给每台设备加了一把锁，探活与聊天不会同时开两条连接。端侧 webnet 是单线程的，A2A 同步接口会占住整个线程直到 agent 跑完，并发时后到的连接会把先到那条的响应顶掉，客户端只收到空响应。
+JSON 文本消息，单条最多 8192 字节。服务端每 20 秒发一帧 ping，
+`timeout + 30` 秒没收任何帧就断开，设备状态随即变成未在线。
 
-### 端侧上报
+任务只返回 final，能力卡 `streaming=false`。自发结论走同一连接的 `report` 事件，
+带 `kind` 与 `text`，后端按板子地址归到设备行，再推给正在听 SSE 的网页。
 
-端侧 agent 自己得出的结论（MQTT 规则命中、传感器越限）不用等人来问，直接推给控制台。
+同一设备请求串行执行。超时或断线不自动重放任务；旧任务超时后，必须先消费
+并丢弃迟到结果，才接受新任务。板端每 3 秒重连一次。主动上报用 4 条有界队列，
+满了丢最旧事件，发送失败不重放。
 
-链路分两段：
+当前板端只支持可信网络内的明文 `ws`，没有实现带证书校验的 `wss`。
+不要把它当作公网安全传输。
 
-1. 控制台给板子下发一个回调地址 `http://<板端可见的控制台地址>:8080/api/devices/push/<令牌>`，走板子的 `POST /tasks/pushNotificationConfig`。板端写进 `PKG_AGENT_A2A_PUSH_PATH` 指定的文件，默认 `/agent_push.json`，重启后还是这份。
-2. 板端每产出一条结论就 POST 一次到这个地址，正文是 `{"kind": "report", "id": "...", "text": "..."}`。控制台按地址里的令牌认出是哪块板子，落进 `device_event` 表，再推给正在看这块板子的网页。
+### 能力卡
 
-归属按板子地址算，不按设备行算。同一块板子被几个账号各登记一次时，网页打开哪一行都看到同一份上报，事件挂在最早登记的那一行上。
+能力卡放在独立的 `/api/cards` 下。一个能力卡可以绑多台设备，一台设备只能绑一个能力卡。
+给已经绑了别的卡的设备再绑一次会返回 409。
 
-下发时机在探活的时候：定时探活每 15 秒一轮，探到能力卡声明了 `pushNotifications` 的设备就先读一次板端当前的回调地址，和控制台这份不一致就重新下一次。同一块板子的读操作按地址限频，5 分钟一次，避免把板端单线程的 webnet 占满。板子刷了固件、SD 卡上的地址没了，5 分钟内会自动补下一次。
-
-板端刷固件或换板子以后，控制台也会主动下发新地址。
+板端在线时，改完绑定关系立刻把新卡推过去。板端离线时，绑定关系已经落库，
+下次连上时服务端会补推。板端收到卡后回 `cardResult`，里面是当前生效的能力卡。
 
 ### 多会话同屏
 
@@ -367,35 +392,16 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 
 ## 验证
 
-控制台与端侧 agent 的链路要四步走通，缺一步都会表现成「对话没反应」：
+运行 `python scripts/mqtt_test/websocket_e2e_test.py`。脚本使用真实 Spring 后端、
+独立 QEMU 和 SD 副本。四组判据：
 
-1. **板子在跑**：QEMU 起来后串口里能看到 `A2A channel up on port 80`。板子走 TAP 网桥接宿主机，地址固定 `192.168.137.100`，宿主机直接用 `http://192.168.137.100` 连板子，设备地址就填这个。
-2. **服务端起来了**：日志里有 `读到 rtconfig.h：...`，说明默认配置来源对了；没有这一行就检查工作目录，或者用 `AGENT_RTCONFIG_H` 直接指定路径。
-3. **探活通过**：设备管理页点探活，拿到能力卡算在线。拿不到就是地址或端口不对。
-4. **三条对话链路**：
-   - 选设备对话，走 A2A 转给端侧 agent；
-   - 不选设备对话，走网站侧 agent，配置取自 `rtconfig.h`；
-   - 不选设备、但让网站侧 agent 用 `ask_device` 去问设备，验证网页端与端侧的中继。
+1. 密码错的时候握手就被拒，回 `bad_credential`，板子没有激活。
+2. 密码对时 `a2a_activate` 打印 `[OK]`，token 落到 SD 卡，设备状态变成在线。
+3. 能力卡绑定正确，探活返回绑定的卡；再发一个计算任务，收到非空的 final。
+4. 同一台设备再连一次回 `already_online`；再拿密码激活一次回 `already_activated`。
 
-第 3、4 步的响应慢是正常的：端侧 agent 要真的调一次模型，一条消息几秒到十几秒。
-
-### 自动化的那条链路
-
-上面的四步手工跑过一遍以后，还能用脚本再跑一遍。脚本在 BSP 工作区的 `build/llm_probe/` 下，不随本包发布。它起 QEMU、起控制台、按顺序打六项：注册登录、建会话、带 `Origin` 头的 PATCH 改名、建设备、下发能力卡、板端读回下发的能力卡。六项都过才退出码为 0。
-
-带 `Origin` 头的那一项就是以前报 403 的那条路径，现在返回 200。
-
-### 上报链路的验证
-
-上报链路要五步走通，缺一步的表现各不相同：
-
-1. **板端拿到回调地址**：串口里出现 `I/Agent.report: report: callback set: http://...`，这是控制台下发的地址。
-2. **板端存住了**：板子上有 `/agent_push.json`，里面是 `{"url": "...", "id": "..."}`。重启板子以后还在，就说明存对了。
-3. **板端会自发上报**：在板端串口建一条阈值规则，例如 `mqtt_tool rule device/sensors/temperature val > 27.0`。规则命中后 agent 会给出一段结论，串口里出现 `I/Agent.report: report: sent, N bytes`。
-4. **控制台收到了**：数据库 `device_event` 表里有对应的一行，`device_id` 指向最早登记那块板子的那一行。
-5. **网页收到了**：`GET /api/devices/{id}/events` 能取到最近的事件；`GET /api/devices/{id}/events/stream` 是 SSE，板端一上报就推一帧 `data: {"kind":"report","text":"..."}`。
-
-板子刷了固件以后，第 1 步会断：`/agent_push.json` 没了，板端读到空地址。控制台的定时探活会在 5 分钟内发现并重新下发，第 1 步的日志重新出现，上报随之恢复。
+结果在 `server/target/ws-test/`。LLM 失败提示只证明最终结果回传，不能算任务成功。
+浏览器在 `http://127.0.0.1:5173` 打开设备页的“WebSocket 连接”，再到聊天页测试。
 
 ### 运维页的验证
 
@@ -418,6 +424,9 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 
 ## 已知限制
 
+- A2A 通道只支持明文 `ws`，没有 `wss`。只放在可信网络里用。
+- 一台设备只能激活一次。要换账号或换板子，先删掉设备行再重新登记。
+- 同一个板子地址只能有一条激活记录。两个账号不能各激活一次同一个地址。
 - 网站侧 agent 的 API Key 在设置页、环境变量和 `rtconfig.h` 里都拿不到时，`/api/chat` 会返回「还没配置 API Key」。
 - 会话历史存在 SQLite 里，没有清理策略，长期运行需要自己定。
 - 前端开发服务器在 5173，代理到 8080 的规则写在 `client/vite.config.js`，换端口要一起改。

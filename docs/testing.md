@@ -310,7 +310,7 @@ python build/skill_qemu/run_llm_live.py
 
 ### 6.1 通道选择
 
-当前工程在 `rtconfig.h` 里定义的是 `PKG_AGENT_A2A_CHANNEL`，`agent_send_message` 这套命令属于 Debug 通道，要先切过去才能用：把 `.config` 里的通道换成 Debug，执行 `scons --useconfig=.config` 重新生成 `rtconfig.h`，再编译。验证完换回 A2A。LVGL 通道暂时没开，它的实现由应用工程提供。
+`agent_send_message` 命令属于 Debug 通道。验证前把 `.config` 里的通道换成 Debug，同步生成 `rtconfig.h` 后再编译。生成配置时保留已有 `PKG_*_PATH` 字符串，验证完恢复原通道。TCP 通道测试使用独立脚本，见第 8 节。LVGL 通道的实现由应用工程提供。
 
 ### 6.2 手动跑包内用例
 
@@ -363,4 +363,26 @@ python build/qemu_endpoint_check.py auto
 判据一共 10 项。手动模式：模式是 manual，控制台地址、文件服务器地址、MCP 地址都是 Kconfig 里的值，串口日志里没有 `[endpoint] GET`。自动模式加控制台在：模式是 auto，地址是假控制台报的那两个，日志里有 `[endpoint] file server ..., mcp ...`，没有回退告警。自动模式加控制台不在：日志里有 `[endpoint] console unreachable`，地址回落到固件内置的那两个。
 
 脚本从固件的 `rtconfig.h` 读 `PKG_AGENT_CONSOLE_URL`，假控制台就起在这个地址的端口上。回退地址先读 `rtconfig.h`，自动模式下这两个宏不在 `rtconfig.h` 里，改读包内 `inc/utils/agent_endpoint.h` 的默认值。改了固件配置不用改脚本。
+
+## 8. WebSocket 实际联调
+
+先编译固件、Spring 后端与 Vue 前端，再运行 `scripts/mqtt_test/websocket_e2e_test.py`。
+脚本使用当前 8080 后端和实际数据库，默认新增独立测试账号，不修改原设备数据。
+要落到已有账号就用 `CONSOLE_USER=... CONSOLE_PASSWORD=...` 指定；加 `--keep` 结束后保留 QEMU 与设备，
+供浏览器查看。QEMU 使用 SD 副本和 user 网络，串口 5556，不占用户现有 TAP 与 5555 终端。
+
+判据分四组：
+
+1. 激活前用错密码连一次，必须被拒 `bad_credential`。
+2. 板端 `a2a_activate` 拿到一次性 token 并长连；Web 状态从激活中变在线，连接窗口显示已连接。
+3. 探活返回的是 welcome 之后随连接推下去的绑定能力卡，技能与 `pushNotifications` 都在；再经 Web 发任务收到非空 final。
+4. 两次复检：已连接的设备再拿密码连一次必须被拒 `already_online`；另一台设备第二次激活必须被拒 `already_activated`。
+
+日志及任务回复在 ignored 的 `resource/web/server/target/ws-test/`。
+LLM 连接失败时必须单列说明，不能把能力卡或连接状态算作计算任务成功。
+
+踩过的坑：`a2a_activate` 跑在 tShell（默认 4096 栈）里，`agent_ws_upgrade` 曾在栈上开 2 KB 响应缓冲，
+把 shell 线程撑爆。溢出后 `rt_schedule` 里的栈检查要打日志，又在调度器内部拿 ulog 互斥锁，直接撞
+`RT_DEBUG_SCHEDULER_AVAILABLE` 断言，串口只看得到一行断言、看不到是哪个线程。已把响应缓冲降到 768 字节，
+`FINSH_THREAD_STACK_SIZE` 提到 8192；升级响应头只有两百字节，缓冲写满返回 -1 而不是越界。
 

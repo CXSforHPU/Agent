@@ -538,30 +538,76 @@ agent_send_message <type> <content>
 ### 5.5 A2A 通道
 
 宏：`PKG_AGENT_A2A_CHANNEL`
-实现：`src/channels/AgentA2aChannel.c`
-公共助手：`src/channels/webnet_util.c`
+实现：`src/channels/AgentA2aChannel.c`、`src/channels/AgentWebSocket.c`
 
-跑在 webnet 之上，共用 `WEBNET_PORT`（默认 80）。启动时把 CGI 根切到 `/`，否则 `/.well-known/agent.json` 这种带点号的路径匹配不到。
+板端主动连接 Web 后端的 `/api/a2a/ws`。连接方向只有这一条，A2A 不再注册 HTTP CGI。
+`PKG_AGENT_A2A_HOST`、`PKG_AGENT_A2A_PORT`、`PKG_AGENT_A2A_WS_ENDPOINT` 指定真实服务器。
+设备表里只填 `ws://设备ID`，这是逻辑标识，不能当作网络 URL 用。
 
-| 端点 | 方法 | 说明 |
-|---|---|---|
-| `/.well-known/agent.json` | GET | 能力卡，探活也用它 |
-| `/card` | GET | 读当前生效的能力卡三个字段 |
-| `/card` | POST | 改能力卡，改完写进文件 |
-| `/tasks/send` | POST | 同步发任务，一直等到端侧 agent 跑完 |
-| `/tasks/sendSubscribe` | POST | 流式发任务，先推一帧 `working`，再按 SSE 推最终结果 |
-| `/tasks/pushNotificationConfig` | GET | 读当前生效的上报回调地址 |
-| `/tasks/pushNotificationConfig` | POST | 下发上报回调地址，改完写进文件 |
+#### 5.5.1 激活与连接
 
-请求体是 `{"message": {"role": "user", "parts": [{"type": "text", "text": "..."}]}}`。同步接口返回 `{"id", "status": {"state"}, "artifacts": [{"parts": [...]}]}`，`state` 取 `working`、`completed`、`failed`。SSE 每一帧也是这个结构，空行分帧。
+设备有四个状态：未激活、激活中、在线、未在线。
 
-流式接口的中间帧，`artifacts[].name` 取四种值：`reasoning` 是思考过程，`tool` 是工具调用，`content` 是正文分片，`response` 是最终完整答案。前三种是增量，`append` 为真表示与前一段续接；`response` 那帧没有 `append` 字段。任务开始时先推一帧 `state` 为 `working` 的空结果，之后每 100 ms 把 `AgentStream` 队列里的事件取空推出去。
+未激活的板子不自动连，也不每 3 秒乱试。它等 MSH 命令：
 
-`POST /card` 的请求体是 `{"name": "...", "description": "...", "version": "..."}`。`name` 必填，`description` 与 `version` 不传就保持原值。改完写进 `PKG_AGENT_A2A_CARD_PATH` 指定的文件（默认 `/agent_card.json`），重启后还是这份。Kconfig 里的 `PKG_AGENT_A2A_NAME` 与 `PKG_AGENT_A2A_DESCRIPTION` 只当第一次启动的默认值。板端读不到文件、文件为空或不是合法 JSON 时用默认值，不当错误报。
+```
+a2a_activate [host [port [username [password]]]]
+```
 
-`POST /tasks/pushNotificationConfig` 的请求体是 `{"url": "...", "id": "..."}`。`url` 是控制台给的回调地址，空串表示关闭上报；`id` 是回调标识，控制台靠回调地址里的令牌认设备，这个字段只做记录。地址写进 `PKG_AGENT_A2A_PUSH_PATH` 指定的文件（默认 `/agent_push.json`），重启后还是这份。`GET` 读回当前地址和标识，没配过时两个字段都是空串。自发结论的上报过程见 6.8 节。
+账号密码的取值顺序是命令参数、Kconfig 的 `PKG_AGENT_A2A_USERNAME` 与
+`PKG_AGENT_A2A_PASSWORD`、凭据文件 `PKG_AGENT_A2A_CRED_FILE`（首行是"账号 密码"）。
+密码不回显，也不写进日志。已经有 token 时再执行这条命令会跳过激活。
 
-webnet 是单线程的，`/tasks/send` 会占住整个线程直到 agent 跑完。同一台设备并发开两条连接时，后到的那条会把先到那条的响应顶掉，调用方要自己串行化。控制台的做法是给每台设备加一把锁，探活与聊天不同时进行。
+服务端收到账号密码后校验，签发一次性设备 token。板端把 token 写进
+`PKG_AGENT_A2A_TOKEN_FILE`，把端点写进 `PKG_AGENT_A2A_ENDPOINT_FILE`。
+之后板端凭 token 重连，密码不再出现。服务端不认这个 token 时回 `bad_token`，
+板端删掉本地 token 文件，回到未激活。
+
+一台设备只能激活一次。服务端对这些情况回错误帧后断开：
+
+| 错误码 | 含义 |
+|---|---|
+| `bad_credential` | 账号或密码不对 |
+| `already_online` | 同一个设备 ID 已经在线，第二次连接被拒 |
+| `already_activated` | 这个设备已经激活过，不换密码也不换 token |
+| `device_not_found` | 控制台里没有这台设备，或它没登记这份凭据 |
+| `bad_token` | token 不认识，或 hello 里既没账号密码也没 token |
+
+账号密码只在这一条 ws 连接里出现一次，之后走 token。控制台只存 PBKDF2 加盐摘要，
+不存明文。
+
+#### 5.5.2 帧格式
+
+JSON 文本消息，单条最多 8192 字节。客户端验证 Upgrade 与 Accept，
+发送帧用随机 mask，支持续帧、拆包、粘包与 ping/pong/close。
+
+连接建立后：
+
+1. 板端发 `hello`，带 `deviceId`，以及账号密码或 token。
+2. 服务端回 `welcome`。激活成功时额外带 `token`。
+3. 服务端把绑定的能力卡推给板端，帧是 `card`，带 `card` 字段。
+
+之后的帧，板端收 `ping`、`card`、`task`，回 `pingResult`、`cardResult`、`taskResult`。
+每个请求带 `id`，应答回同一个 `id`。
+
+任务只返回 final，能力卡 `streaming=false`。自发结论走同一连接的 `report` 事件，
+不再 POST 回调。报告帧带 `kind` 与 `text`。
+
+同一设备请求串行执行。超时或断线不自动重放任务；旧任务超时后，必须先消费
+并丢弃迟到结果，才接受新任务。板端每 3 秒重连一次。主动上报用 4 条有界队列，
+满了丢最旧事件，发送失败不重放。
+
+能力卡的内容以服务端推送的为准。没推送过时用 Kconfig 的
+`PKG_AGENT_A2A_NAME` 与 `PKG_AGENT_A2A_DESCRIPTION` 兜底。
+
+#### 5.5.3 安全边界
+
+当前板端只支持可信网络内的明文 `ws`，没有实现带证书校验的 `wss`。
+不要把它当作公网安全传输。独立 WebNet 通道保留。
+
+![A2A WebSocket 链路](diagrams/a2a-websocket-flow.png)
+
+draw.io 源文件：[a2a-websocket-flow.drawio](diagrams/a2a-websocket-flow.drawio)
 
 ### 5.6 LVGL 通道
 
@@ -742,27 +788,23 @@ typedef struct
 
 MSH 命令 `msh_agent_endpoint` 打印当前地址和来源，带 `refresh` 参数再问控制台一次。
 
-### 6.8 自发上报通道
+### 6.8 自发上报
 
 头文件：`inc/utils/agent_report.h` 实现：`src/utils/agent_report.c`
 
-端侧 agent 自己得出的结论（MQTT 规则命中、传感器越限）不用谁来问，直接推给控制台。这个模块负责排队和发送。
+端侧 agent 自己得出的结论（MQTT 规则命中、传感器越限）没人来问，直接推给网页端。
 
 | 函数 | 说明 |
 |---|---|
-| `void agent_report_init(void)` | 初始化。读回上次下发的回调地址 |
-| `void agent_report_deinit(void)` | 停掉上报线程，释放队列与信号量 |
+| `void agent_report_init(void)` | 初始化互斥量与队列 |
+| `void agent_report_deinit(void)` | 释放互斥量，通道停止后调用 |
 | `rt_err_t agent_report_push(const char *text)` | 入队一条结论。文本为空或模块没初始化返回 `RT_ERROR` |
-| `rt_err_t agent_report_set_callback(const char *url, const char *id)` | 设置回调地址。`url` 传空串表示关闭上报 |
-| `const char *agent_report_callback(void)` | 当前回调地址，没配过时返回空串 |
-| `const char *agent_report_callback_id(void)` | 当前回调标识 |
-| `rt_bool_t agent_report_ready(void)` | 是否配了回调地址 |
+| `rt_err_t agent_report_take(char *text, rt_size_t size)` | 取出一条结论，空队列返回 `RT_ERROR` |
+| `rt_bool_t agent_report_ready(void)` | 模块是否可用。只有开了 A2A 通道才返回真 |
 
-回调地址由控制台经 `POST /tasks/pushNotificationConfig` 下发，板端存在 `PKG_AGENT_A2A_PUSH_PATH` 指定的文件里，默认 `/agent_push.json`。启动时读回这个文件，所以板子重启以后照样上报。地址没变就不写文件，重复下发不会反复擦写 SD 卡。
-
-一条结论的正文上限 512 字节，回调地址上限 192 字节，标识上限 64 字节。队列深 4，满了丢最旧的一条。没配回调地址时结论留在队列里，配上以后由上报线程发出去。
-
-发送走 HTTP POST，正文是 `{"kind": "report", "id": "...", "text": "..."}`，超时 5 秒。控制台收不到应答时重试一次，还不行就丢掉这条。
+队列深度 4，正文上限 512 字节，满了丢最旧的一条。A2A 工作线程在服务循环里
+调 `agent_report_take()` 取出来，用同一条连接的 `report` 事件发给控制台。
+发送失败不重放。
 
 ## 7. AgentAudio：音频驱动
 

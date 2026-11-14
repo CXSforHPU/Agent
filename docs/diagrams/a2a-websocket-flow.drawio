@@ -1,0 +1,311 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="drawio-skill" version="21.0.0" type="device">
+  <diagram name="A2A WebSocket" id="a2a-websocket">
+    <mxGraphModel dx="1422" dy="762" grid="1" gridSize="10" guides="1" tooltips="1"
+                   connect="1" arrows="1" fold="1" page="1" pageScale="1"
+                   pageWidth="1380" pageHeight="1620" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- 背景分区 -->
+        <mxCell id="band-activate" value=""
+                style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f7f9fc;strokeColor=#c8d4e3;"
+                vertex="1" parent="1">
+          <mxGeometry x="40" y="126" width="1280" height="460" as="geometry" />
+        </mxCell>
+        <mxCell id="band-online" value=""
+                style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f7f9fc;strokeColor=#c8d4e3;"
+                vertex="1" parent="1">
+          <mxGeometry x="40" y="592" width="1280" height="790" as="geometry" />
+        </mxCell>
+        <mxCell id="band-state" value=""
+                style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f7f9fc;strokeColor=#c8d4e3;"
+                vertex="1" parent="1">
+          <mxGeometry x="40" y="1400" width="1280" height="170" as="geometry" />
+        </mxCell>
+
+        <!-- 分区标题 -->
+        <mxCell id="title-activate" value="一、激活：账号密码换一次性设备 token"
+                style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;fontColor=#1f3864;"
+                vertex="1" parent="1">
+          <mxGeometry x="56" y="132" width="520" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="title-online" value="二、在线：能力卡、任务、上报、心跳，都在同一条连接上"
+                style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;fontColor=#1f3864;"
+                vertex="1" parent="1">
+          <mxGeometry x="56" y="598" width="640" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="title-state" value="三、设备状态"
+                style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;fontColor=#1f3864;"
+                vertex="1" parent="1">
+          <mxGeometry x="56" y="1406" width="300" height="28" as="geometry" />
+        </mxCell>
+
+        <!-- 生命线上的角色 -->
+        <mxCell id="p-board" value="板端 agent&#xa;（RT-Thread）"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;arcSize=20;strokeWidth=2;"
+                vertex="1" parent="1">
+          <mxGeometry x="60" y="60" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p-ws" value="WebSocket 客户端&#xa;AgentWebSocket.c"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1;arcSize=20;strokeWidth=2;"
+                vertex="1" parent="1">
+          <mxGeometry x="320" y="60" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p-server" value="Web 后端&#xa;/api/a2a/ws"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=20;strokeWidth=2;"
+                vertex="1" parent="1">
+          <mxGeometry x="580" y="60" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p-db" value="设备表&#xa;SQLite"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;fontStyle=1;arcSize=20;strokeWidth=2;"
+                vertex="1" parent="1">
+          <mxGeometry x="840" y="60" width="200" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="p-web" value="网页&#xa;REST + SSE"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;fontStyle=1;arcSize=20;strokeWidth=2;"
+                vertex="1" parent="1">
+          <mxGeometry x="1100" y="60" width="200" height="50" as="geometry" />
+        </mxCell>
+
+        <!-- 生命线 -->
+        <mxCell id="life-board" value="" style="endArrow=none;dashed=1;dashedPattern=4 4;strokeColor=#999999;html=1;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="160" y="110" as="sourcePoint" />
+            <mxPoint x="160" y="1370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="life-ws" value="" style="endArrow=none;dashed=1;dashedPattern=4 4;strokeColor=#999999;html=1;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="420" y="110" as="sourcePoint" />
+            <mxPoint x="420" y="1370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="life-server" value="" style="endArrow=none;dashed=1;dashedPattern=4 4;strokeColor=#999999;html=1;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="110" as="sourcePoint" />
+            <mxPoint x="680" y="1370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="life-db" value="" style="endArrow=none;dashed=1;dashedPattern=4 4;strokeColor=#999999;html=1;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="940" y="110" as="sourcePoint" />
+            <mxPoint x="940" y="1370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="life-web" value="" style="endArrow=none;dashed=1;dashedPattern=4 4;strokeColor=#999999;html=1;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="1200" y="110" as="sourcePoint" />
+            <mxPoint x="1200" y="1370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 一、激活 -->
+        <mxCell id="m-activate" value="a2a_activate（账号密码）"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="160" y="180" as="sourcePoint" />
+            <mxPoint x="420" y="180" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-upgrade" value="TCP 连接 + Upgrade → 101"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="420" y="240" as="sourcePoint" />
+            <mxPoint x="680" y="240" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-hello" value="hello{deviceId, username, password}"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="420" y="300" as="sourcePoint" />
+            <mxPoint x="680" y="300" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-check" value="查凭据，PBKDF2 校验"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="360" as="sourcePoint" />
+            <mxPoint x="940" y="360" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-issue" value="条件更新，签发一次性 token"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="940" y="420" as="sourcePoint" />
+            <mxPoint x="680" y="420" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-welcome" value="welcome{token}"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="480" as="sourcePoint" />
+            <mxPoint x="420" y="480" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-save" value="落盘 /agent_a2a_token"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="420" y="540" as="sourcePoint" />
+            <mxPoint x="160" y="540" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 二、在线 -->
+        <mxCell id="m-card-push" value="card（绑定的能力卡）"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="650" as="sourcePoint" />
+            <mxPoint x="420" y="650" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-card-ack" value="cardResult"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="420" y="710" as="sourcePoint" />
+            <mxPoint x="680" y="710" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-online-sse" value="SSE：设备状态变为在线"
+                style="endArrow=block;endFill=1;dashed=1;html=1;strokeColor=#d6b656;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="770" as="sourcePoint" />
+            <mxPoint x="1200" y="770" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-task" value="task{text}"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="850" as="sourcePoint" />
+            <mxPoint x="420" y="850" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-submit" value="投进输入邮箱"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="420" y="910" as="sourcePoint" />
+            <mxPoint x="160" y="910" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-final" value="跑完，最终答案"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="160" y="970" as="sourcePoint" />
+            <mxPoint x="420" y="970" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-task-result" value="taskResult{completed}"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="420" y="1030" as="sourcePoint" />
+            <mxPoint x="680" y="1030" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-report" value="report{kind, text}"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="420" y="1110" as="sourcePoint" />
+            <mxPoint x="680" y="1110" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-report-db" value="按板子地址落库"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="1170" as="sourcePoint" />
+            <mxPoint x="940" y="1170" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-report-sse" value="SSE 推上报事件"
+                style="endArrow=block;endFill=1;dashed=1;html=1;strokeColor=#d6b656;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="1230" as="sourcePoint" />
+            <mxPoint x="1200" y="1230" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="m-ping" value="ping（每 20 秒）"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="680" y="1310" as="sourcePoint" />
+            <mxPoint x="420" y="1310" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+
+        <!-- 三、设备状态 -->
+        <mxCell id="s-unactivated" value="未激活"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="190" y="1450" width="200" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="s-activating" value="激活中"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="450" y="1450" width="200" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="s-online" value="在线"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="710" y="1450" width="200" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="s-offline" value="未在线"
+                style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;fontStyle=1;arcSize=50;"
+                vertex="1" parent="1">
+          <mxGeometry x="970" y="1450" width="200" height="46" as="geometry" />
+        </mxCell>
+        <mxCell id="e-state-1" value="a2a_activate"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="390" y="1473" as="sourcePoint" />
+            <mxPoint x="450" y="1473" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-state-2" value="握手成功"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="650" y="1473" as="sourcePoint" />
+            <mxPoint x="710" y="1473" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e-state-3" value="断线"
+                style="endArrow=block;endFill=1;html=1;strokeColor=#4d4d4d;fontSize=12;verticalAlign=middle;labelBackgroundColor=#ffffff;"
+                edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="910" y="1473" as="sourcePoint" />
+            <mxPoint x="970" y="1473" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="s-note" value="未激活的板子不自动连。凭 token 重连回在线。控制台删掉设备行以后才能重新激活。"
+                style="text;html=1;whiteSpace=wrap;align=left;verticalAlign=middle;fontSize=13;fontColor=#444444;"
+                vertex="1" parent="1">
+          <mxGeometry x="190" y="1506" width="980" height="28" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
