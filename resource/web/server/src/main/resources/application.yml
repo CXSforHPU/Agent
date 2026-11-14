@@ -34,8 +34,9 @@ agent:
     timeout-seconds: 60
     # 网站侧 agent 的系统提示词，可在设置页覆盖
     system-prompt: ""
-  # A2A：端侧 agent 的能力卡地址，设备表里每台设备各自覆盖
   a2a:
+    # 设备激活凭据与一次性 token 全部存 SQLite（device 表），
+    # 不再使用 AGENT_A2A_TOKENS 独立 token 配置，避免两套 token 冲突。
     connect-timeout-seconds: 5
     read-timeout-seconds: 60
     # 间隔多少毫秒轮询一次能力卡判断在线

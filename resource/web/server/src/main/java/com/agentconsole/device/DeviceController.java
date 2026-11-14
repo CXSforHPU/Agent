@@ -1,6 +1,9 @@
 package com.agentconsole.device;
 
+import com.agentconsole.a2a.WebSocketDeviceService;
 import com.agentconsole.auth.JwtService;
+import com.agentconsole.card.CapabilityCard;
+import com.agentconsole.card.CapabilityCardService;
 import com.agentconsole.common.ApiResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -25,7 +28,6 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/devices")
@@ -38,18 +40,63 @@ public class DeviceController {
     private final DeviceService service;
     private final DeviceEventService events;
     private final ObjectMapper json;
+    private final CapabilityCardService cards;
 
-    public DeviceController(DeviceService service, DeviceEventService events, ObjectMapper json) {
+    private final WebSocketDeviceService ws;
+
+    public DeviceController(DeviceService service, DeviceEventService events, ObjectMapper json,
+                            WebSocketDeviceService ws, CapabilityCardService cards) {
         this.service = service;
         this.events = events;
         this.json = json;
+        this.ws = ws;
+        this.cards = cards;
     }
 
+    public record WsConnection(long id, String name, String deviceId, boolean connected,
+                               String status) {
+    }
+
+    public record WsStatus(boolean enabled, boolean listening, String bindAddress, int port,
+                            List<WsConnection> devices) {
+    }
+
+    @GetMapping("/ws/status")
+    public ApiResponse<WsStatus> wsStatus(JwtService.Claims claims) {
+        List<WsConnection> devices = service.list(claims.userId()).stream()
+                .filter(device -> device.address().startsWith("ws://"))
+                .map(device -> new WsConnection(device.id(), device.name(),
+                        device.address().substring(5), "online".equals(device.status()),
+                        device.status()))
+                .toList();
+        return ApiResponse.ok(new WsStatus(ws.isEnabled(), true,
+                "/api/a2a/ws", 0, devices));
+    }
+
+    /**
+     * 登记设备。username/password 是设备激活凭据：密码只存摘要+盐，
+     * 保存成功后返回一次性激活配置（账号、密码、设备ID），仅供配置板端，
+     * 之后任何接口都不再回显密码。
+     */
     public record DevicePayload(@NotBlank @Size(max = 64) String name,
                                 @NotBlank @Size(max = 256) String address,
                                 @Size(max = 64) String groupName,
                                 @Size(max = 256) String note,
-                                Boolean enabled) {
+                                Boolean enabled,
+                                @Size(max = 32) String username,
+                                @Size(max = 128) String password) {
+    }
+
+    /** 一次性激活配置，只在创建/设置凭据的响应里出现一次。 */
+    public record ActivationConfig(String deviceId, String username, String password) {
+    }
+
+    public record DeviceWithActivation(Device device, ActivationConfig activation) {
+    }
+
+    /** 设置/更换激活凭据的请求体。明文只在请求里出现，不落日志不回显。 */
+    public record CredentialPayload(@NotBlank @Size(max = 32) String username,
+                                    @NotBlank @Size(min = 6, max = 128) String password) {
     }
 
     public record ConfigPayload(@Size(max = 256) String apiKey,
@@ -62,20 +109,49 @@ public class DeviceController {
                               @Size(max = 32) String version) {
     }
 
+    /** cardId 为具体卡=绑定；null=解绑（解绑要允许 null，所以不加 @NotNull）。 */
+    public record BindCardPayload(Long cardId) {
+    }
+
     @GetMapping
     public ApiResponse<List<Device>> list(JwtService.Claims claims) {
         return ApiResponse.ok(service.list(claims.userId()));
     }
 
     @PostMapping
-    public ResponseEntity<ApiResponse<Device>> create(@Valid @RequestBody DevicePayload body,
-                                                      JwtService.Claims claims) {
+    public ResponseEntity<ApiResponse<DeviceWithActivation>> create(
+            @Valid @RequestBody DevicePayload body, JwtService.Claims claims) {
         try {
             Device created = service.create(claims.userId(), body.name(), body.address(),
-                    body.groupName(), body.note());
-            return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(created));
+                    body.groupName(), body.note(), body.username(), body.password());
+            ActivationConfig activation = body.username() == null || body.username().isBlank()
+                    ? null
+                    : new ActivationConfig(created.address().substring(5),
+                    body.username(), body.password());
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(ApiResponse.ok(new DeviceWithActivation(created, activation)));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(e.getMessage()));
+        }
+    }
+
+    /** 给已有设备补/换激活凭据。已激活的设备返回 409，禁止换密码换 token。 */
+    @PostMapping("/{id}/credential")
+    public ResponseEntity<ApiResponse<DeviceWithActivation>> setCredential(
+            @PathVariable long id, @Valid @RequestBody CredentialPayload body,
+            JwtService.Claims claims) {
+        try {
+            Device device = service.get(id, claims.userId());
+            Device updated = service.setCredential(device.id(), body.username(), body.password());
+            return ResponseEntity.ok(ApiResponse.ok(new DeviceWithActivation(updated,
+                    new ActivationConfig(updated.address().substring(5),
+                            body.username(), body.password()))));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(e.getMessage()));
         }
     }
 
@@ -89,6 +165,8 @@ public class DeviceController {
                     body.address(), body.groupName(), body.note(), enabled)));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(e.getMessage()));
         }
     }
 
@@ -130,7 +208,10 @@ public class DeviceController {
         }
     }
 
-    /** 能力卡下发，走设备的 POST /card，板端存 SD 卡后重启仍然生效。 */
+    /**
+     * 原「下发能力卡」接口。能力卡已改为绑定模式，这里明确返回不支持，
+     * 不制造假成功；真正的能力卡管理在 /api/cards。
+     */
     @PostMapping("/{id}/card")
     public ResponseEntity<ApiResponse<String>> pushCard(@PathVariable long id,
                                                         @Valid @RequestBody CardPayload body,
@@ -138,29 +219,47 @@ public class DeviceController {
         try {
             String result = service.pushCard(id, claims.userId(), body.name(),
                     body.description(), body.version());
-            if ("ok".equals(result)) {
-                return ResponseEntity.ok(ApiResponse.ok(result));
-            }
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY).body(ApiResponse.fail(result));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
         }
     }
 
-    /**
-     * 板端上报入口。板端没有登录令牌，靠回调地址里的 token 认出是哪台设备，
-     * 所以这个接口在过滤器里是放开的。
-     */
-    @PostMapping("/push/{token}")
-    public ResponseEntity<ApiResponse<DeviceEvent>> receive(@PathVariable String token,
-                                                            @RequestBody(required = false)
-                                                            Map<String, String> body) {
-        String kind = body == null ? null : body.get("kind");
-        String text = body == null ? "" : body.get("text");
+    /** 查看这台设备绑定的能力卡。 */
+    @GetMapping("/{id}/card")
+    public ResponseEntity<ApiResponse<CapabilityCard>> boundCard(@PathVariable long id,
+                                                                 JwtService.Claims claims) {
         try {
-            return ResponseEntity.ok(ApiResponse.ok(events.receive(token, kind, text)));
+            Device device = service.get(id, claims.userId());
+            if (device.cardId() == null) {
+                return ResponseEntity.ok(ApiResponse.ok(null));
+            }
+            return ResponseEntity.ok(ApiResponse.ok(cards.get(device.cardId(), claims.userId())));
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(ApiResponse.fail(e.getMessage()));
+            return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
+        }
+    }
+
+    /** 绑定能力卡。cardId 传 null 表示解绑。设备只能绑一张，换卡要先解绑。 */
+    @PutMapping("/{id}/card")
+    public ResponseEntity<ApiResponse<Device>> bindCard(@PathVariable long id,
+                                                        @Valid @RequestBody BindCardPayload body,
+                                                        JwtService.Claims claims) {
+        try {
+            Device device = service.get(id, claims.userId());
+            if (body.cardId() == null) {
+                // 解绑：已经没绑就原样返回
+                if (device.cardId() != null) {
+                    cards.unbindDevice(device.cardId(), claims.userId(), id);
+                }
+                return ResponseEntity.ok(ApiResponse.ok(service.get(id, claims.userId())));
+            }
+            cards.bindDevice(body.cardId(), claims.userId(), id);
+            return ResponseEntity.ok(ApiResponse.ok(service.get(id, claims.userId())));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ApiResponse.fail(e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(ApiResponse.fail(e.getMessage()));
         }
     }
 

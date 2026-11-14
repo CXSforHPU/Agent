@@ -105,7 +105,7 @@ public final class A2aModels {
                         @JsonProperty("outputModes") List<String> outputModes) {
     }
 
-    /** /.well-known/agent.json。 */
+    /** 板端通过 WebSocket 帧上报的能力卡内容。 */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record AgentCard(String name, String description, String url, String version,
                             Capabilities capabilities,

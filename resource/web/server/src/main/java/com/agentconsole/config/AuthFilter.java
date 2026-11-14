@@ -30,7 +30,7 @@ public class AuthFilter extends OncePerRequestFilter {
             // 板端启动时来要文件服务器与 MCP 地址，手上没有登录令牌
             "/api/ops/endpoints",
             // 板端上报入口，靠回调地址里的 token 认设备，不带登录令牌
-            "/api/devices/push",
+            "/api/a2a/ws",
             "/error");
 
     private final JwtService jwt;

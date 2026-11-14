@@ -14,8 +14,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * 端侧上报的接收与转发。
  *
- * <p>板端把自发产生的结论（MQTT 告警、传感器越限）POST 到回调地址，
- * 这里按 token 认出是哪块板子，落库，再推给正在听 SSE 的网页。
+ * <p>板端把自己产生的结论（MQTT 告警、传感器越限）沿着已建立的 A2A WebSocket
+ * 发过来，这里按设备逻辑地址认出是哪块板子，落库，再推给正在听 SSE 的网页。
  *
  * <p>归属按板子地址算，不按设备行算：同一块板子可能被几个账号各登记一次，
  * 网页打开哪一行都该看到同一份上报。
@@ -24,15 +24,12 @@ import java.util.concurrent.TimeUnit;
 public class DeviceEventService {
 
     private final DeviceEventRepository events;
-    private final DevicePushRepository pushes;
     private final DeviceRepository devices;
     /** 每块板子一组订阅者，网页开着 SSE 时挂着。 */
     private final Map<String, Set<Subscription>> subscribers = new ConcurrentHashMap<>();
 
-    public DeviceEventService(DeviceEventRepository events, DevicePushRepository pushes,
-                               DeviceRepository devices) {
+    public DeviceEventService(DeviceEventRepository events, DeviceRepository devices) {
         this.events = events;
-        this.pushes = pushes;
         this.devices = devices;
     }
 
@@ -45,13 +42,12 @@ public class DeviceEventService {
      * @return 落库后的事件
      * @throws IllegalArgumentException 令牌对不上任何设备
      */
-    public DeviceEvent receive(String token, String kind, String text) {
-        DevicePushConfig config = pushes.findByToken(token)
-                .orElseThrow(() -> new IllegalArgumentException("回调令牌无效"));
-        String eventKind = (kind == null || kind.isBlank()) ? "report" : kind;
-        DeviceEvent event = events.append(config.deviceId(), eventKind, text == null ? "" : text);
-        publish(addressOf(config.deviceId()), event);
-        return event;
+    public void receiveAddress(String address,String kind,String text) {
+        Device owner=devices.findAll().stream().filter(d -> address.equals(d.address()))
+            .min(java.util.Comparator.comparingLong(Device::id)).orElse(null);
+        if(owner==null) return;
+        DeviceEvent event=events.append(owner.id(),kind,text);
+        publish(address,event);
     }
 
     /** 取最近的若干条，新的在前。同一块板子的几行设备共享这份事件。 */
@@ -88,7 +84,7 @@ public class DeviceEventService {
     private String addressOf(long deviceId) {
         for (Device device : devices.findAll()) {
             if (device.id() == deviceId) {
-                return Device.normalizeAddress(device.address());
+                return device.address();
             }
         }
         return "device:" + deviceId;
@@ -99,7 +95,7 @@ public class DeviceEventService {
         String address = addressOf(deviceId);
         List<Long> ids = new ArrayList<>();
         for (Device device : devices.findAll()) {
-            if (address.equals(Device.normalizeAddress(device.address()))) {
+            if (address.equals(device.address())) {
                 ids.add(device.id());
             }
         }
