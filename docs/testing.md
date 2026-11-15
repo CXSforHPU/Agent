@@ -371,12 +371,29 @@ python build/qemu_endpoint_check.py auto
 要落到已有账号就用 `CONSOLE_USER=... CONSOLE_PASSWORD=...` 指定；加 `--keep` 结束后保留 QEMU 与设备，
 供浏览器查看。QEMU 使用 SD 副本和 user 网络，串口 5556，不占用户现有 TAP 与 5555 终端。
 
-判据分四组：
+要连独立后端（不碰日常设备）就同时设三个环境变量：
+
+```
+CONSOLE_URL=http://127.0.0.1:18080 QEMU_BOARD_PORT=18080 \
+AGENT_CONSOLE_DB=<独立后端的库路径> python websocket_e2e_test.py
+```
+
+`CONSOLE_URL` 是脚本自己调 API 与建 WebSocket 的地址，`QEMU_BOARD_PORT` 是板端
+`a2a_activate` 连的端口，`AGENT_CONSOLE_DB` 是脚本清理测试账号时删库的路径。三者指向同一份后端，
+少设一个就会出现"脚本连对了、板子连错服务器"或"清理落到主库"。
+
+控制台重启这一项要外部配合停/起后端，把整条命令放进 `CONSOLE_RESTART_CMD`；
+不设就打印 SKIP 跳过。板端重启重连默认执行，`--no-board-restart` 可跳过。
+
+判据分五组：
 
 1. 激活前用错密码连一次，必须被拒 `bad_credential`。
 2. 板端 `a2a_activate` 拿到一次性 token 并长连；Web 状态从激活中变在线，连接窗口显示已连接。
 3. 探活返回的是 welcome 之后随连接推下去的绑定能力卡，技能与 `pushNotifications` 都在；再经 Web 发任务收到非空 final。
-4. 两次复检：已连接的设备再拿密码连一次必须被拒 `already_online`；另一台设备第二次激活必须被拒 `already_activated`。
+4. 板端重启后凭 SD 卡里的 token 自动重连、设备回到在线。QEMU 被突然杀掉时，服务端还挂着旧连接，
+   设备 ID 会一直报 `already_online`，最长要等心跳超时 `timeout + 30 s`（约 50 s）才回收；
+   板端每 3 秒重试一次，脚本按 95 秒等。控制台重启后同样要自己连回来。
+5. 两次复检：已连接的设备再拿密码连一次必须被拒 `already_online`；另一台设备第二次激活必须被拒 `already_activated`。
 
 日志及任务回复在 ignored 的 `resource/web/server/target/ws-test/`。
 LLM 连接失败时必须单列说明，不能把能力卡或连接状态算作计算任务成功。

@@ -9,8 +9,10 @@
   3. QEMU 用 SD 副本 + user 网络启动，串口 5556；写随机种子与激活凭据文件
   4. 串口执行 a2a_activate → 服务端签发一次性设备 token → 板端落盘并长连
   5. API 断言：设备 status=online、探活 online 且拿到真实能力卡、任务有回包
-  6. 主机侧再用正确密码连一次，必须被拒（already_online）
-  7. 另建一台设备走两次主机侧激活：第一次成功，第二次必须 already_activated
+  6. 重启 QEMU，板端凭已存 token 自动重连并回到在线（等过服务端回收旧会话的窗口）
+  7. 设了 CONSOLE_RESTART_CMD 就重启控制台，板端重新连上、设备回到在线
+  8. 主机侧再用正确密码连一次，必须被拒（already_online）
+  9. 另建一台设备走两次主机侧激活：第一次成功，第二次必须 already_activated
 
 判据见 docs/testing.md 第 8 节。LLM 失败只说明最终结果回传通了，
 不能算计算任务成功，会单列打印。结果落在 ignored 的 target/ws-test/。
@@ -18,6 +20,7 @@
   python websocket_e2e_test.py                 # 结束清理自建设备并停 QEMU
   CONSOLE_USER=webtest CONSOLE_PASSWORD=... \\
       python websocket_e2e_test.py --keep       # 落到指定账号，保留 QEMU 供浏览器看
+  python websocket_e2e_test.py --no-board-restart   # 跳过 QEMU 重启重连
 """
 import json
 import os
@@ -40,11 +43,15 @@ WORK = SERVER / 'target/ws-test'
 VENV_SITE = PACKAGE / 'resource/file_server/.venv/Lib/site-packages'
 
 BASE = os.environ.get('CONSOLE_URL', 'http://127.0.0.1:8080').rstrip('/')
+# 跟后端用同一个库：独立后端设 AGENT_CONSOLE_DB，脚本清理测试账号也落到那份库
+DATABASE = Path(os.environ.get('AGENT_CONSOLE_DB',
+                               str(SERVER / 'data/agent-console.db')))
 BOARD_HOST = os.environ.get('QEMU_BOARD_HOST', '192.168.137.1')
 BOARD_PORT = int(os.environ.get('QEMU_BOARD_PORT', '8080'))
 SERIAL_PORT = int(os.environ.get('QEMU_SERIAL_PORT', '5556'))
 DEVICE_ID = 'qemu-agent'
 DEVICE_ADDR = 'ws://' + DEVICE_ID
+WS_URL = BASE.replace('http://', 'ws://') + '/api/a2a/ws'
 CARD_NAME = 'QEMU 激活联调能力卡'
 
 # 串口里出现这些串就算过关；密码/token 只进脱敏日志
@@ -126,6 +133,10 @@ class Serial:
         self.log.flush()
         self.sock.sendall(line.encode() + b'\r\n')
 
+    def reset(self):
+        """丢掉旧输出，之后的 wait 只看新内容。"""
+        self.buffer = b''
+
     def close(self):
         try:
             self.sock.close()
@@ -144,7 +155,7 @@ def ws_hello(device_id, username=None, password=None, token=None):
         hello['password'] = password
     else:
         hello['token'] = token
-    with connect('ws://127.0.0.1:8080/api/a2a/ws', open_timeout=5,
+    with connect(WS_URL, open_timeout=5,
                  close_timeout=5) as websocket:
         websocket.send(json.dumps(hello))
         return json.loads(websocket.recv(timeout=5))
@@ -156,12 +167,12 @@ def register_or_login():
     if user:
         status, payload = api('/auth/login', {'username': user, 'password': password})
         expect(payload.get('success'), '登录已有测试账号 ' + user)
-        return user, payload['data']['token'], False
+        return user, password, payload['data']['token'], False
     user = 'qemu_e2e_' + secrets.token_hex(4)
     password = secrets.token_hex(12)
     status, payload = api('/auth/register', {'username': user, 'password': password})
     expect(payload.get('success'), '注册独立测试账号 ' + user)
-    return user, payload['data']['token'], True
+    return user, password, payload['data']['token'], True
 
 
 def delete_created(token, device_ids, card_ids):
@@ -174,7 +185,7 @@ def delete_created(token, device_ids, card_ids):
 
 def delete_temp_account(username):
     """临时账号连同它的会话、设置一并删掉，避免库里攒测试行。"""
-    database = SERVER / 'data/agent-console.db'
+    database = DATABASE
     if not database.exists():
         return
     connection = sqlite3.connect(database)
@@ -185,21 +196,72 @@ def delete_temp_account(username):
         if row is None:
             return
         user_id = row[0]
-        cursor.execute(
-            'DELETE FROM message WHERE conversation_id IN '
-            '(SELECT id FROM conversation WHERE user_id = ?)', (user_id,))
-        cursor.execute('DELETE FROM conversation WHERE user_id = ?', (user_id,))
-        cursor.execute('DELETE FROM user_setting WHERE user_id = ?', (user_id,))
-        cursor.execute('DELETE FROM device_event WHERE device_id IN '
-                       '(SELECT id FROM device WHERE user_id = ?)', (user_id,))
-        cursor.execute('DELETE FROM device_push WHERE device_id IN '
-                       '(SELECT id FROM device WHERE user_id = ?)', (user_id,))
-        cursor.execute('DELETE FROM device WHERE user_id = ?', (user_id,))
-        cursor.execute('DELETE FROM capability_card WHERE user_id = ?', (user_id,))
-        cursor.execute('DELETE FROM app_user WHERE id = ?', (user_id,))
+        statements = [
+            ('DELETE FROM message WHERE conversation_id IN '
+             '(SELECT id FROM conversation WHERE user_id = ?)', (user_id,)),
+            ('DELETE FROM conversation WHERE user_id = ?', (user_id,)),
+            ('DELETE FROM user_setting WHERE user_id = ?', (user_id,)),
+            ('DELETE FROM device_event WHERE device_id IN '
+             '(SELECT id FROM device WHERE user_id = ?)', (user_id,)),
+            # 旧版本库里的表，新库没有就跳过
+            ('DELETE FROM device_push WHERE device_id IN '
+             '(SELECT id FROM device WHERE user_id = ?)', (user_id,)),
+            ('DELETE FROM device WHERE user_id = ?', (user_id,)),
+            ('DELETE FROM capability_card WHERE user_id = ?', (user_id,)),
+            ('DELETE FROM app_user WHERE id = ?', (user_id,)),
+        ]
+        for sql, parameters in statements:
+            try:
+                cursor.execute(sql, parameters)
+            except sqlite3.OperationalError as error:
+                if 'no such table' not in str(error):
+                    raise
         connection.commit()
     finally:
         connection.close()
+
+
+def launch_qemu():
+    """起一台 QEMU：SD 副本 + user 网络，不占 TAP 与 5555 终端。"""
+    qemu_log = open(WORK / 'qemu.log', 'ab')
+    process = subprocess.Popen([
+        str(ENV / 'tools/qemu/qemu64/qemu-system-arm.exe'),
+        '-M', 'vexpress-a9', '-smp', 'cpus=2',
+        '-kernel', str(ROOT / 'rtthread.bin'),
+        '-serial', 'tcp:127.0.0.1:%d,server,nowait' % SERIAL_PORT,
+        '-drive', 'file=' + str(WORK / 'sd.bin') + ',format=raw,if=sd',
+        '-audiodev', 'none,id=audio0',
+        '-net', 'nic,model=lan9118,netdev=net0',
+        '-netdev', 'user,id=net0,net=192.168.137.0/24,host=192.168.137.1,'
+                   'dhcpstart=192.168.137.100',
+        '-display', 'none'], cwd=ROOT, stdout=qemu_log, stderr=qemu_log)
+    (WORK / 'pids.json').write_text(json.dumps({'qemu': process.pid}))
+    print('QEMU pid=%d serial=127.0.0.1:%d' % (process.pid, SERIAL_PORT), flush=True)
+    return process
+
+
+def stop_qemu(process):
+    if process is None or process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=10)
+
+
+def wait_online(token, seconds):
+    """轮询设备表，等地址对应的设备变成 online；超时返回 None。"""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        _, payload = api('/devices', token=token, method='GET')
+        row = next((d for d in (payload.get('data') or [])
+                    if d['address'] == DEVICE_ADDR), None)
+        if row and row['status'] == 'online':
+            return row
+        time.sleep(1)
+    return None
 
 
 def main():
@@ -213,17 +275,17 @@ def main():
     serial = None
     qemu = None
     account = None
+    account_password = None
     account_token = None
     temp_account = False
     created_devices = []
     created_cards = []
 
     try:
-        account, account_token, temp_account = register_or_login()
+        account, account_password, account_token, temp_account = register_or_login()
         if keep and temp_account:
             print('临时账号（--keep 保留，用它登录查看）: %s / %s'
-                  % (account, os.environ.get('CONSOLE_PASSWORD') or '见注册输出'),
-                  flush=True)
+                  % (account, account_password), flush=True)
 
         # 同地址的旧测试设备与本脚本留下的孤儿能力卡先清掉，保证每次全新激活
         _, payload = api('/devices', token=account_token, method='GET')
@@ -268,20 +330,7 @@ def main():
 
         # QEMU：SD 副本 + user 网络，不占 TAP 与 5555 终端
         shutil.copyfile(ROOT / 'sd.bin', WORK / 'sd.bin')
-        qemu_log = open(WORK / 'qemu.log', 'wb')
-        qemu = subprocess.Popen([
-            str(ENV / 'tools/qemu/qemu64/qemu-system-arm.exe'),
-            '-M', 'vexpress-a9', '-smp', 'cpus=2',
-            '-kernel', str(ROOT / 'rtthread.bin'),
-            '-serial', 'tcp:127.0.0.1:%d,server,nowait' % SERIAL_PORT,
-            '-drive', 'file=' + str(WORK / 'sd.bin') + ',format=raw,if=sd',
-            '-audiodev', 'none,id=audio0',
-            '-net', 'nic,model=lan9118,netdev=net0',
-            '-netdev', 'user,id=net0,net=192.168.137.0/24,host=192.168.137.1,'
-                       'dhcpstart=192.168.137.100',
-            '-display', 'none'], cwd=ROOT, stdout=qemu_log, stderr=qemu_log)
-        (WORK / 'pids.json').write_text(json.dumps({'qemu': qemu.pid}))
-        print('QEMU pid=%d serial=127.0.0.1:%d' % (qemu.pid, SERIAL_PORT), flush=True)
+        qemu = launch_qemu()
 
         serial = Serial(SERIAL_PORT, WORK / 'serial.log', password_board,
                         password_once, seed, account_token or '')
@@ -364,6 +413,55 @@ def main():
         print('TASK RESULT: ' + reply, flush=True)
         if 'failed' in reply.lower() or 'error' in reply.lower():
             print('WARN 任务回包是失败文案，只证明链路通，LLM 未成功', flush=True)
+
+        # 重启 QEMU：token 已在 SD 卡里，板端应自己连回来，不再激活
+        if '--no-board-restart' not in sys.argv[1:]:
+            print('重启 QEMU，验证凭 token 自动重连', flush=True)
+            serial.close()
+            stop_qemu(qemu)
+            qemu = launch_qemu()
+            serial = Serial(SERIAL_PORT, WORK / 'serial.log', password_board,
+                            password_once, seed, account_token or '')
+            serial.wait('msh />', 90)
+            try:
+                serial.wait(MARK_CONNECTED, 95)
+            except TimeoutError:
+                serial.send('main_loop_entry')
+                serial.wait(MARK_CONNECTED, 60)
+            expect(True, '板端重启后凭已存 token 自动重连')
+            row = wait_online(account_token, 60)
+            expect(row is not None, '板端重启后设备重新显示在线')
+
+        # 控制台重启：由外部命令停/起后端，脚本只验证板端自己连回来
+        restart_cmd = os.environ.get('CONSOLE_RESTART_CMD')
+        if restart_cmd:
+            print('执行控制台重启命令: ' + restart_cmd, flush=True)
+            serial.reset()
+            subprocess.run(restart_cmd, shell=True)
+            backend_up = False
+            deadline = time.monotonic() + 180
+            while time.monotonic() < deadline:
+                try:
+                    status, payload = api('/auth/login', {
+                        'username': account, 'password': account_password})
+                    if payload.get('success'):
+                        account_token = payload['data']['token']
+                        backend_up = True
+                        break
+                except (urllib.error.URLError, ConnectionError):
+                    pass
+                time.sleep(2)
+            expect(backend_up, '控制台重启后重新接受登录')
+            try:
+                serial.wait(MARK_CONNECTED, 120)
+            except TimeoutError:
+                serial.send('main_loop_entry')
+                serial.wait(MARK_CONNECTED, 60)
+            expect(True, '控制台重启后板端自动重连')
+            row = wait_online(account_token, 60)
+            expect(row is not None, '控制台重启后设备重新显示在线')
+        else:
+            print('SKIP 未设置 CONSOLE_RESTART_CMD，跳过控制台重启重连', flush=True)
 
         # 在线时用正确密码再连一次，必须被拒
         reply = ws_hello(DEVICE_ID, username=username_board, password=password_board)
