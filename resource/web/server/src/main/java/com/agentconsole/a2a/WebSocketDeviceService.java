@@ -32,6 +32,7 @@ import java.util.concurrent.*;
  *   <li>同 ID 已在线 → already_online，拒绝重复连接，重复激活无从发生；</li>
  *   <li>已有激活记录再拿密码来 → already_activated，禁止换密码换 token；</li>
  *   <li>两个并发激活撞车 → 条件更新 + device_token 唯一索引兜底，输的一方 already_activated。</li>
+ *   <li>逻辑地址被别的已激活设备占着 → address_taken，删掉旧设备行再激活。</li>
  * </ul>
  *
  * <p>权限边界：会话只挂在 device 行上，账号密码是设备 credential，
@@ -47,6 +48,8 @@ public class WebSocketDeviceService extends TextWebSocketHandler implements WebS
     public static final String ERR_BAD_CREDENTIAL = "bad_credential";
     public static final String ERR_NOT_FOUND = "device_not_found";
     public static final String ERR_BAD_TOKEN = "bad_token";
+    /** 同一逻辑地址已被另一台已激活设备占用：删掉旧设备行再激活。 */
+    public static final String ERR_ADDRESS_TAKEN = "address_taken";
 
     private static final int TOKEN_BYTES = 32;
 
@@ -191,12 +194,23 @@ public class WebSocketDeviceService extends TextWebSocketHandler implements WebS
                 return;
             }
             issuedToken = newToken();
-            if (!devices.activate(device.id(), issuedToken)) {
-                // 并发二次激活被条件更新 / 唯一索引拦下
-                reject(socket, ERR_ALREADY_ACTIVATED, "device already activated; token unchanged");
+            long targetId = device.id();
+            if (!devices.activate(targetId, issuedToken))
+            {
+                // 两种失败要分开报：条件更新失败可能是并发二次激活，
+                // 也可能是另一台已激活设备占着同一个逻辑地址（唯一索引拦下）。
+                boolean addressTaken = devices.findByAddress("ws://" + deviceId).stream()
+                        .anyMatch(row -> row.id() != targetId
+                                && "activated".equals(row.activation()));
+                if (addressTaken)
+                    reject(socket, ERR_ADDRESS_TAKEN,
+                            "address " + deviceId + " is held by another activated device");
+                else
+                    reject(socket, ERR_ALREADY_ACTIVATED,
+                            "device already activated; token unchanged");
                 return;
             }
-            device = devices.findById(device.id(), device.userId()).orElse(device);
+            device = devices.findById(targetId, device.userId()).orElse(device);
         } else if (!token.isEmpty()) {
             // token 重连：只认库里签发过的 token
             Optional<Device> target = devices.findByToken(token);

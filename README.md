@@ -429,6 +429,7 @@ a2a_activate [host [port [username [password]]]]
 | `bad_credential` | 账号或密码不对 |
 | `already_online` | 同一个设备 ID 已经在线 |
 | `already_activated` | 已经激活过，不换密码也不换 token |
+| `address_taken` | 同一个逻辑地址被另一台已激活设备占着，删掉旧设备行再激活 |
 | `device_not_found` | 控制台里没这台设备，或它没登记这份凭据 |
 | `bad_token` | token 不认识 |
 
@@ -441,6 +442,39 @@ JSON 文本消息，单条最多 8192 字节。客户端验证 Upgrade 与 Accep
 掩码用的随机数由 HMAC-DRBG 生成，种子在 `/agent_a2a_seed`，48 字节。
 首次连接前要写好这个文件，每台板子各自一份，禁止克隆种子。
 种子和凭据只放 SD 卡或 ignored 文件，不能复用 LLM 密钥。
+
+首次激活要在板端串口准备三样东西。
+
+主机上生成 48 字节随机种子：
+
+```
+python -c "import secrets; print(secrets.token_hex(24))"
+```
+
+板端写种子。finsh 的 `echo` 不带换行，48 个十六进制字符正好 48 字节；
+`echo` 是追加写，重写之前先 `rm`：
+
+```
+rm /agent_a2a_seed
+echo "<48 个十六进制字符>" /agent_a2a_seed
+```
+
+凭据文件 `/agent_a2a_cred` 一行放账号和密码，中间一个空格：
+
+```
+rm /agent_a2a_cred
+echo "<账号> <密码>" /agent_a2a_cred
+```
+
+最后执行激活。成功会打印 `a2a_activate: [OK]`，token 落进 SD 卡，
+之后每次开机自动连接，不用再激活：
+
+```
+a2a_activate 192.168.137.1 8080
+```
+
+板端报 `[FAIL:seed]` 是种子没写好；报 `[FAIL:address_taken]` 是控制台里
+另一台已激活设备占着同一个逻辑地址，删掉旧设备行再激活。
 
 同一设备请求串行执行。超时或断线不自动重放任务；旧任务超时后，必须先消费
 并丢弃迟到结果，才接受新任务。板端每 3 秒重连一次。主动上报用 4 条有界队列，

@@ -345,6 +345,7 @@ a2a_activate [host [port [username [password]]]]
 | `bad_credential` | 账号或密码不对 |
 | `already_online` | 同一个设备 ID 已经在线 |
 | `already_activated` | 已经激活过，不换密码也不换 token |
+| `address_taken` | 同一个逻辑地址被另一台已激活设备占着，删掉旧设备行再激活 |
 | `device_not_found` | 控制台里没这台设备，或它没登记这份凭据 |
 | `bad_token` | token 不认识 |
 

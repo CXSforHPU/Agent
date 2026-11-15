@@ -244,6 +244,7 @@ A2A 通道由两个文件组成：`src/channels/AgentA2aChannel.c` 管连接与�
 | `bad_credential` | 账号或密码不对 |
 | `already_online` | 同一个设备 ID 已经在线 |
 | `already_activated` | 已经激活过，不换密码也不换 token |
+| `address_taken` | 同一个逻辑地址被另一台已激活设备占着，删掉旧设备行再激活 |
 | `device_not_found` | 控制台里没这台设备，或它没登记这份凭据 |
 | `bad_token` | token 不认识，或 hello 里既没账号密码也没 token |
 
@@ -259,6 +260,28 @@ A2A 通道由两个文件组成：`src/channels/AgentA2aChannel.c` 管连接与�
 掩码用的随机数由 HMAC-DRBG 生成，种子在 `/agent_a2a_seed`，48 字节。
 首次连接前要写好这个文件，每台板子各自一份，禁止克隆种子。
 种子和凭据只放 SD 卡或 ignored 文件，不能复用 LLM 密钥。
+
+板端的 `/dev/random` 是确定性 LCG，不能当熵源，种子只能从外部写进来。
+主机上用 `python -c "import secrets; print(secrets.token_hex(24))"` 生成 48 字节，
+板端串口里写：
+
+```
+rm /agent_a2a_seed
+echo "<48 个十六进制字符>" /agent_a2a_seed
+```
+
+finsh 的 `echo` 不带换行，所以 48 个字符正好 48 字节；它又是追加写，
+重写之前要 `rm`。凭据文件同理，一行放账号和密码：
+
+```
+rm /agent_a2a_cred
+echo "<账号> <密码>" /agent_a2a_cred
+```
+
+然后执行 `a2a_activate [host [port [username [password]]]]`。
+成功后 token 落进 SD 卡，之后每次开机自动连接。板端连不上时看三处：
+`[FAIL:seed]` 是种子没写好，`[FAIL:address_taken]` 是控制台里另一台已激活设备
+占着同一个逻辑地址，控制台把旧设备行删掉再激活。
 
 当前板端只支持可信网络内的明文 `ws`，没有实现带证书校验的 `wss`。
 不要把它当作公网安全传输。独立 WebNet 通道保留，A2A 不再注册 HTTP CGI。
