@@ -491,11 +491,12 @@ watch(sideDeviceId, async () => {
 .send-setting { display: flex; justify-content: space-between; padding-top: 18px; border-top: 1px solid #eef0f4; font-size: 13px; }
 .panel-area { min-width: 0; }
 .panel-empty { padding: 60px 0; }
-.panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; align-items: start; }
-.conversation-header { display: flex; align-items: center; gap: 12px; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid #eef0f4; }
+.panel-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 16px; align-items: start; }
+.conversation-header { display: flex; align-items: center; gap: 12px; min-width: 0; padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid #eef0f4; }
+.conversation-header strong { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .close-action { color: #8890a2; }
 .copy-action { margin-top: 6px; color: #8890a2; }
-.reply-status { padding: 10px 0; color: #6366f1; font-size: 13px; }
+.reply-status { padding: 10px 0; color: #6366f1; font-size: 13px; overflow-wrap: anywhere; }
 @media (max-width: 1000px) {
   .chat-workspace { grid-template-columns: minmax(0, 1fr); }
   .conversation-list { min-height: 0; max-height: 150px; }
@@ -504,11 +505,21 @@ watch(sideDeviceId, async () => {
 .chat-card {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   height: clamp(420px, 72vh, 780px);
+}
+
+.chat-card :deep(.n-card-content) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .log {
   flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 4px 4px 4px 0;
 }
@@ -539,6 +550,7 @@ watch(sideDeviceId, async () => {
   border: 1px solid #e6e9ef;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   line-height: 1.6;
 }
 
@@ -569,6 +581,7 @@ watch(sideDeviceId, async () => {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
   max-height: 260px;
   overflow-y: auto;
 }
@@ -586,6 +599,7 @@ watch(sideDeviceId, async () => {
   color: #667085;
   font-size: 12px;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .caret {

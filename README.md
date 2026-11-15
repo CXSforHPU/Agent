@@ -645,7 +645,7 @@ agent card loaded: name=端到端测试卡, file=/agent_card.json
 | 工具参数不完整 | 流式分片的 `id` / `name` 为 `null` | 框架按 `index` 合并，缺失 `id` 时用 `call_<index>` 兜底 |
 | 日志出现 `-0x4c` 或 `http status=-76` | TLS 连接被对端或网络重置 | 请求会自动重试 3 次；同时降低上报频率，或调大 MQTT 注入间隔 |
 | 日志里 `getaddrinfo err: 203`，随后所有 HTTP 都连不上 | 203 是 `EAI_MEMORY`。lwIP 的 `MEMP_NUM_NETDB` 默认只有 1，一个线程解析完阻塞在 `connect()` 时占着唯一的解析结果，别的线程拿不到 | menuconfig 把 `RT_MEMP_NUM_NETDB` 调到 4。MQTT 连不上时会一直重试占着这个槽位，网络一抖就把 agent 的请求全带崩 |
-| 板子 `ping` 宿主机全超时、`ping baidu.com` 报 unknown host，但控制台 8080 和 MCP 8765 能通 | 主机 ICS 的 DNS 代理与 NAT 没在工作（`netstat` 里 53 端口没监听）。共享开关还在，但私有侧服务没起来 | 右键以太网 → 属性 → 共享，把「允许其他网络用户…」取消再勾回来，选 qemu 适配器；这一步要管理员权限 |
+| 板子 `ping` 宿主机全超时、`ping baidu.com` 报 unknown host，但控制台 8080 和 MCP 8765 能通；MQTT 一直 `Net connect error(-2)` | 宿主 ICS 的 NAT 驱动 `ipnat` 没在运行（`sc query ipnat` 不是 `RUNNING`）。共享开关还在，但私有侧没有地址转换，板子只能访问宿主本身，DNS 代理也一起失效 | 管理员控制台执行 `sc start ipnat`；下一个重连周期仍失败的话，再去以太网属性 → 共享，把「允许其他网络用户…」取消再勾回来，选 qemu 适配器。恢复后板端 `mqtt_tool status` 应显示 `connected=1` |
 | 模型反复调用同一个工具 | 工具结果为空，或模型不认可结果 | 重复调用会被跳过；连续两轮无效调用或达到 `PKG_AGENT_TOOL_LOOP_MAX` 轮时强制文本回答 |
 | CLI 看不到兜底提示 | 兜底文本只投递输出邮箱时，CLI 不显示 | 兜底文本由 `agent_notify()` 同时走流式打印；仍看不到就检查通道是否实现了 `on_context` |
 | 未启动 MQTT 时查询报 `mqtt state busy` | 状态锁只在客户端启动时创建，未启动就取不到 | 锁为幂等懒创建，未启动也能读订阅表和历史 |
