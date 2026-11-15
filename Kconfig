@@ -548,12 +548,20 @@ if PKG_USING_AGENT
 
             config PKG_AGENT_A2A_CHANNEL
                 bool "A2A channel (outbound WebSocket client, ws only)"
-                depends on RT_USING_SAL
+                select RT_USING_LWIP
+                select RT_USING_SAL             if RT_VER_NUM < 0x40100
+                select SAL_USING_POSIX          if RT_VER_NUM < 0x40100
+                select RT_USING_POSIX_FS        if RT_VER_NUM >= 0x40100
+                select RT_USING_POSIX_SOCKET    if RT_VER_NUM >= 0x40100
                 help
                     Board initiates an authenticated WebSocket connection to Web.
                     Exclusive mailbox consumer. WSS is not implemented; use ws
                     only on a trusted network. Provision 48 random bytes in
                     /agent_a2a_seed before first connection (never clone seeds).
+                    The socket stack is pulled in with select, never depends on:
+                    RT_USING_SAL is selected by PKG_USING_WEBNET, which shares
+                    this choice, so a depends on there would close a Kconfig
+                    dependency loop.
 
         endchoice
 
