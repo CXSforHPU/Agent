@@ -416,8 +416,9 @@ resource/web/
 a2a_activate [host [port [username [password]]]]
 ```
 
-账号密码的取值顺序是命令参数、Kconfig 的 `PKG_AGENT_A2A_USERNAME` 与
-`PKG_AGENT_A2A_PASSWORD`、凭据文件 `PKG_AGENT_A2A_CRED_FILE`。密码不回显，
+账号密码的取值顺序是命令参数、凭据文件 `PKG_AGENT_A2A_CRED_FILE`、
+Kconfig 的 `PKG_AGENT_A2A_USERNAME` 与 `PKG_AGENT_A2A_PASSWORD`。
+运行时文件排在 Kconfig 前面，同一份固件换张 SD 卡就能换凭据。密码不回显，
 也不写进日志。控制台只存 PBKDF2 加盐摘要。
 
 服务端校验后签发一次性设备 token。板端把 token 写进
@@ -475,6 +476,9 @@ a2a_activate 192.168.137.1 8080
 
 板端报 `[FAIL:seed]` 是种子没写好；报 `[FAIL:address_taken]` 是控制台里
 另一台已激活设备占着同一个逻辑地址，删掉旧设备行再激活。
+报 `[FAIL:save]` 是 token 写不进 SD 卡（只读或已满）。这时服务端已经把这台
+设备标成已激活，本地没有 token 就连不上；恢复办法是在控制台删掉该设备，
+重新登记后再激活一次。
 
 同一设备请求串行执行。超时或断线不自动重放任务；旧任务超时后，必须先消费
 并丢弃迟到结果，才接受新任务。板端每 3 秒重连一次。主动上报用 4 条有界队列，

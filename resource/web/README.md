@@ -332,7 +332,8 @@ GPT-SoVITS 的 `TTS.run()` 是一次性交回整段音频，句子级的进度�
 a2a_activate [host [port [username [password]]]]
 ```
 
-账号密码的取值顺序是命令参数、Kconfig、凭据文件 `/agent_a2a_cred`。
+账号密码的取值顺序是命令参数、凭据文件 `/agent_a2a_cred`、Kconfig。
+运行时文件排在 Kconfig 前面，同一份固件换张 SD 卡就能换凭据。
 密码不回显，也不写进日志。后端只存 PBKDF2 加盐摘要，不存明文。
 
 服务端校验后签发一次性设备 token。板端把它写进 `/agent_a2a_token`，

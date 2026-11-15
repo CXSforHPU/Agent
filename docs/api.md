@@ -554,8 +554,9 @@ agent_send_message <type> <content>
 a2a_activate [host [port [username [password]]]]
 ```
 
-账号密码的取值顺序是命令参数、Kconfig 的 `PKG_AGENT_A2A_USERNAME` 与
-`PKG_AGENT_A2A_PASSWORD`、凭据文件 `PKG_AGENT_A2A_CRED_FILE`（首行是"账号 密码"）。
+账号密码的取值顺序是命令参数、凭据文件 `PKG_AGENT_A2A_CRED_FILE`（首行是"账号 密码"）、
+Kconfig 的 `PKG_AGENT_A2A_USERNAME` 与 `PKG_AGENT_A2A_PASSWORD`。
+运行时文件排在 Kconfig 前面，同一份固件换张 SD 卡就能换凭据。
 密码不回显，也不写进日志。已经有 token 时再执行这条命令会跳过激活。
 
 服务端收到账号密码后校验，签发一次性设备 token。板端把 token 写进

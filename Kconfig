@@ -599,13 +599,15 @@ if PKG_USING_AGENT
                         device token stored in PKG_AGENT_A2A_TOKEN_FILE.
                         WARNING: never commit a real password to git. Test
                         values are for local builds only (keep them out of
-                        commits / use ignored files). Empty means read
-                        credentials from PKG_AGENT_A2A_CRED_FILE instead.
+                        commits / use ignored files). PKG_AGENT_A2A_CRED_FILE
+                        overrides this value when that file exists.
                 config PKG_AGENT_A2A_CRED_FILE
-                    string "Credential file fallback (lines: username password)"
+                    string "Credential file (lines: username password)"
                     default "/agent_a2a_cred"
                     help
-                        Used when PKG_AGENT_A2A_PASSWORD is empty. Keep this
+                        Read at activation time and takes precedence over
+                        PKG_AGENT_A2A_USERNAME/PASSWORD, so one firmware
+                        image can be provisioned per SD card. Keep this
                         file on the SD card only; never commit it.
                 config PKG_AGENT_A2A_TOKEN_FILE
                     string "Activated device token file"

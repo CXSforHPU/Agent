@@ -234,7 +234,8 @@ A2A 通道由两个文件组成：`src/channels/AgentA2aChannel.c` 管连接与�
 3. 已激活。之后凭 token 重连，密码不再出现。服务端不认这个 token 时回 `bad_token`，
    板端删掉本地 token 文件，回到未激活。
 
-账号密码的取值顺序是命令参数、Kconfig、凭据文件 `PKG_AGENT_A2A_CRED_FILE`。
+账号密码的取值顺序是命令参数、凭据文件 `PKG_AGENT_A2A_CRED_FILE`、
+Kconfig。运行时文件排在 Kconfig 前面，同一份固件换张 SD 卡就能换凭据。
 密码不回显，也不写进日志。控制台只存 PBKDF2 加盐摘要。
 
 一台设备只能激活一次。服务端回这些错误码后断开：

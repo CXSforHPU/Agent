@@ -256,7 +256,8 @@ static void resolve_endpoint(char *host, int host_capacity, int *port,
 }
 
 /*
- * 激活凭据：命令参数 > Kconfig > 凭据文件（首行 "账号 密码"）。
+ * 激活凭据：命令参数 > 凭据文件（首行 "账号 密码"）> Kconfig。
+ * 运行时文件优先，同一份固件换张 SD 卡就能换成另一台设备的凭据。
  * 密码绝不打印，也绝不写进日志。
  */
 static void resolve_credentials(char *username, int user_capacity,
@@ -268,6 +269,10 @@ static void resolve_credentials(char *username, int user_capacity,
 
     username[0] = 0;
     password[0] = 0;
+    if (*PKG_AGENT_A2A_PASSWORD)
+        rt_strncpy(password, PKG_AGENT_A2A_PASSWORD, pass_capacity - 1);
+    if (*PKG_AGENT_A2A_USERNAME)
+        rt_strncpy(username, PKG_AGENT_A2A_USERNAME, user_capacity - 1);
     if (read_line(PKG_AGENT_A2A_CRED_FILE, line, sizeof(line)) == 0)
     {
         space = strchr(line, ' ');
@@ -278,10 +283,6 @@ static void resolve_credentials(char *username, int user_capacity,
             rt_strncpy(password, space + 1, pass_capacity - 1);
         }
     }
-    if (*PKG_AGENT_A2A_PASSWORD)
-        rt_strncpy(password, PKG_AGENT_A2A_PASSWORD, pass_capacity - 1);
-    if (*PKG_AGENT_A2A_USERNAME)
-        rt_strncpy(username, PKG_AGENT_A2A_USERNAME, user_capacity - 1);
     if (user_arg && *user_arg) rt_strncpy(username, user_arg, user_capacity - 1);
     if (pass_arg && *pass_arg) rt_strncpy(password, pass_arg, pass_capacity - 1);
 }
@@ -318,22 +319,45 @@ static int open_socket(const char *host, int port)
     return fd;
 }
 
+/*
+ * 先写同目录临时文件，再 rename 顶替目标。写失败或掉电时原文件不变，
+ * rename 成功后读回比对，确认落盘内容完整。
+ */
+static int write_file_atomic(const char *path, const char *text)
+{
+    char temp[96];
+    char readback[96];
+    int fd, n, length = (int)strlen(text);
+
+    if (length >= (int)sizeof(readback)) return -1;
+    rt_snprintf(temp, sizeof(temp), "%s.tmp", path);
+    unlink(temp);
+    fd = open(temp, O_WRONLY | O_CREAT | O_TRUNC);
+    if (fd < 0) return -1;
+    n = write(fd, text, length);
+    close(fd);
+    if (n != length)
+    {
+        unlink(temp);
+        return -1;
+    }
+    if (dfs_file_rename(temp, path))
+    {
+        unlink(temp);
+        return -1;
+    }
+    if (read_line(path, readback, sizeof(readback)) || strcmp(readback, text))
+        return -1;
+    return 0;
+}
+
 /* 保存激活签发的 token 与端点，重启后凭 token 自动连接。 */
 static int save_activation(const char *token, const char *host, int port)
 {
     char endpoint[96];
-    int fd, n;
-    fd = open(PKG_AGENT_A2A_TOKEN_FILE, O_WRONLY | O_CREAT | O_TRUNC);
-    if (fd < 0) return -1;
-    n = write(fd, token, strlen(token));
-    close(fd);
-    if (n != (int)strlen(token)) return -1;
+    if (write_file_atomic(PKG_AGENT_A2A_TOKEN_FILE, token)) return -1;
     rt_snprintf(endpoint, sizeof(endpoint), "%s %d", host, port);
-    fd = open(PKG_AGENT_A2A_ENDPOINT_FILE, O_WRONLY | O_CREAT | O_TRUNC);
-    if (fd < 0) return -1;
-    n = write(fd, endpoint, strlen(endpoint));
-    close(fd);
-    return n == (int)strlen(endpoint) ? 0 : -1;
+    return write_file_atomic(PKG_AGENT_A2A_ENDPOINT_FILE, endpoint);
 }
 
 /*
@@ -351,6 +375,8 @@ static int do_activate(const char *host, int port, const char *username, const c
     {
         rt_kprintf("a2a_activate: [FAIL:seed] 缺少随机种子 %s（先写入 48 字节随机数）\n",
                    "/agent_a2a_seed");
+        rt_kprintf("a2a_activate: 主机跑 python -c \"import secrets; print(secrets.token_hex(24))\"，\n");
+        rt_kprintf("a2a_activate: 再把 48 个十六进制字符写进 /agent_a2a_seed，步骤见包 README 的首次激活一节\n");
         return -1;
     }
     fd = open_socket(host, port);
@@ -390,7 +416,11 @@ static int do_activate(const char *host, int port, const char *username, const c
         if (save_activation(token, host, port))
         {
             rt_memset(token, 0, sizeof(token));
-            rt_kprintf("a2a_activate: [FAIL:save] token 保存到 %s 出错\n", PKG_AGENT_A2A_TOKEN_FILE);
+            rt_kprintf("a2a_activate: [FAIL:save] token 写不进 %s，检查 SD 卡是否只读或已满\n",
+                       PKG_AGENT_A2A_TOKEN_FILE);
+            rt_kprintf("a2a_activate: 服务端已经把这台设备标成已激活，本地没落盘就连不上了\n");
+            rt_kprintf("a2a_activate: 恢复办法：在控制台删掉设备 %s 重新登记，再执行一次 a2a_activate\n",
+                       PKG_AGENT_A2A_DEVICE_ID);
             goto failed;
         }
         rt_memset(token, 0, sizeof(token));
@@ -449,6 +479,7 @@ static int a2a_activate(int argc, char **argv)
     {
         rt_kprintf("a2a_activate: [NO-CRED] 未配置账号密码（menuconfig 的 PKG_AGENT_A2A_USERNAME/"
                    "PASSWORD，或文件 %s）\n", PKG_AGENT_A2A_CRED_FILE);
+        rt_kprintf("a2a_activate: 文件写法是一行「账号 密码」，步骤见包 README 的首次激活一节\n");
         return -1;
     }
     if (!a2a_running)
@@ -469,6 +500,7 @@ static void serve_with_token(const char *host, int port)
     if (agent_ws_random_init())
     {
         rt_kprintf("A2A: 缺少随机种子 /agent_a2a_seed，无法连接\n");
+        rt_kprintf("A2A: 先按包 README 的首次激活一节写好种子和凭据，再执行 a2a_activate\n");
         return;
     }
     fd = open_socket(host, port);
@@ -557,6 +589,8 @@ static void a2a_worker(void *arg)
             {
                 rt_kprintf("A2A 未激活 [IDLE]：执行 a2a_activate 激活（设备 ID %s）\n",
                            PKG_AGENT_A2A_DEVICE_ID);
+                rt_kprintf("A2A 未激活 [IDLE]：先写好 /agent_a2a_seed 和凭据文件 %s，"
+                           "步骤见包 README 的首次激活一节\n", PKG_AGENT_A2A_CRED_FILE);
                 hinted = RT_TRUE;
             }
             if (a2a_kick) rt_sem_take(a2a_kick, RT_WAITING_FOREVER);
