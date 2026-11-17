@@ -45,7 +45,7 @@ typedef struct agent_protocol_stream
     char *content;                /* 回答正文 */
     int content_len;
     cJSON *tool_calls;            /* 归一化后的 tool_calls 数组 */
-    agent_protocol_tool_t *tools; /* 按 index 累积的调用分片 */
+    agent_protocol_tool_t *tools; /* 按 index 累积的调用分片，首次出现工具调用时分配 */
     int tool_count;
     rt_bool_t is_answering;       /* 正文是否已经开始输出 */
     rt_bool_t content_lost;       /* 报文不完整或解析失败 */
@@ -154,5 +154,22 @@ void agent_protocol_tool_finalize(agent_protocol_stream_t *stream);
  * @return RT_TRUE 放不下，发生了截断
  */
 rt_bool_t agent_protocol_text_append(char *buf, int cap, int *len, const char *text, int text_len);
+
+/*
+ * @brief  累积工具调用的 id 或函数名，字符串收尾时登记到槽表
+ * @param  stream    流状态
+ * @param  index     分片序号
+ * @param  buf       累积缓冲
+ * @param  cap       缓冲容量
+ * @param  len       已写入长度，成功后更新
+ * @param  text      分片
+ * @param  text_len  分片长度
+ * @param  last      是否最后一个分片
+ * @param  is_id     RT_TRUE 表示 id，RT_FALSE 表示函数名
+ */
+void agent_protocol_tool_field(agent_protocol_stream_t *stream, int index,
+                               char *buf, int cap, int *len,
+                               const char *text, int text_len,
+                               rt_bool_t last, rt_bool_t is_id);
 
 #endif /* __AGENT_UTILS_PROTOCOL_H__ */

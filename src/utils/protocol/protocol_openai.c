@@ -75,7 +75,6 @@ enum
     OPENAI_W_TOOL_ITEM,
     OPENAI_W_TOOL_INDEX,
     OPENAI_W_TOOL_ID,
-    OPENAI_W_TOOL_FUNCTION,
     OPENAI_W_TOOL_NAME,
     OPENAI_W_TOOL_ARGS
 };
@@ -94,7 +93,6 @@ static const char *const g_openai_watches[] =
     "choices.0.delta.tool_calls.*",
     "choices.0.delta.tool_calls.*.index",
     "choices.0.delta.tool_calls.*.id",
-    "choices.0.delta.tool_calls.*.function",
     "choices.0.delta.tool_calls.*.function.name",
     "choices.0.delta.tool_calls.*.function.arguments"
 };
@@ -227,39 +225,20 @@ static void openai_on_match(void *user, int watch, const agent_json_match_t *mat
         break;
 
     case OPENAI_W_TOOL_ID:
-        if (match->type != AGENT_JSON_VALUE_STRING)
+        if (match->type == AGENT_JSON_VALUE_STRING)
         {
-            break;
+            agent_protocol_tool_field(stream, ev->tool_index,
+                                      ev->tool_id, sizeof(ev->tool_id), &ev->tool_id_len,
+                                      match->text, match->len, match->last, RT_TRUE);
         }
-        if (agent_protocol_text_append(ev->tool_id, sizeof(ev->tool_id), &ev->tool_id_len,
-                                       match->text, match->len))
-        {
-            stream->content_lost = RT_TRUE;
-        }
-        if (match->last)
-        {
-            agent_protocol_tool_begin(stream, ev->tool_index, ev->tool_id, RT_NULL);
-            ev->tool_id_len = 0;
-        }
-        break;
-
-    case OPENAI_W_TOOL_FUNCTION:
         break;
 
     case OPENAI_W_TOOL_NAME:
-        if (match->type != AGENT_JSON_VALUE_STRING)
+        if (match->type == AGENT_JSON_VALUE_STRING)
         {
-            break;
-        }
-        if (agent_protocol_text_append(ev->tool_name, sizeof(ev->tool_name), &ev->tool_name_len,
-                                       match->text, match->len))
-        {
-            stream->content_lost = RT_TRUE;
-        }
-        if (match->last)
-        {
-            agent_protocol_tool_begin(stream, ev->tool_index, RT_NULL, ev->tool_name);
-            ev->tool_name_len = 0;
+            agent_protocol_tool_field(stream, ev->tool_index,
+                                      ev->tool_name, sizeof(ev->tool_name), &ev->tool_name_len,
+                                      match->text, match->len, match->last, RT_FALSE);
         }
         break;
 

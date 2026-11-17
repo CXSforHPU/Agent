@@ -166,6 +166,7 @@ draw.io 源文件：[llm-protocol.drawio](diagrams/llm-protocol.drawio)
 - OpenAI 的思考内容优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`；Anthropic 取 `delta.thinking`。
 - OpenAI 的正文取 `delta.content`；Anthropic 取 `delta.text_delta.text`。
 - 工具调用按 `index` 合并。`id`、`name` 取第一个非空值，`arguments` 逐片追加在不大于 `PKG_AGENT_MAX_TOOL_ARG_LEN` 的缓冲里，超限后丢弃后续分片并打印告警。
+- 工具槽表最多 8 项，第一次出现工具调用时才分配；纯文本轮次不占这块内存。
 - 单行超过 `PKG_AGENT_STREAM_LINE_BUFSZ` 时整行丢弃，并提示调大该选项。
 - 事件 JSON 语法错误或字段类型不对时标记响应不完整，跳过该事件，后面的行照常处理。
 - 响应结束后归一化工具调用：缺失 `id` 用 `call_<index>`，空参数改为 `{}`，没有函数名的调用丢弃。
@@ -589,6 +590,8 @@ MQTT 客户端由 MQTT 工具自行管理，agent 清理不会断开连接。需
 | MQTT 注入消息 | 注入方 | 主循环 | 注入失败时由注入方释放 |
 
 邮箱是异步队列，`put_message` 只入队指针。入队即交接所有权，发送方不能立即释放，接收方负责释放。
+
+包体、静态 RAM、运行时堆与栈的实测数据见 [resources.md](./resources.md)。
 
 ## 6. 生命周期
 

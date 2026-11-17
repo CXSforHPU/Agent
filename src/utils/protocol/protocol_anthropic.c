@@ -667,30 +667,20 @@ static void anthropic_on_match(void *user, int watch, const agent_json_match_t *
         break;
 
     case ANTHROPIC_W_BLOCK_ID:
-        if (match->type != AGENT_JSON_VALUE_STRING) break;
-        if (agent_protocol_text_append(ev->tool_id, sizeof(ev->tool_id), &ev->tool_id_len,
-                                       match->text, match->len))
+        if (match->type == AGENT_JSON_VALUE_STRING)
         {
-            stream->content_lost = RT_TRUE;
-        }
-        if (match->last)
-        {
-            agent_protocol_tool_begin(stream, ev->index, ev->tool_id, RT_NULL);
-            ev->tool_id_len = 0;
+            agent_protocol_tool_field(stream, ev->index,
+                                      ev->tool_id, sizeof(ev->tool_id), &ev->tool_id_len,
+                                      match->text, match->len, match->last, RT_TRUE);
         }
         break;
 
     case ANTHROPIC_W_BLOCK_NAME:
-        if (match->type != AGENT_JSON_VALUE_STRING) break;
-        if (agent_protocol_text_append(ev->tool_name, sizeof(ev->tool_name), &ev->tool_name_len,
-                                       match->text, match->len))
+        if (match->type == AGENT_JSON_VALUE_STRING)
         {
-            stream->content_lost = RT_TRUE;
-        }
-        if (match->last)
-        {
-            agent_protocol_tool_begin(stream, ev->index, RT_NULL, ev->tool_name);
-            ev->tool_name_len = 0;
+            agent_protocol_tool_field(stream, ev->index,
+                                      ev->tool_name, sizeof(ev->tool_name), &ev->tool_name_len,
+                                      match->text, match->len, match->last, RT_FALSE);
         }
         break;
 

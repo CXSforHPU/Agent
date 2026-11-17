@@ -423,11 +423,28 @@ static rt_err_t __parse_key(agent_json_reader_t *r, agent_json_frame_t *frame)
     return RT_EOK;
 }
 
+static int __skip_digits(const char **pp, const char *end)
+{
+    const char *p = *pp;
+    int count = 0;
+
+    while (p < end && *p >= '0' && *p <= '9')
+    {
+        p++;
+        count++;
+    }
+    *pp = p;
+
+    return count;
+}
+
 static rt_err_t __parse_number(agent_json_reader_t *r, int *value)
 {
     int sign = 1;
     long long v = 0;
-    rt_bool_t has_digit = RT_FALSE;
+    const char *digits;
+    int count;
+    int i;
 
     if (r->p < r->end && *r->p == '-')
     {
@@ -435,30 +452,23 @@ static rt_err_t __parse_number(agent_json_reader_t *r, int *value)
         r->p++;
     }
 
-    while (r->p < r->end && *r->p >= '0' && *r->p <= '9')
-    {
-        if (v < 100000000LL)
-        {
-            v = v * 10 + (*r->p - '0');
-        }
-        has_digit = RT_TRUE;
-        r->p++;
-    }
-    if (!has_digit)
+    digits = r->p;
+    count = __skip_digits(&r->p, r->end);
+    if (count == 0)
     {
         return -RT_EINVAL;
+    }
+    for (i = 0; i < count && i < 9; i++)
+    {
+        v = v * 10 + (digits[i] - '0');
     }
 
     if (r->p < r->end && *r->p == '.')
     {
         r->p++;
-        if (r->p >= r->end || *r->p < '0' || *r->p > '9')
+        if (__skip_digits(&r->p, r->end) == 0)
         {
             return -RT_EINVAL;
-        }
-        while (r->p < r->end && *r->p >= '0' && *r->p <= '9')
-        {
-            r->p++;
         }
     }
 
@@ -469,13 +479,9 @@ static rt_err_t __parse_number(agent_json_reader_t *r, int *value)
         {
             r->p++;
         }
-        if (r->p >= r->end || *r->p < '0' || *r->p > '9')
+        if (__skip_digits(&r->p, r->end) == 0)
         {
             return -RT_EINVAL;
-        }
-        while (r->p < r->end && *r->p >= '0' && *r->p <= '9')
-        {
-            r->p++;
         }
     }
 

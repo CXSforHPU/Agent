@@ -92,8 +92,7 @@ void agent_protocol_stream_init(agent_protocol_stream_t *stream,
     stream->reasoning = (char *)rt_malloc(AGENT_PROTOCOL_MAX_REASONING_LEN);
     stream->content = (char *)rt_malloc(AGENT_PROTOCOL_MAX_CONTENT_LEN);
     stream->tool_calls = cJSON_CreateArray();
-    stream->tools = (agent_protocol_tool_t *)rt_calloc(AGENT_PROTOCOL_MAX_TOOL_CALLS,
-                                                       sizeof(agent_protocol_tool_t));
+    stream->tools = RT_NULL;
 
     if (stream->reasoning)
     {
@@ -219,7 +218,13 @@ static agent_protocol_tool_t *__tool_slot(agent_protocol_stream_t *stream, int i
     agent_protocol_tool_t *slot;
     int i;
 
-    if (!stream->tools) return RT_NULL;
+    /* 槽表在第一次出现工具调用时才分配，纯文本轮次不占这块内存 */
+    if (!stream->tools)
+    {
+        stream->tools = (agent_protocol_tool_t *)rt_calloc(AGENT_PROTOCOL_MAX_TOOL_CALLS,
+                                                           sizeof(agent_protocol_tool_t));
+        if (!stream->tools) return RT_NULL;
+    }
 
     for (i = 0; i < stream->tool_count; i++)
     {
@@ -253,7 +258,7 @@ void agent_protocol_tool_begin(agent_protocol_stream_t *stream, int index, const
 {
     agent_protocol_tool_t *slot;
 
-    if (!stream || !stream->tools) return;
+    if (!stream) return;
     if ((!id || !id[0]) && (!name || !name[0])) return;
 
     slot = __tool_slot(stream, index);
@@ -284,7 +289,7 @@ void agent_protocol_tool_args(agent_protocol_stream_t *stream, int index, const 
     int cap;
     char *grown;
 
-    if (!stream || !stream->tools || !fragment || !fragment[0]) return;
+    if (!stream || !fragment || !fragment[0]) return;
 
     slot = __tool_slot(stream, index);
     if (!slot) return;
@@ -342,6 +347,24 @@ rt_bool_t agent_protocol_text_append(char *buf, int cap, int *len, const char *t
     buf[*len] = '\0';
 
     return truncated;
+}
+
+void agent_protocol_tool_field(agent_protocol_stream_t *stream, int index,
+                               char *buf, int cap, int *len,
+                               const char *text, int text_len,
+                               rt_bool_t last, rt_bool_t is_id)
+{
+    if (agent_protocol_text_append(buf, cap, len, text, text_len))
+    {
+        stream->content_lost = RT_TRUE;
+    }
+    if (last)
+    {
+        agent_protocol_tool_begin(stream, index,
+                                  is_id ? buf : RT_NULL,
+                                  is_id ? RT_NULL : buf);
+        *len = 0;
+    }
 }
 
 /*
