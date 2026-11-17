@@ -744,7 +744,8 @@ if PKG_USING_AGENT
             config PKG_AGENT_MEMORY_PERSIST
                 bool "Save memory to a file"
                 default n
-                depends on RT_USING_DFS
+                select RT_USING_DFS
+                select RT_USING_POSIX_FS if RT_VER_NUM >= 0x40100
                 help
                     Load memory at agent start and save it when the agent
                     stops, so memory survives reboots. The write goes to a
