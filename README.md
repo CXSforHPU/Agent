@@ -2,7 +2,7 @@
 
 基于 RT-Thread 的智能代理框架。通过 LLM API 完成流式对话，支持本地工具调用、多通道接入、多模态文件上传、本地语音转写与 MQTT 数据接入。
 
-> 文档入口：[框架文档](./docs/framework.md) ｜ [API 文档](./docs/api.md) ｜ [工具开发指南](./docs/tool_guide.md) ｜ [MCP 工具说明](./docs/tool_mcp.md) ｜ [MQTT 工具说明](./docs/tool_mqtt.md) ｜ [设备框架工具](./docs/tool_device.md) ｜ [验证方法](./docs/testing.md)
+> 文档入口：[框架文档](./docs/framework.md) ｜ [API 文档](./docs/api.md) ｜ [工具开发指南](./docs/tool_guide.md) ｜ [MCP 工具说明](./docs/tool_mcp.md) ｜ [MQTT 工具说明](./docs/tool_mqtt.md) ｜ [设备框架工具](./docs/tool_device.md) ｜ [存储与内存占用](./docs/resources.md) ｜ [验证方法](./docs/testing.md)
 
 ## 功能
 
@@ -545,40 +545,33 @@ a2a_activate 192.168.137.1 8080
 | `PKG_AGENT_CONSOLE_API` | 控制台上报地址的接口路径，默认 `/api/ops/endpoints`；只有自动模式下显示 |
 | `PKG_AGENT_ENDPOINT_TIMEOUT_MS` | 读控制台响应体的超时，默认 3000 毫秒；只有自动模式下显示 |
 
-## 包体积
+## 包体积与内存
 
-下面的数字来自本仓库当前配置的 `rtthread.map`，统计的是 Agent 包各目标文件的 `text`、`rodata`、`data` 与 `ARM.exidx` 之和。固件整体是 text 2 805 051 字节、data 35 248 字节、bss 178 640 字节。
+下面的数字来自当前配置的完整构建和 QEMU 离线回归。统计口径、运行时堆明细和复现方法见 [存储与内存占用](./docs/resources.md)。
 
-当前配置开了 MQTT、设备框架的通用层加 PIN、I2C、SPI、MCP、多模态、语音转写、音频驱动，技能是随包发布的 5 份。
+当前配置开了 MQTT、设备框架工具、MCP、多模态、语音转写和音频驱动，技能是随包发布的 5 份，两份协议都编译。固件整体是 text 2,832,011 字节、data 35,248 字节、bss 276,944 字节。Agent 包占 218,138 字节，其中只读段 216,922 字节、data 1,216 字节，约为固件 text 加 data 的 7.6%。
 
 | 模块 | 字节 | 怎么关 |
 |---|---|---|
-| MQTT 工具 | 48 349 | `PKG_AGENT_TOOL_MQTT_ENABLE` |
-| 设备框架工具 | 42 036 | `PKG_AGENT_TOOL_DEVICE` 与八个类模块开关 |
-| 核心（状态机、上下文、对话） | 26 381 | 必编 |
-| 内嵌技能 | 20 527 | `PKG_AGENT_SKILL_DIR` 指向只放要留的技能 |
-| 通用工具 | 17 825 | 多模态与语音转写关掉后，`file_op` 与 `stt` 跟着消失 |
-| 协议模块 | 14 005 | 不选的那份协议仍要编译，运行时切换要用 |
-| 通道 | 9 849 | 只留一个通道 |
-| MCP 客户端 | 8 408 | `PKG_AGENT_TOOL_MCP_ENABLE` |
-| 运算与技能工具 | 4 000 | 必编 |
-| 音频驱动 | 2 174 | `PKG_AGENT_DRIVER_AUDIO` |
+| MQTT 工具 | 48,809 | `PKG_AGENT_TOOL_MQTT_ENABLE` |
+| 设备框架工具 | 42,036 | `PKG_AGENT_TOOL_DEVICE` 与八个类模块开关 |
+| 核心（状态机、上下文、对话） | 35,181 | 必编 |
+| 协议与 JSON | 25,076 | 两份协议都编；只留一份可省 7,952 |
+| 内嵌技能 | 20,527 | `PKG_AGENT_SKILL_DIR` 指向只放要留的技能 |
+| 通道 | 15,309 | A2A 10,965，WebSocket 4,344 |
+| 多模态与语音 | 9,683 | 关多模态后 `file_op` 与 `stt` 一起消失 |
+| 工具注册与支撑 | 9,109 | 必编 |
+| MCP 客户端 | 8,408 | `PKG_AGENT_TOOL_MCP_ENABLE` |
+| 运算与技能工具 | 4,000 | 必编 |
+| 音频驱动 | 0 | `PKG_AGENT_DRIVER_AUDIO` |
 
-整个包当前是 193 554 字节，占固件 flash 的 6.8%。
+音频驱动一项是 0，因为当前配置编了源码但没有代码引用，链接时整段被丢掉。
 
-MQTT 工具是最大的一块，在 `src/tools/tool_mqtt/` 下分成七个文件。占得最多的是 `tool_mqtt_ops.o` 13 742 字节、`tool_mqtt_tools.o` 9 248 字节、`tool_mqtt_client.o` 6 788 字节、`tool_mqtt_filter.o` 6 083 字节、`tool_mqtt_cmd.o` 4 892 字节，剩下两个是 `tool_mqtt.o` 4 404 字节和 `tool_mqtt_route.o` 3 192 字节。不用 MQTT 就整块关掉。
+包里放不下时，先关 MQTT，再关用不到的设备类模块，每类 5,100～6,596 字节。还能再砍就考虑技能只留一份（省 16,000 字节上下）、关 MCP（8,408 字节）、关多模态与语音（9,683 字节）、只编一种协议（省 7,952 字节）。技能目录可以另建一个目录，只放要留的 Markdown，再把 `PKG_AGENT_SKILL_DIR` 指过去；也可以单次构建时用 `scons agent_skill_dir=<目录>` 覆盖。
 
-设备框架工具里，通用层 `tool_device_core.o` 是 19 972 字节，I2C 模块 6 596 字节，SPI 模块 5 924 字节，PIN 模块 5 100 字节。关掉的模块编出来是空壳，链接后不占固件空间。
+真正的大头是依赖。选上本包会带 HTTPS 客户端和 TLS，当前固件里 mbedTLS 约 832 KB，占 text 的 29%；lwIP 约 171 KB。Flash 紧张的器件要先算这一块。
 
-要更小，按这个顺序关：
-
-- MQTT 工具，省 48 349 字节。
-- 多模态与语音转写，省 9 600 字节上下。
-- 不用的设备类模块，一个省 5 000 到 7 000 字节。
-- 技能只留一份，省 15 000 字节上下。
-- MCP 客户端，省 8 408 字节。
-
-技能目录可以另建一个目录，只放要留的 Markdown，再把 `PKG_AGENT_SKILL_DIR` 指过去。也可以单次构建时用 `scons agent_skill_dir=<目录>` 覆盖。
+静态 RAM 是 26,206 字节（data 1,216 加 bss 24,990）。运行时，一轮纯文本对话新增约 4.1 KB 堆，带工具调用约 5.6 KB，清理后回到基线。`AgentLoop` 栈 10,240 字节，实测峰值占 32%～37%。
 
 ## 验证
 
