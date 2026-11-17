@@ -5,6 +5,7 @@
 #include <ctype.h>
 #ifdef PKG_AGENT_MEMORY_PERSIST
 #include <dfs_posix.h>
+#include <unistd.h>
 #endif
 
 #define LOG_TAG "Agent.memory"
@@ -417,6 +418,16 @@ rt_err_t agent_memory_init(void)
         int used = 0;
         int loaded = 0;
 
+        /* elmfat 不能覆盖改名，掉电可能停在旧文件已删、临时文件未改名之间 */
+        if (fd < 0)
+        {
+            fd = open(PKG_AGENT_MEMORY_FILE ".tmp", O_RDONLY);
+            if (fd >= 0)
+            {
+                LOG_W("Recovered memory from %s.tmp", PKG_AGENT_MEMORY_FILE);
+            }
+        }
+
         if (fd >= 0)
         {
             int n;
@@ -519,9 +530,14 @@ void agent_memory_deinit(void)
         close(fd);
         if (dfs_file_rename(temp, PKG_AGENT_MEMORY_FILE))
         {
-            unlink(temp);
-            LOG_W("Cannot replace %s, memory not saved", PKG_AGENT_MEMORY_FILE);
-            return;
+            /* elmfat 的 rename 遇到同名目标会报 FR_EXIST，先删旧文件再改名 */
+            unlink(PKG_AGENT_MEMORY_FILE);
+            if (dfs_file_rename(temp, PKG_AGENT_MEMORY_FILE))
+            {
+                unlink(temp);
+                LOG_W("Cannot replace %s, memory not saved", PKG_AGENT_MEMORY_FILE);
+                return;
+            }
         }
         g_dirty = RT_FALSE;
         LOG_I("Saved %d memory items to %s", total, PKG_AGENT_MEMORY_FILE);

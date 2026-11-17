@@ -48,7 +48,7 @@ Agent 包本身是 229,595 字节，其中只读段 228,375 字节、data 1,220 
 | 协议与 JSON | 25,076 | 两份协议都编；改 SConscript 只留一份可省 7,952 |
 | 内嵌技能 | 20,527 | `PKG_AGENT_SKILL_DIR` 指向只放要留的技能 |
 | 通道 | 15,309 | A2A 10,965，WebSocket 4,344 |
-| 分层记忆 | 10,925 | `PKG_AGENT_MEMORY_ENABLE`；只关工具省 3,940 |
+| 分层记忆 | 10,925 | `PKG_AGENT_MEMORY_ENABLE`；只关工具省 3,940；再开落盘多 1,708 |
 | 多模态与语音 | 9,683 | 关多模态后 `file_op` 与 `stt` 一起消失 |
 | 工具注册与支撑 | 9,109 | 必编 |
 | MCP 客户端 | 8,408 | `PKG_AGENT_TOOL_MCP_ENABLE` |
@@ -60,6 +60,12 @@ Agent 包本身是 229,595 字节，其中只读段 228,375 字节、data 1,220 
 MQTT 工具是最大的一块，按文件分：`tool_mqtt_ops.o` 13,718 字节、`tool_mqtt_tools.o` 9,248 字节、`tool_mqtt_client.o` 6,820 字节、`tool_mqtt_filter.o` 6,083 字节、`tool_mqtt_cmd.o` 4,892 字节、`tool_mqtt.o` 4,404 字节、`tool_mqtt_route.o` 3,612 字节。
 
 设备框架工具里，通用层 `tool_device_core.o` 19,972 字节，I2C 6,596 字节，SPI 5,924 字节，PIN 5,100 字节，公共助手 4,316 字节。没开对应宏的模块编出来是空壳，不占固件空间。
+
+### 记忆落盘的开销
+
+打开 `PKG_AGENT_MEMORY_PERSIST` 后，text 增加 1,708 字节，data 与 bss 不变。这个数来自两份只差落盘宏的固件：2,848,663 与 2,846,955 字节。落盘要求挂载可写文件系统，DFS 与 POSIX 由这个选项自动选上。
+
+QEMU vexpress-a9 的 SD 卡上跑过两次启动。第一次写入两条记忆并落盘，14 项检查通过；第二次读回两条，12 项检查通过。文件是 `/agent_memory.dat`，纯文本，一行一条。复现步骤见 [testing.md](./testing.md) 3.8 节。
 
 ### 包里放不下时先关这些
 
@@ -150,5 +156,14 @@ python -B build/skill_qemu/run.py
 ```
 
 回归里会跑两个 utest 用例：`utest_run -thread agent.device_tools` 和 `utest_run -thread agent.memory`。前者看设备工具与技能，后者看分层记忆的槽池、检索与注入顺序。
+
+落盘的数字来自另一份最小固件，两次启动分别写入和读回：
+
+```bash
+scons -f build/mem_persist/SConstruct
+python -B build/mem_persist/run.py
+```
+
+设 `AGENT_MEMORY_PERSIST=0` 再编一次，得到不带落盘的固件，两份 size 相减就是 1,708 字节。
 
 串口日志里搜 `MEM_PROBE` 看堆增量，搜 `AgentLoop` 看栈水位。相关探针是 `json_reader_qemu_test` 与 `stack_probe` 两个 MSH 命令。

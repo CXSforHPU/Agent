@@ -9,11 +9,12 @@
 
 | 手段 | 位置 | 覆盖范围 | 需要硬件 |
 |---|---|---|---|
-| 包内 utest 用例 | `packages/Agent-latest/tests/device_tools_tc.c` | 通用层设备工具、模块表注册、两个技能，逐条断言 | 否，虚拟设备 |
-| 离线 QEMU 回归 | BSP 工作区 `build/skill_qemu/` | 技能、上下文压缩、设备工具、端到端链路 | 否，QEMU 模拟机 |
+| 包内 utest 用例 | `packages/Agent-latest/tests/utest_device_tools.c`、`utest_memory.c` | 通用层设备工具、模块表注册、两个技能；分层记忆的存取、检索与注入 | 否，虚拟设备 |
+| 离线 QEMU 回归 | BSP 工作区 `build/skill_qemu/` | 技能、上下文压缩、设备工具、协议、MCP、端到端链路与两个 utest | 否，QEMU 模拟机 |
+| 记忆落盘回归 | BSP 工作区 `build/mem_persist/` | 打开 `PKG_AGENT_MEMORY_PERSIST`，第一次启动写入，重启后读回 | 否，QEMU 模拟机 |
 | 真链路 QEMU 回归 | BSP 工作区 `build/skill_qemu/run_live.py` | MCP 客户端经网口连到 PC 上的网关，调桌面工具和联网搜索 | 否，但要 PC 上有网关 |
 
-两套都在 QEMU 或板子上用 MSH 命令触发，不需要手工点界面。
+这几套都在 QEMU 或板子上用 MSH 命令触发，不需要手工点界面。
 
 ---
 
@@ -34,25 +35,28 @@ if GetDepend(["RT_USING_UTEST"]) and os.path.isdir(SRC_TEST):
 
 ### 2.2 运行方法
 
-用例文件 `packages/Agent-latest/tests/device_tools_tc.c`，导出名是 `agent.device_tools`：
+用例文件是 `packages/Agent-latest/tests/utest_device_tools.c` 与 `utest_memory.c`，导出名分别是 `agent.device_tools` 和 `agent.memory`：
 
 ```c
 UTEST_TC_EXPORT(testcase, "agent.device_tools", utest_tc_init, utest_tc_cleanup, 60);
+UTEST_TC_EXPORT(testcase, "agent.memory", utest_tc_init, utest_tc_cleanup, 60);
 ```
 
 最后一个参数 60 是超时秒数。运行命令：
 
 ```
 msh /> utest_run -thread agent.device_tools
+msh /> utest_run -thread agent.memory
 ```
 
 `-thread` 表示用例在自己的线程里跑。成功时输出：
 
 ```
 [  PASSED  ] [ result   ] testcase (agent.device_tools)
+[  PASSED  ] [ result   ] testcase (agent.memory)
 ```
 
-用例自己注册三个虚拟设备：`utst0`（字符）、`utblk0`（块）、`utrtc0`（RTC）。同时用真实的 `uart0` 检查控制台保护。`utest_tc_init` 调用 `init_tools()` 注册工具，`utest_tc_cleanup` 把引用计数清零。注册检查遍历的是通用模块表，接口是 `agent_tool_module_count()` 这一组，设备模块和运算、技能、MQTT 模块一起核对。
+设备用例自己注册三个虚拟设备：`utst0`（字符）、`utblk0`（块）、`utrtc0`（RTC）。同时用真实的 `uart0` 检查控制台保护。`utest_tc_init` 调用 `init_tools()` 注册工具，`utest_tc_cleanup` 把引用计数清零。注册检查遍历的是通用模块表，接口是 `agent_tool_module_count()` 这一组，设备模块和运算、技能、MQTT 模块一起核对。
 
 ### 2.3 九个单元组
 
@@ -69,6 +73,20 @@ msh /> utest_run -thread agent.device_tools
 | `unit_console_guards` | 读控制台被拒；关控制台被拒 |
 | `unit_error_paths` | 设备不存在、空设备名、非法打开标志、缺 `cmd` |
 | `unit_skill_catalog` | 技能表里有 `device` 与 `device-commands`；`skill` 工具返回的正文与内嵌注册表逐字节相同 |
+
+### 2.4 分层记忆用例
+
+`agent.memory` 不依赖外设，只操作静态槽池。五个单元组：
+
+| 单元 | 检查内容 |
+|---|---|
+| `unit_store_and_dedup` | 空池时条数为 0、注入返回空；带首尾空白的文本存进去被压缩；重复写入相同文本不增加条数；空白、空指针和非法层号返回 `-RT_EINVAL` |
+| `unit_recall_query` | 英文关键词命中 1 条并带 `[id=` 前缀；中文词“温度”命中 1 条；不传关键词按新到旧列出；无关查询返回 0 条且缓冲为空；`agent_memory_list` 列出全部 3 条 |
+| `unit_eviction` | 写满容量再写一条，条数停在容量；core 和 recall 两个环各自覆盖最旧的一条，最新一条排在最前 |
+| `unit_delete` | 按 id 删除后条数减一、槽位读不到；同一 id 再删返回 `-RT_ENOENT`；另一层不受影响；空出的槽位可以继续写入 |
+| `unit_inject_order` | 注入块带标题行、core 与 recall 正文；游标顺序是 system 覆盖文本、注入块作为 user 消息、最后才是本轮用户输入 |
+
+用例在初始化与清理里调用 `agent_memory_init()` 与 `agent_memory_deinit()`。默认配置关闭落盘，所以清理不会写文件；落盘行为单独用 3.8 节的两次启动回归验证。
 
 ---
 
@@ -93,12 +111,14 @@ msh /> utest_run -thread agent.device_tools
 | `test_agent_e2e.c` | 端到端链路检查 |
 | `test_mcp.c` | MCP 客户端的离线检查 |
 | `test_mcp_live.c` | MCP 客户端的真链路检查 |
+| `test_json_reader.c` | 流式 JSON 读取器检查，另导出 `stack_probe` 打印线程栈水位 |
+| `run_llm_live.py` | 模型真链路：板子经网卡直接连 DeepSeek |
 
 `SConstruct` 里的关键设置：
 
 - 链接参数加 `-Wl,--wrap=webclient_post,--wrap=webclient_read`，把模型换掉。
 - `UTEST_THR_STACK_SIZE` 提到 16384，`RT_UTEST_MAX_OPTIONS` 设为 64。
-- 额外编入 `rt-thread/components/utilities/utest/utest.c` 与 `packages/Agent-latest/tests/device_tools_tc.c`。
+- 额外编入 `rt-thread/components/utilities/utest/utest.c`、`packages/Agent-latest/tests/utest_device_tools.c` 与 `utest_memory.c`。
 
 ### 3.2 模型替换方式
 
@@ -142,27 +162,25 @@ qemu-system-arm -M vexpress-a9 -smp cpus=2 \
 
 串口走 TCP，脚本按字符逐个发命令。QEMU 可执行文件路径写在 `run.py` 的 `QEMU` 常量里，按本机实际位置改。
 
-### 3.5 七条命令
+### 3.5 命令序列
 
-脚本等系统起来后，依次执行这七条 MSH 命令，每条都要等到串口输出对应的结果行：
+脚本等系统起来后，依次执行这十一条命令，每条都要等到串口输出对应的结果行：
 
 | 命令 | 结果行 | 覆盖内容 |
 |---|---|---|
-| `agent_protocol openai` | `agent protocol: openai` | 把协议钉到 OpenAI，后面六条测试的夹具都是 OpenAI 格式 |
+| `agent_protocol openai` | `agent protocol: openai` | 把协议钉到 OpenAI，后面大部分测试的夹具都是 OpenAI 格式 |
 | `skill_qemu_test` | `SKILL_QEMU RESULT checks=<n> failures=<n>` | 技能注册表、`skill` 工具、目录 JSON、技能正文进上下文、重复调用不涨堆 |
 | `context_qemu_test` | `CONTEXT_QEMU RESULT checks=<n> failures=<n>` | 上下文压缩、摘要请求与校验、SSE 夹具解析 |
 | `device_qemu_test` | `DEVICE_QEMU RESULT checks=<n> failures=<n>` | 通用层 7 个工具在真实框架上的行为，外加模块表与工具链表的一致性、每个工具都带上非空 description |
 | `mcp_qemu_test` | `MCP_QEMU RESULT checks=<n> failures=<n>` | MCP 握手三步、远端工具注册与名字替换、`tools/call` 回包解析、会话 ID 回带、服务端不可达时的失败提示与重连 |
 | `agent_e2e_test` | `AGENT_E2E RESULT checks=<n> failures=<n>` | 从 Debug 通道收消息，模型发起工具调用，工具真的读写外设，结果回到模型 |
+| `stack_probe` | `STACK_PROBE_DONE` | 打印各线程栈水位，做占用基线 |
 | `protocol_qemu_test` | `PROTOCOL_QEMU RESULT checks=<n> failures=<n>` | 协议切换、Anthropic 请求体形态、鉴权头、事件式 SSE 解析、工具调用与工具结果的报文翻译 |
+| `json_reader_qemu_test` | `JSON_READER_QEMU RESULT checks=<n> failures=<n>` | 流式 JSON 读取器与协议字段提取 |
+| `utest_run -thread agent.device_tools` | `[  PASSED  ] [ result   ] testcase (agent.device_tools)` | 包内设备工具用例 |
+| `utest_run -thread agent.memory` | `[  PASSED  ] [ result   ] testcase (agent.memory)` | 包内分层记忆用例 |
 
-同一条序列里还有包内用例，它也在两轮里各跑一次：
-
-```
-utest_run -thread agent.device_tools
-```
-
-匹配的结果行是 `[  PASSED  ] [ result   ] testcase (agent.device_tools)`。脚本除了数 PASSED，还要数 `[  ASSERT  ]` 行。这个内核的 utest 在每个单元组开始时清零失败计数（`rt-thread/components/utilities/utest/utest.c` 里的 `utest_unit_run()`），所以某个单元组里的断言失败可能被后面的单元组覆盖，最终照样打印 PASSED。脚本要求断言行数为 0。
+两个包内用例也在两轮里各跑一次。脚本除了数 PASSED，还要数 `[  ASSERT  ]` 行。这个内核的 utest 在每个单元组开始时清零失败计数（`rt-thread/components/utilities/utest/utest.c` 里的 `utest_unit_run()`），所以某个单元组里的断言失败可能被后面的单元组覆盖，最终照样打印 PASSED。脚本要求断言行数为 0。
 
 第一条 `agent_protocol openai` 是必需的。固件的默认协议由 `PKG_AGENT_API_PROTOCOL_SEL` 决定，夹具是 OpenAI 格式的 `data: {"choices":[...]}`。默认协议是 Anthropic 时，解析器认不出这些夹具，上下文压缩和端到端两轮会失败。脚本先用这条命令把协议钉成 OpenAI，回归结果就跟固件默认配置无关了。`protocol_qemu_test` 自己会切到 Anthropic 再切回来，所以不影响它。
 
@@ -194,7 +212,9 @@ SKILL_QEMU HEAP before=<字节> after=<字节> delta=<差值>
 | `agent_e2e_answers` | 端到端测试收到最终回答的次数 |
 | `protocol_results` / `protocol_heap` | `protocol_qemu_test` 两轮的检查数、失败数与堆快照 |
 | `mcp_results` | `mcp_qemu_test` 两轮的检查数与失败数 |
-| `utest` | 包内用例的 `name`、`passed_runs`、`failed_runs`、`assert_failures` |
+| `json_reader_results` | `json_reader_qemu_test` 两轮的检查数与失败数 |
+| `utest` | `agent.device_tools` 用例的 `name`、`passed_runs`、`failed_runs`、`assert_failures` |
+| `utest_memory` | `agent.memory` 用例的同样四项 |
 | `network_enabled` | 固定为 `false`，QEMU 用了 `-net none` |
 | `disk_snapshot` | 固定为 `true`，SD 卡挂了 `snapshot=on` |
 | `summary_transport` | 固定为 `deterministic SSE fixtures at webclient post/read boundary` |
@@ -202,6 +222,56 @@ SKILL_QEMU HEAP before=<字节> after=<字节> delta=<差值>
 脚本退出前会自己判一遍，判据分四档：包内用例两轮都 PASSED、0 FAILED、0 断言行；`agent_e2e_test` 两轮都有最终回答，每轮 `checks` 不少于 5；技能、上下文、设备三组每轮 `checks` 不少于 20；协议组与 MCP 组每轮 `checks` 不少于 10。五组结果和四个堆快照数组的长度都必须是 2，缺一条就判定失败。所有堆快照的 `delta` 必须为 0。任何一条不满足就抛异常，进程以非 0 退出。
 
 结果行会被别的线程的日志切断。`rt_kprintf` 逐字符写串口，本工程没开 `RT_USING_THREADSAFE_PRINTF`，MQTT 线程中途插一句，`MCP_QEMU RESULT checks=.. failures=..` 就断成两截，脚本匹配不到而误报超时。所以所有结果行统一走 `test_result.h` 里的 `test_print_result()`，它在 `rt_enter_critical()` 里打印整行。
+
+### 3.8 记忆落盘回归
+
+主回归固件不开 `PKG_AGENT_MEMORY_PERSIST`。打开它以后，`agent.memory` 用例会读到上一次留下的数据，单元组之间互相干扰。主回归的 SD 卡又挂了 `snapshot=on`，写下去的内容重启就没了。
+
+落盘单独做一个最小固件，放在 `build/mem_persist/`：
+
+| 文件 | 作用 |
+|---|---|
+| `SConstruct` | 包一层 `PrepareBuilding`，在它开始编包之前把 `PKG_AGENT_MEMORY_PERSIST=1` 与 `PKG_AGENT_MEMORY_FILE="/agent_memory.dat"` 补进 env，不改 BSP 的 `rtconfig.h`，产物是 `rtthread.elf` 与 `rtthread.bin` |
+| `test_memory_persist.c` | 导出 `mem_persist_write` 与 `mem_persist_read` 两条 MSH 命令 |
+| `run.py` | 启动两次 QEMU，收集结果，写 `result.json` |
+
+构建和运行：
+
+```bash
+scons -f build/mem_persist/SConstruct
+python -B build/mem_persist/run.py
+```
+
+设 `AGENT_MEMORY_PERSIST=0` 再编一次，产物名带 `-off` 后缀，用来对比不落盘时的体积。
+
+`run.py` 先把 BSP 根目录的 `sd.bin` 复制到 `build/mem_persist/sd.bin`，挂盘参数是 `cache=writethrough`，不带 `snapshot=on`。这样第一次启动写下去的文件，第二次启动还在。
+
+两次启动各跑一条命令：
+
+| 启动 | 命令 | 结果行 |
+|---|---|---|
+| 第一次 | `mem_persist_write` | `MEM_PERSIST_WRITE RESULT checks=<n> failures=<n>` |
+| 第二次 | `mem_persist_read` | `MEM_PERSIST_READ RESULT checks=<n> failures=<n>` |
+
+第一轮做的事：删掉旧文件，初始化空池，写入一条 core 和一条 recall，检查条数、编号和注入文本，然后 `agent_memory_deinit()` 落盘，检查文件存在、正文正确、每行以 `c ` 或 `r ` 开头。第二轮是新进程：检查文件还在，`agent_memory_init()` 读回两条，核对正文和编号，按关键词查一次，删掉两条再落盘，最后文件长度为 0。
+
+当前结果：
+
+```
+MEM_PERSIST_WRITE RESULT checks=14 failures=0
+MEM_PERSIST_READ RESULT checks=12 failures=0
+```
+
+串口日志能直接看到两次落盘：
+
+```
+[I/Agent.memory] Saved 2 memory items to /agent_memory.dat
+[I/Agent.memory] Loaded 2 memory items from /agent_memory.dat
+```
+
+落盘代码占 1708 字节 Flash，`.data` 与 `.bss` 不变。`result.json` 里记着 `boots`、`persist_file`、`write`、`read` 四个字段。
+
+存盘先写 `*.tmp` 再改名。elmfat 的 `f_rename` 遇到同名目标返回 `FR_EXIST`，所以改名失败时先删旧文件再试一次。加载时主文件打不开会去读 `.tmp`，掉电停在改名之前也能恢复。改名回退这条路径第二轮写盘时跑到了；`.tmp` 恢复要构造第一次改名后掉电，回归里没有覆盖。
 
 ---
 
@@ -292,12 +362,13 @@ python build/skill_qemu/run_llm_live.py
 
 ## 5. 这套回归不能证明什么
 
-回归覆盖了框架逻辑，但有五条硬边界。
+回归覆盖了框架逻辑，但有六条硬边界。
 
 - **模型是假的。** `mock_chat.c` 把模型换成固定 SSE 夹具。请求怎么写、参数怎么选、总结写得好不好，真实模型的行为没有被验证。端到端测试里的工具调用是夹具写死的，不是模型自己决定的。真正打到 DeepSeek 的只有 `run_llm_live.py` 那一条，它只发一次普通提问，不带工具，所以模型挑工具的能力仍然没有被验证。
 - **夹具只有 OpenAI 一种格式。** 上下文压缩和端到端这两组用的是 OpenAI 格式的 SSE 夹具，回归开始前用 `agent_protocol openai` 把协议钉死。Anthropic 报文只有 `protocol_qemu_test` 覆盖，它检查请求体形态、鉴权头和事件式 SSE 解析，但不跑完整的压缩与工具循环。
 - **外设是假的。** `utst0`、`utblk0`、`utrtc0` 以及端到端用的虚拟设备都是内存里的桩。真实驱动的时序、中断、DMA、掉电行为没有被覆盖。块设备不会真的擦写介质。
 - **环境是隔离的。** 离线回归的网络是关的，SD 卡是快照。MQTT、TTS、文件上传这类需要外网的路径在离线回归里跑不到。真链路回归只开了 MCP 一条路，MQTT 和 TTS 仍不参与。
+- **落盘只在 QEMU 的 SD 卡上验证过。** 落盘回归用 FAT 文件系统加 `cache=writethrough`，验证的是正常重启。写 `*.tmp` 与改名之间掉电的窗口没有构造。真实介质（SPI Flash、eMMC）的擦写时序、坏块和磨损也没有覆盖。主回归仍是 `snapshot=on`，跑完不留记忆文件。
 - **配置是这份 BSP 的。** 固件里只有通用层和 GPIO、I2C、SPI 四个模块。PWM、ADC、DAC、传感器、LED 五个模块只做了编译检查，运行时行为要等到有对应驱动的板子上再看。模块表那条检查遍历的是当前编译进来的模块，不会因为某个模块缺席而报错。
 
 另外，回归固件里的包内用例是 `SConstruct` 显式加进去的，不依赖 BSP 的 `RT_USING_UTEST` 配置。
@@ -318,6 +389,7 @@ python build/skill_qemu/run_llm_live.py
 
 ```
 msh /> utest_run -thread agent.device_tools
+msh /> utest_run -thread agent.memory
 ```
 
 ### 6.3 用对话验证设备工具

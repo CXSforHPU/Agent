@@ -373,7 +373,13 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 开 `PKG_AGENT_MEMORY_AUTO_STORE` 后，上下文压缩丢弃旧历史前会把最近几轮用户原话存进回忆层，摘要写漏的细节还能查回来。这个选项会把用户原话多留一份，隐私敏感的产品不要开。
 
-开 `PKG_AGENT_MEMORY_PERSIST` 后，agent 启动时从 `PKG_AGENT_MEMORY_FILE` 读记忆，停止时写回。这个选项会自动选上 DFS 与 POSIX 文件接口，只需要再挂载一个可写的文件系统。写文件先写临时文件再改名，掉电不会留下半个文件。文件是纯文本，一行一条，例如 `c 3 User prefers Celsius.`。默认路径 `/agent_memory.dat`。
+开 `PKG_AGENT_MEMORY_PERSIST` 后，agent 启动时从 `PKG_AGENT_MEMORY_FILE` 读记忆，停止时写回。这个选项会自动选上 DFS 与 POSIX 文件接口，只需要再挂载一个可写的文件系统。文件是纯文本，一行一条，例如 `c 3 User prefers Celsius.`。默认路径 `/agent_memory.dat`。
+
+保存先写 `<文件>.tmp` 再改名。目标文件已存在时改名会报 `FR_EXIST`，这时先删旧文件再改名，因为 elmfat 的 rename 不覆盖同名文件。加载时主文件打不开会去读 `.tmp`，掉电停在改名之前也能恢复。QEMU vexpress-a9 的 SD 卡上验证过两次启动：第一次写入两条，第二次读回两条，写入 14 项、读回 12 项检查全部通过。落盘代码占 1,708 字节 Flash，`.data` 与 `.bss` 不变。复现步骤见 [docs/testing.md](docs/testing.md) 3.8 节。
+
+![分层记忆的注入与落盘](./docs/diagrams/memory-layers.png)
+
+draw.io 源文件：[memory-layers.drawio](./docs/diagrams/memory-layers.drawio)
 
 整块记忆由 `PKG_AGENT_MEMORY_ENABLE` 控制，默认关闭。关闭时 `memory.h` 提供同名空实现，调用点不用写条件编译；槽位、每条长度、注入上限都在 `Agent Memory` 菜单里按 RAM 预算调。
 
@@ -587,7 +593,7 @@ a2a_activate 192.168.137.1 8080
 | 协议与 JSON | 25,076 | 两份协议都编；改 SConscript 只留一份可省 7,952 |
 | 内嵌技能 | 20,527 | `PKG_AGENT_SKILL_DIR` 指向只放要留的技能 |
 | 通道 | 15,309 | A2A 10,965，WebSocket 4,344 |
-| 分层记忆 | 10,925 | `PKG_AGENT_MEMORY_ENABLE` |
+| 分层记忆 | 10,925 | `PKG_AGENT_MEMORY_ENABLE`；再开落盘多 1,708 |
 | 多模态与语音 | 9,683 | 关多模态后 `file_op` 与 `stt` 一起消失 |
 | 工具注册与支撑 | 9,109 | 必编 |
 | MCP 客户端 | 8,408 | `PKG_AGENT_TOOL_MCP_ENABLE` |
@@ -610,6 +616,15 @@ a2a_activate 192.168.137.1 8080
 scons -f build/skill_qemu/SConstruct
 python -B build/skill_qemu/run.py
 ```
+
+记忆落盘单独做一份最小固件，两次启动验证写入与读回：
+
+```bash
+scons -f build/mem_persist/SConstruct
+python -B build/mem_persist/run.py
+```
+
+第一次启动写入两条记忆并落盘，第二次启动读回两条。写入 14 项、读回 12 项检查全部通过，落盘代码多占 1,708 字节 Flash。
 
 离线回归不需要网络，也不需要真实外设。回归开始前脚本会发一条 `agent_protocol openai`，因为夹具是 OpenAI 格式的 SSE，跟固件的默认协议无关。真链路回归另有一条，板子经 QEMU 的网卡连到 PC 上的网关，真的调一遍桌面工具：
 
