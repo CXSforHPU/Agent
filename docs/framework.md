@@ -711,7 +711,7 @@ A2A 的选项在 `A2A Channel - board connects to Web` 菜单里。
 | `PKG_AGENT_MEMORY_TOPK` | 每轮注入的回忆条数，默认 3，范围 1～8 |
 | `PKG_AGENT_MEMORY_INJECT_BYTES` | 注入块上限，默认 1024，范围 256～4096 |
 | `PKG_AGENT_MEMORY_AUTO_STORE` | 压缩前把用户原话存进回忆层，默认关闭；会保留原话，注意隐私 |
-| `PKG_AGENT_MEMORY_PERSIST` | 记忆落盘，依赖 `RT_USING_DFS`，默认关闭 |
+| `PKG_AGENT_MEMORY_PERSIST` | 记忆落盘，默认关闭；打开后自动选上 DFS 与 POSIX 文件接口 |
 | `PKG_AGENT_MEMORY_FILE` | 落盘路径，默认 `/agent_memory.dat`；名字不能以 `_PATH` 结尾，否则 mk_rtconfig 会去掉后缀 |
 
 ### 多模态与语音
@@ -759,7 +759,7 @@ MQTT 选项较多，见 [tool_mqtt.md](./tool_mqtt.md) 的配置章节。常用�
 - MQTT 工具需要 paho-mqtt。
 - 音频驱动需要 wavplayer、录音支持与音频框架。
 - 多模态需要 DFS 与 POSIX 文件接口。
-- 记忆持久化需要 DFS 与 POSIX 文件接口，不开持久化则没有额外依赖。
+- 记忆持久化会在 Kconfig 里选上 DFS 与 POSIX 文件接口，不开持久化则没有额外依赖。
 
 `SConscript` 的编译范围：
 

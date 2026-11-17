@@ -373,7 +373,7 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 开 `PKG_AGENT_MEMORY_AUTO_STORE` 后，上下文压缩丢弃旧历史前会把最近几轮用户原话存进回忆层，摘要写漏的细节还能查回来。这个选项会把用户原话多留一份，隐私敏感的产品不要开。
 
-开 `PKG_AGENT_MEMORY_PERSIST` 后，agent 启动时从 `PKG_AGENT_MEMORY_FILE` 读记忆，停止时写回。写文件先写临时文件再改名，掉电不会留下半个文件。文件是纯文本，一行一条，例如 `c 3 User prefers Celsius.`。要挂载好文件系统，默认路径 `/agent_memory.dat`。
+开 `PKG_AGENT_MEMORY_PERSIST` 后，agent 启动时从 `PKG_AGENT_MEMORY_FILE` 读记忆，停止时写回。这个选项会自动选上 DFS 与 POSIX 文件接口，只需要再挂载一个可写的文件系统。写文件先写临时文件再改名，掉电不会留下半个文件。文件是纯文本，一行一条，例如 `c 3 User prefers Celsius.`。默认路径 `/agent_memory.dat`。
 
 整块记忆由 `PKG_AGENT_MEMORY_ENABLE` 控制，默认关闭。关闭时 `memory.h` 提供同名空实现，调用点不用写条件编译；槽位、每条长度、注入上限都在 `Agent Memory` 菜单里按 RAM 预算调。
 
@@ -685,7 +685,7 @@ agent card loaded: name=端到端测试卡, file=/agent_card.json
 - webnet（仅 WebNet 与 A2A 通道）
 - paho-mqtt（仅 MQTT 工具）
 - wavplayer（仅音频驱动）
-- DFS / POSIX（仅多模态文件操作）
+- DFS / POSIX（多模态文件操作与记忆持久化）
 
 ## 开源协议
 
