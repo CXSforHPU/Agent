@@ -434,113 +434,348 @@ static void anthropic_add_headers(struct webclient_session *session)
     webclient_header_fields_add(session, version_header);
 }
 
+/* 关心的字段路径，顺序与 anthropic_watch_t 对应 */
+enum
+{
+    ANTHROPIC_W_TYPE = 0,
+    ANTHROPIC_W_INDEX,
+    ANTHROPIC_W_BLOCK,
+    ANTHROPIC_W_BLOCK_TYPE,
+    ANTHROPIC_W_BLOCK_TEXT,
+    ANTHROPIC_W_BLOCK_THINKING,
+    ANTHROPIC_W_BLOCK_ID,
+    ANTHROPIC_W_BLOCK_NAME,
+    ANTHROPIC_W_DELTA,
+    ANTHROPIC_W_DELTA_TYPE,
+    ANTHROPIC_W_DELTA_TEXT,
+    ANTHROPIC_W_DELTA_THINKING,
+    ANTHROPIC_W_DELTA_JSON,
+    ANTHROPIC_W_STOP_REASON
+};
+
+static const char *const g_anthropic_watches[] =
+{
+    "type",
+    "index",
+    "content_block",
+    "content_block.type",
+    "content_block.text",
+    "content_block.thinking",
+    "content_block.id",
+    "content_block.name",
+    "delta",
+    "delta.type",
+    "delta.text",
+    "delta.thinking",
+    "delta.partial_json",
+    "delta.stop_reason"
+};
+
+#define ANTHROPIC_TAG_LEN 24
+
+typedef enum
+{
+    ANTHROPIC_EVENT_OTHER = 0,
+    ANTHROPIC_EVENT_BLOCK_START,
+    ANTHROPIC_EVENT_BLOCK_DELTA,
+    ANTHROPIC_EVENT_BLOCK_STOP,
+    ANTHROPIC_EVENT_MESSAGE_DELTA,
+    ANTHROPIC_EVENT_MESSAGE_STOP,
+    ANTHROPIC_EVENT_ERROR
+} anthropic_event_kind_t;
+
+typedef enum
+{
+    ANTHROPIC_BLOCK_OTHER = 0,
+    ANTHROPIC_BLOCK_TEXT,
+    ANTHROPIC_BLOCK_TOOL_USE,
+    ANTHROPIC_BLOCK_THINKING
+} anthropic_block_kind_t;
+
+typedef enum
+{
+    ANTHROPIC_DELTA_OTHER = 0,
+    ANTHROPIC_DELTA_TEXT,
+    ANTHROPIC_DELTA_THINKING,
+    ANTHROPIC_DELTA_JSON
+} anthropic_delta_kind_t;
+
+typedef struct
+{
+    agent_protocol_stream_t *stream;
+    rt_bool_t saw_type;
+    anthropic_event_kind_t event;
+    anthropic_block_kind_t block;
+    anthropic_delta_kind_t delta;
+    int index;
+    rt_bool_t done;
+    char tag[ANTHROPIC_TAG_LEN];
+    int tag_len;
+    char stop[ANTHROPIC_TAG_LEN];
+    int stop_len;
+    char tool_id[AGENT_PROTOCOL_TOOL_ID_LEN];
+    int tool_id_len;
+    char tool_name[AGENT_PROTOCOL_TOOL_NAME_LEN];
+    int tool_name_len;
+} anthropic_event_t;
+
+static anthropic_event_kind_t anthropic_event_of(const char *text)
+{
+    if (rt_strcmp(text, "content_block_start") == 0) return ANTHROPIC_EVENT_BLOCK_START;
+    if (rt_strcmp(text, "content_block_delta") == 0) return ANTHROPIC_EVENT_BLOCK_DELTA;
+    if (rt_strcmp(text, "content_block_stop") == 0) return ANTHROPIC_EVENT_BLOCK_STOP;
+    if (rt_strcmp(text, "message_delta") == 0) return ANTHROPIC_EVENT_MESSAGE_DELTA;
+    if (rt_strcmp(text, "message_stop") == 0) return ANTHROPIC_EVENT_MESSAGE_STOP;
+    if (rt_strcmp(text, "error") == 0) return ANTHROPIC_EVENT_ERROR;
+
+    return ANTHROPIC_EVENT_OTHER;
+}
+
+static anthropic_block_kind_t anthropic_block_of(const char *text)
+{
+    if (rt_strcmp(text, "text") == 0) return ANTHROPIC_BLOCK_TEXT;
+    if (rt_strcmp(text, "tool_use") == 0) return ANTHROPIC_BLOCK_TOOL_USE;
+    if (rt_strcmp(text, "thinking") == 0) return ANTHROPIC_BLOCK_THINKING;
+
+    return ANTHROPIC_BLOCK_OTHER;
+}
+
+static anthropic_delta_kind_t anthropic_delta_of(const char *text)
+{
+    if (rt_strcmp(text, "text_delta") == 0) return ANTHROPIC_DELTA_TEXT;
+    if (rt_strcmp(text, "thinking_delta") == 0) return ANTHROPIC_DELTA_THINKING;
+    if (rt_strcmp(text, "input_json_delta") == 0) return ANTHROPIC_DELTA_JSON;
+
+    return ANTHROPIC_DELTA_OTHER;
+}
+
+static void anthropic_stop_reason(anthropic_event_t *ev)
+{
+    agent_protocol_stream_t *stream = ev->stream;
+
+    ev->stop[ev->stop_len] = '\0';
+
+    if (rt_strcmp(ev->stop, "end_turn") == 0)
+    {
+        stream->natural_stop = RT_TRUE;
+    }
+    else if (rt_strcmp(ev->stop, "tool_use") == 0)
+    {
+        stream->saw_tool_call = RT_TRUE;
+    }
+    else if (rt_strcmp(ev->stop, "max_tokens") == 0)
+    {
+        /* 写到 max_tokens 就停了，内容本身是好的，只是没写完 */
+        stream->truncated = RT_TRUE;
+        stream->content_lost = RT_TRUE;
+    }
+    else
+    {
+        /* stop_sequence / refusal 等都不算完整收尾 */
+        stream->content_lost = RT_TRUE;
+    }
+    ev->stop_len = 0;
+}
+
+/*
+ * @brief 累积事件/块/增量类型标签，结束时返回完整值
+ * @return RT_TRUE 字符串已完整
+ */
+static rt_bool_t anthropic_tag_done(anthropic_event_t *ev, const agent_json_match_t *match)
+{
+    if (agent_protocol_text_append(ev->tag, sizeof(ev->tag), &ev->tag_len,
+                                   match->text, match->len))
+    {
+        ev->stream->content_lost = RT_TRUE;
+    }
+    if (!match->last)
+    {
+        return RT_FALSE;
+    }
+    ev->tag[ev->tag_len] = '\0';
+
+    return RT_TRUE;
+}
+
+static void anthropic_on_match(void *user, int watch, const agent_json_match_t *match)
+{
+    anthropic_event_t *ev = (anthropic_event_t *)user;
+    agent_protocol_stream_t *stream = ev->stream;
+
+    switch (watch)
+    {
+    case ANTHROPIC_W_TYPE:
+        if (match->type != AGENT_JSON_VALUE_STRING) break;
+        ev->saw_type = RT_TRUE;
+        if (anthropic_tag_done(ev, match))
+        {
+            ev->event = anthropic_event_of(ev->tag);
+            ev->tag_len = 0;
+
+            if (ev->event == ANTHROPIC_EVENT_MESSAGE_STOP)
+            {
+                stream->stream_done = RT_TRUE;
+                ev->done = RT_TRUE;
+            }
+            else if (ev->event == ANTHROPIC_EVENT_ERROR)
+            {
+                LOG_E("anthropic: error event received");
+                stream->content_lost = RT_TRUE;
+            }
+        }
+        break;
+
+    case ANTHROPIC_W_INDEX:
+        if (match->type == AGENT_JSON_VALUE_NUMBER)
+        {
+            ev->index = match->number;
+        }
+        break;
+
+    case ANTHROPIC_W_BLOCK:
+        ev->block = ANTHROPIC_BLOCK_OTHER;
+        ev->tool_id_len = 0;
+        ev->tool_name_len = 0;
+        break;
+
+    case ANTHROPIC_W_BLOCK_TYPE:
+        if (match->type != AGENT_JSON_VALUE_STRING) break;
+        if (anthropic_tag_done(ev, match))
+        {
+            ev->block = anthropic_block_of(ev->tag);
+            ev->tag_len = 0;
+
+            if (ev->block == ANTHROPIC_BLOCK_TOOL_USE)
+            {
+                stream->saw_tool_call = RT_TRUE;
+            }
+        }
+        break;
+
+    case ANTHROPIC_W_BLOCK_TEXT:
+        if (ev->block == ANTHROPIC_BLOCK_TEXT && match->type == AGENT_JSON_VALUE_STRING)
+        {
+            agent_protocol_add_content(stream, match->text);
+        }
+        break;
+
+    case ANTHROPIC_W_BLOCK_THINKING:
+        if (ev->block == ANTHROPIC_BLOCK_THINKING && match->type == AGENT_JSON_VALUE_STRING)
+        {
+            agent_protocol_add_reasoning(stream, match->text);
+        }
+        break;
+
+    case ANTHROPIC_W_BLOCK_ID:
+        if (match->type != AGENT_JSON_VALUE_STRING) break;
+        if (agent_protocol_text_append(ev->tool_id, sizeof(ev->tool_id), &ev->tool_id_len,
+                                       match->text, match->len))
+        {
+            stream->content_lost = RT_TRUE;
+        }
+        if (match->last)
+        {
+            agent_protocol_tool_begin(stream, ev->index, ev->tool_id, RT_NULL);
+            ev->tool_id_len = 0;
+        }
+        break;
+
+    case ANTHROPIC_W_BLOCK_NAME:
+        if (match->type != AGENT_JSON_VALUE_STRING) break;
+        if (agent_protocol_text_append(ev->tool_name, sizeof(ev->tool_name), &ev->tool_name_len,
+                                       match->text, match->len))
+        {
+            stream->content_lost = RT_TRUE;
+        }
+        if (match->last)
+        {
+            agent_protocol_tool_begin(stream, ev->index, RT_NULL, ev->tool_name);
+            ev->tool_name_len = 0;
+        }
+        break;
+
+    case ANTHROPIC_W_DELTA:
+        ev->delta = ANTHROPIC_DELTA_OTHER;
+        break;
+
+    case ANTHROPIC_W_DELTA_TYPE:
+        if (match->type != AGENT_JSON_VALUE_STRING) break;
+        if (anthropic_tag_done(ev, match))
+        {
+            ev->delta = anthropic_delta_of(ev->tag);
+            ev->tag_len = 0;
+        }
+        break;
+
+    case ANTHROPIC_W_DELTA_TEXT:
+        if (ev->delta == ANTHROPIC_DELTA_TEXT && match->type == AGENT_JSON_VALUE_STRING)
+        {
+            agent_protocol_add_content(stream, match->text);
+        }
+        break;
+
+    case ANTHROPIC_W_DELTA_THINKING:
+        if (ev->delta == ANTHROPIC_DELTA_THINKING && match->type == AGENT_JSON_VALUE_STRING)
+        {
+            agent_protocol_add_reasoning(stream, match->text);
+        }
+        break;
+
+    case ANTHROPIC_W_DELTA_JSON:
+        if (ev->delta == ANTHROPIC_DELTA_JSON && match->type == AGENT_JSON_VALUE_STRING)
+        {
+            agent_protocol_tool_args(stream, ev->index, match->text);
+        }
+        break;
+
+    case ANTHROPIC_W_STOP_REASON:
+        if (match->type != AGENT_JSON_VALUE_STRING) break;
+        agent_protocol_text_append(ev->stop, sizeof(ev->stop), &ev->stop_len,
+                                   match->text, match->len);
+        if (match->last)
+        {
+            anthropic_stop_reason(ev);
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
 /*
  * @brief 解析一条 Anthropic SSE 事件
- * @param json   事件 JSON
+ * @param json   事件 JSON 文本
+ * @param len    文本长度
  * @param stream 流状态
  * @return RT_TRUE 表示流已结束
  */
-static rt_bool_t anthropic_parse_event(cJSON *json, agent_protocol_stream_t *stream)
+static rt_bool_t anthropic_parse_event(const char *json, int len, agent_protocol_stream_t *stream)
 {
-    const char *type;
-    cJSON *index_node;
+    anthropic_event_t ev;
 
     if (!json || !stream)
     {
         return RT_FALSE;
     }
 
-    type = get_string(json, "type");
-    if (!type)
+    rt_memset(&ev, 0, sizeof(ev));
+    ev.stream = stream;
+
+    if (agent_json_scan(json, len, g_anthropic_watches,
+                        sizeof(g_anthropic_watches) / sizeof(g_anthropic_watches[0]),
+                        anthropic_on_match, &ev) != RT_EOK)
     {
         stream->content_lost = RT_TRUE;
         return RT_FALSE;
     }
 
-    index_node = cJSON_GetObjectItemCaseSensitive(json, "index");
+    if (!ev.saw_type)
     {
-        int index = (index_node && cJSON_IsNumber(index_node)) ? index_node->valueint : 0;
-
-        if (rt_strcmp(type, "content_block_start") == 0)
-        {
-            cJSON *block = cJSON_GetObjectItemCaseSensitive(json, "content_block");
-            const char *block_type = get_string(block, "type");
-
-            if (block_type && rt_strcmp(block_type, "tool_use") == 0)
-            {
-                stream->saw_tool_call = RT_TRUE;
-                agent_protocol_tool_begin(stream, index,
-                                          get_string(block, "id"),
-                                          get_string(block, "name"));
-            }
-            else if (block_type && rt_strcmp(block_type, "text") == 0)
-            {
-                agent_protocol_add_content(stream, get_string(block, "text"));
-            }
-            else if (block_type && rt_strcmp(block_type, "thinking") == 0)
-            {
-                agent_protocol_add_reasoning(stream, get_string(block, "thinking"));
-            }
-        }
-        else if (rt_strcmp(type, "content_block_delta") == 0)
-        {
-            cJSON *delta = cJSON_GetObjectItemCaseSensitive(json, "delta");
-            const char *delta_type = get_string(delta, "type");
-
-            if (delta_type && rt_strcmp(delta_type, "text_delta") == 0)
-            {
-                agent_protocol_add_content(stream, get_string(delta, "text"));
-            }
-            else if (delta_type && rt_strcmp(delta_type, "thinking_delta") == 0)
-            {
-                agent_protocol_add_reasoning(stream, get_string(delta, "thinking"));
-            }
-            else if (delta_type && rt_strcmp(delta_type, "input_json_delta") == 0)
-            {
-                agent_protocol_tool_args(stream, index, get_string(delta, "partial_json"));
-            }
-        }
-        else if (rt_strcmp(type, "message_delta") == 0)
-        {
-            cJSON *delta = cJSON_GetObjectItemCaseSensitive(json, "delta");
-            const char *stop_reason = get_string(delta, "stop_reason");
-
-            if (stop_reason)
-            {
-                if (rt_strcmp(stop_reason, "end_turn") == 0)
-                {
-                    stream->natural_stop = RT_TRUE;
-                }
-                else if (rt_strcmp(stop_reason, "tool_use") == 0)
-                {
-                    stream->saw_tool_call = RT_TRUE;
-                }
-                else if (rt_strcmp(stop_reason, "max_tokens") == 0)
-                {
-                    /* 写到 max_tokens 就停了，内容本身是好的，只是没写完 */
-                    stream->truncated = RT_TRUE;
-                    stream->content_lost = RT_TRUE;
-                }
-                else
-                {
-                    /* stop_sequence / refusal 等都不算完整收尾 */
-                    stream->content_lost = RT_TRUE;
-                }
-            }
-        }
-        else if (rt_strcmp(type, "message_stop") == 0)
-        {
-            stream->stream_done = RT_TRUE;
-            return RT_TRUE;
-        }
-        else if (rt_strcmp(type, "error") == 0)
-        {
-            LOG_E("anthropic: error event received");
-            stream->content_lost = RT_TRUE;
-        }
+        stream->content_lost = RT_TRUE;
     }
 
-    return RT_FALSE;
+    return ev.done;
 }
 
 static const agent_protocol_ops_t g_anthropic_ops =

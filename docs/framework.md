@@ -159,14 +159,15 @@ assistant 消息必须排在对应的 tool 消息之前，否则 OpenAI 兼容�
 draw.io 源文件：[llm-protocol.drawio](diagrams/llm-protocol.drawio)
 
 - 请求体、鉴权头、SSE 事件解析都由协议模块实现，`chat.c` 不区分协议。
+- 响应侧不建 cJSON 树：协议模块只声明关心的字段路径，交给 `src/utils/json_reader.c` 一次扫描。字符串边扫边解码，按 64 字节分片回调，整条事件不申请堆。
 - `max_tokens` 由调用方指定：普通对话为 32 × 1024，上下文摘要请求为 512。
 - webclient 超时为 30 s。
 - 解析 `data:` 开头的 SSE 行，冒号后允许一个空格，支持 LF 和 CRLF 换行。OpenAI 遇到 `[DONE]` 结束，Anthropic 遇到 `message_stop` 结束。
 - OpenAI 的思考内容优先取 `delta.reasoning_content`，没有时取 `delta.reasoning`；Anthropic 取 `delta.thinking`。
 - OpenAI 的正文取 `delta.content`；Anthropic 取 `delta.text_delta.text`。
-- 工具调用按 `index` 合并。`id`、`name` 取第一个非空值，`arguments` 逐片追加，超过 `PKG_AGENT_MAX_TOOL_ARG_LEN` 后丢弃后续分片并打印告警。
+- 工具调用按 `index` 合并。`id`、`name` 取第一个非空值，`arguments` 逐片追加在不大于 `PKG_AGENT_MAX_TOOL_ARG_LEN` 的缓冲里，超限后丢弃后续分片并打印告警。
 - 单行超过 `PKG_AGENT_STREAM_LINE_BUFSZ` 时整行丢弃，并提示调大该选项。
-- JSON 解析失败时重置行缓冲，继续处理后续数据。
+- 事件 JSON 语法错误或字段类型不对时标记响应不完整，跳过该事件，后面的行照常处理。
 - 响应结束后归一化工具调用：缺失 `id` 用 `call_<index>`，空参数改为 `{}`，没有函数名的调用丢弃。
 - 返回 `ChatResponse_t`，使用后必须调用 `chat_response_free()`。
 
@@ -326,6 +327,8 @@ Utils 按模块拆成多个 c 文件，`src/utils/` 下一个 .c 对应 `inc/uti
 | `src/utils/format.c` | `format_text()`、`create_content_array()`、`to_content()` |
 | `src/utils/tool_json.c` | `create_tool_item()`、`create_param_obj()`、`create_property()`，以及工具模块表和 `agent_tool_register_modules()` |
 | `src/utils/protocol/` | LLM 协议模块，统一入口 `inc/utils/protocol.h`，见下 |
+| `src/utils/json_reader.c` | 流式 JSON 字段抽取，响应解析用，不建树、不申请堆 |
+| `src/utils/json_writer.c` | JSON 直写，请求体跳过 cJSON 中间树 |
 | `src/utils/file_op.c` | 文件操作线程与 `msh_agent_upload_download` |
 | `src/utils/stt.c` | 本地语音转写，见 3.9 |
 | `src/utils/tts.c` | 文本转语音，见 3.10 |

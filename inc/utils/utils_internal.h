@@ -10,6 +10,7 @@
  *   message.c     流式打印与文本注入
  *   format.c      Messages 转 API content
  *   tool_json.c   工具定义 JSON 拼装
+ *   json_reader.c 响应报文按字段扫描，不建树、不分配
  *   protocol/     LLM 协议模块，按 OpenAI 与 Anthropic 分文件，统一入口 utils/protocol.h
  *   webclient_util.c  webclient 超时设置，绕开 v2.2.0 的两个坑
  *   agent_endpoint.c  外部服务器地址，手动填或向控制台自动获取
@@ -32,6 +33,7 @@
 #include "utils/message.h"
 #include "utils/format.h"
 #include "utils/tool_json.h"
+#include "utils/json_reader.h"
 #include "utils/protocol.h"
 #include "utils/webclient_util.h"
 #include "utils/agent_report.h"

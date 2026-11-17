@@ -198,22 +198,12 @@ ChatResponse_t chat(
                         goto __success;
                     }
 
-                    cJSON *json = cJSON_ParseWithOpts(json_str, RT_NULL, cJSON_True);
-                    if (!json)
+                    /* 事件 JSON 直接交给协议扫描，不建 cJSON 树；解析失败由协议标记 */
+                    if (ops->parse_event(json_str, (int)rt_strlen(json_str), &stream))
                     {
-                        stream.content_lost = RT_TRUE;
-                        stream_len = 0;
-                        rt_memset(stream_buffer, 0, sizeof(stream_buffer));
-                        continue;
-                    }
-
-                    if (ops->parse_event(json, &stream))
-                    {
-                        cJSON_Delete(json);
                         stream_done = RT_TRUE;
                         goto __success;
                     }
-                    cJSON_Delete(json);
                 }
                 stream_len = 0;
                 rt_memset(stream_buffer, 0, sizeof(stream_buffer));

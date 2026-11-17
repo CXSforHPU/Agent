@@ -60,148 +60,256 @@ static void openai_add_headers(struct webclient_session *session)
     webclient_header_fields_add(session, auth_header);
 }
 
+/* 关心的字段路径，顺序与 openai_watch_t 对应 */
+enum
+{
+    OPENAI_W_ERROR = 0,
+    OPENAI_W_CHOICES,
+    OPENAI_W_CHOICE,
+    OPENAI_W_FINISH,
+    OPENAI_W_DELTA,
+    OPENAI_W_REASONING_CONTENT,
+    OPENAI_W_REASONING,
+    OPENAI_W_CONTENT,
+    OPENAI_W_TOOL_CALLS,
+    OPENAI_W_TOOL_ITEM,
+    OPENAI_W_TOOL_INDEX,
+    OPENAI_W_TOOL_ID,
+    OPENAI_W_TOOL_FUNCTION,
+    OPENAI_W_TOOL_NAME,
+    OPENAI_W_TOOL_ARGS
+};
+
+static const char *const g_openai_watches[] =
+{
+    "error",
+    "choices",
+    "choices.0",
+    "choices.0.finish_reason",
+    "choices.0.delta",
+    "choices.0.delta.reasoning_content",
+    "choices.0.delta.reasoning",
+    "choices.0.delta.content",
+    "choices.0.delta.tool_calls",
+    "choices.0.delta.tool_calls.*",
+    "choices.0.delta.tool_calls.*.index",
+    "choices.0.delta.tool_calls.*.id",
+    "choices.0.delta.tool_calls.*.function",
+    "choices.0.delta.tool_calls.*.function.name",
+    "choices.0.delta.tool_calls.*.function.arguments"
+};
+
+#define OPENAI_MAX_REASON 16
+
+typedef struct
+{
+    agent_protocol_stream_t *stream;
+    rt_bool_t saw_choices;
+    rt_bool_t choice_seen;
+    rt_bool_t delta_object;
+    rt_bool_t finish_string;
+    char finish[OPENAI_MAX_REASON];
+    int finish_len;
+    int tool_index;
+    char tool_id[AGENT_PROTOCOL_TOOL_ID_LEN];
+    int tool_id_len;
+    char tool_name[AGENT_PROTOCOL_TOOL_NAME_LEN];
+    int tool_name_len;
+} openai_event_t;
+
+static void openai_finish_reason(openai_event_t *ev)
+{
+    agent_protocol_stream_t *stream = ev->stream;
+
+    ev->finish_string = RT_TRUE;
+    ev->finish[ev->finish_len] = '\0';
+
+    if (rt_strcmp(ev->finish, "stop") == 0)
+    {
+        stream->natural_stop = RT_TRUE;
+        return;
+    }
+
+    /* length：写到 max_tokens 就停了，内容本身是好的，只是没写完 */
+    if (rt_strcmp(ev->finish, "length") == 0)
+    {
+        stream->truncated = RT_TRUE;
+    }
+    stream->content_lost = RT_TRUE;
+}
+
+static void openai_on_match(void *user, int watch, const agent_json_match_t *match)
+{
+    openai_event_t *ev = (openai_event_t *)user;
+    agent_protocol_stream_t *stream = ev->stream;
+
+    switch (watch)
+    {
+    case OPENAI_W_ERROR:
+        stream->content_lost = RT_TRUE;
+        break;
+
+    case OPENAI_W_CHOICES:
+        ev->saw_choices = RT_TRUE;
+        if (match->type != AGENT_JSON_VALUE_ARRAY)
+        {
+            stream->content_lost = RT_TRUE;
+        }
+        break;
+
+    case OPENAI_W_CHOICE:
+        ev->choice_seen = RT_TRUE;
+        if (match->type != AGENT_JSON_VALUE_OBJECT)
+        {
+            stream->content_lost = RT_TRUE;
+        }
+        break;
+
+    case OPENAI_W_FINISH:
+        if (match->type != AGENT_JSON_VALUE_STRING)
+        {
+            break;
+        }
+        agent_protocol_text_append(ev->finish, sizeof(ev->finish), &ev->finish_len,
+                                   match->text, match->len);
+        if (match->last)
+        {
+            openai_finish_reason(ev);
+        }
+        break;
+
+    case OPENAI_W_DELTA:
+        if (match->type == AGENT_JSON_VALUE_OBJECT)
+        {
+            ev->delta_object = RT_TRUE;
+        }
+        break;
+
+    case OPENAI_W_REASONING_CONTENT:
+    case OPENAI_W_REASONING:
+        if (match->type == AGENT_JSON_VALUE_STRING)
+        {
+            agent_protocol_add_reasoning(stream, match->text);
+        }
+        break;
+
+    case OPENAI_W_CONTENT:
+        if (match->type == AGENT_JSON_VALUE_STRING)
+        {
+            agent_protocol_add_content(stream, match->text);
+        }
+        else if (match->type != AGENT_JSON_VALUE_NULL)
+        {
+            stream->content_lost = RT_TRUE;
+        }
+        break;
+
+    case OPENAI_W_TOOL_CALLS:
+        /* null 视为没有工具调用；不是数组也同样按出现工具调用处理 */
+        if (match->type != AGENT_JSON_VALUE_ARRAY && match->type != AGENT_JSON_VALUE_NULL)
+        {
+            stream->saw_tool_call = RT_TRUE;
+        }
+        break;
+
+    case OPENAI_W_TOOL_ITEM:
+        stream->saw_tool_call = RT_TRUE;
+        ev->tool_index = (match->index_count > 0) ? match->index[0] : 0;
+        ev->tool_id_len = 0;
+        ev->tool_name_len = 0;
+        break;
+
+    case OPENAI_W_TOOL_INDEX:
+        if (match->type == AGENT_JSON_VALUE_NUMBER)
+        {
+            ev->tool_index = match->number;
+        }
+        break;
+
+    case OPENAI_W_TOOL_ID:
+        if (match->type != AGENT_JSON_VALUE_STRING)
+        {
+            break;
+        }
+        if (agent_protocol_text_append(ev->tool_id, sizeof(ev->tool_id), &ev->tool_id_len,
+                                       match->text, match->len))
+        {
+            stream->content_lost = RT_TRUE;
+        }
+        if (match->last)
+        {
+            agent_protocol_tool_begin(stream, ev->tool_index, ev->tool_id, RT_NULL);
+            ev->tool_id_len = 0;
+        }
+        break;
+
+    case OPENAI_W_TOOL_FUNCTION:
+        break;
+
+    case OPENAI_W_TOOL_NAME:
+        if (match->type != AGENT_JSON_VALUE_STRING)
+        {
+            break;
+        }
+        if (agent_protocol_text_append(ev->tool_name, sizeof(ev->tool_name), &ev->tool_name_len,
+                                       match->text, match->len))
+        {
+            stream->content_lost = RT_TRUE;
+        }
+        if (match->last)
+        {
+            agent_protocol_tool_begin(stream, ev->tool_index, RT_NULL, ev->tool_name);
+            ev->tool_name_len = 0;
+        }
+        break;
+
+    case OPENAI_W_TOOL_ARGS:
+        if (match->type == AGENT_JSON_VALUE_STRING)
+        {
+            agent_protocol_tool_args(stream, ev->tool_index, match->text);
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
 /*
  * @brief 解析一条 OpenAI SSE 事件
- * @param json   事件 JSON
+ * @param json   事件 JSON 文本
+ * @param len    文本长度
  * @param stream 流状态
  * @return 恒为 RT_FALSE，OpenAI 用 data: [DONE] 收尾
  */
-static rt_bool_t openai_parse_event(cJSON *json, agent_protocol_stream_t *stream)
+static rt_bool_t openai_parse_event(const char *json, int len, agent_protocol_stream_t *stream)
 {
-    cJSON *choices;
-    cJSON *choice;
+    openai_event_t ev;
 
     if (!json || !stream)
     {
         return RT_FALSE;
     }
 
-    choices = cJSON_GetObjectItemCaseSensitive(json, "choices");
-    if (!cJSON_IsArray(choices) || cJSON_GetObjectItemCaseSensitive(json, "error"))
+    rt_memset(&ev, 0, sizeof(ev));
+    ev.stream = stream;
+
+    if (agent_json_scan(json, len, g_openai_watches,
+                        sizeof(g_openai_watches) / sizeof(g_openai_watches[0]),
+                        openai_on_match, &ev) != RT_EOK)
     {
         stream->content_lost = RT_TRUE;
-    }
-    if (!choices || !cJSON_IsArray(choices))
-    {
         return RT_FALSE;
     }
 
-    choice = cJSON_GetArrayItem(choices, 0);
-    if (choice && !cJSON_IsObject(choice))
+    /* 没有 choices 的事件，或 choice 里既没有 delta 也没有 finish_reason，都算异常报文 */
+    if (!ev.saw_choices)
     {
         stream->content_lost = RT_TRUE;
     }
-    if (!choice || !cJSON_IsObject(choice))
+    if (ev.choice_seen && !ev.delta_object && !ev.finish_string)
     {
-        return RT_FALSE;
-    }
-
-    {
-        cJSON *finish = cJSON_GetObjectItemCaseSensitive(choice, "finish_reason");
-        cJSON *delta = cJSON_GetObjectItemCaseSensitive(choice, "delta");
-
-        if (cJSON_IsString(finish))
-        {
-            stream->natural_stop = (rt_strcmp(finish->valuestring, "stop") == 0);
-            /* length：写到 max_tokens 就停了，内容本身是好的，只是没写完 */
-            if (rt_strcmp(finish->valuestring, "length") == 0)
-            {
-                stream->truncated = RT_TRUE;
-            }
-            if (!stream->natural_stop) stream->content_lost = RT_TRUE;
-        }
-        if (!cJSON_IsObject(delta) && !cJSON_IsString(finish))
-        {
-            stream->content_lost = RT_TRUE;
-        }
-
-        if (delta && cJSON_IsObject(delta))
-        {
-            /* 思考过程：兼容 reasoning_content（OpenAI 兼容推理模型）与 reasoning 两种字段名 */
-            cJSON *reasoning_field = cJSON_GetObjectItemCaseSensitive(delta, "reasoning_content");
-
-            if (!reasoning_field || !cJSON_IsString(reasoning_field))
-            {
-                reasoning_field = cJSON_GetObjectItemCaseSensitive(delta, "reasoning");
-            }
-            if (reasoning_field && cJSON_IsString(reasoning_field))
-            {
-                agent_protocol_add_reasoning(stream, reasoning_field->valuestring);
-            }
-
-            /* 回答正文，空分片不产生输出 */
-            {
-                cJSON *content_field = cJSON_GetObjectItemCaseSensitive(delta, "content");
-
-                if (content_field && !cJSON_IsNull(content_field) && !cJSON_IsString(content_field))
-                {
-                    stream->content_lost = RT_TRUE;
-                }
-                if (content_field && cJSON_IsString(content_field))
-                {
-                    agent_protocol_add_content(stream, content_field->valuestring);
-                }
-            }
-
-            /* 流式拼接 tool_calls */
-            {
-                cJSON *tc_arr = cJSON_GetObjectItemCaseSensitive(delta, "tool_calls");
-
-                if (tc_arr && !cJSON_IsNull(tc_arr) &&
-                    (!cJSON_IsArray(tc_arr) || cJSON_GetArraySize(tc_arr) > 0))
-                {
-                    stream->saw_tool_call = RT_TRUE;
-                }
-                if (tc_arr && cJSON_IsArray(tc_arr))
-                {
-                    int arr_sz = cJSON_GetArraySize(tc_arr);
-
-                    for (int j = 0; j < arr_sz; j++)
-                    {
-                        cJSON *tc_item = cJSON_GetArrayItem(tc_arr, j);
-                        cJSON *id_node;
-                        cJSON *func_node;
-                        cJSON *idx_node;
-                        int idx;
-
-                        if (!tc_item || !cJSON_IsObject(tc_item))
-                        {
-                            continue;
-                        }
-
-                        id_node = cJSON_GetObjectItemCaseSensitive(tc_item, "id");
-                        func_node = cJSON_GetObjectItemCaseSensitive(tc_item, "function");
-                        idx_node = cJSON_GetObjectItemCaseSensitive(tc_item, "index");
-
-                        /* 分片容错：只有首个分片带 id/type，后续分片这些字段可能为 null 或缺失 */
-                        idx = (idx_node && cJSON_IsNumber(idx_node)) ? idx_node->valueint : 0;
-
-                        agent_protocol_tool_begin(stream, idx,
-                                                  (id_node && cJSON_IsString(id_node)) ? id_node->valuestring : RT_NULL,
-                                                  RT_NULL);
-
-                        if (!func_node || !cJSON_IsObject(func_node))
-                        {
-                            continue;
-                        }
-
-                        {
-                            cJSON *name_node = cJSON_GetObjectItemCaseSensitive(func_node, "name");
-                            cJSON *args_node = cJSON_GetObjectItemCaseSensitive(func_node, "arguments");
-
-                            if (name_node && cJSON_IsString(name_node))
-                            {
-                                agent_protocol_tool_begin(stream, idx, RT_NULL, name_node->valuestring);
-                            }
-                            if (args_node && cJSON_IsString(args_node))
-                            {
-                                agent_protocol_tool_args(stream, idx, args_node->valuestring);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        stream->content_lost = RT_TRUE;
     }
 
     return RT_FALSE;

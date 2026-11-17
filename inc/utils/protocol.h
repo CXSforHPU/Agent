@@ -4,6 +4,7 @@
 /*
  * LLM 协议统一入口。请求拼装与响应解析在 src/utils/protocol/ 下按协议分文件：
  * protocol_openai.c 走 /chat/completions，protocol_anthropic.c 走 /v1/messages。
+ * 响应侧只关心少数字段，用 utils/json_reader.h 扫描，不建 cJSON 树。
  *
  * 上下文里的消息一律用规范格式（OpenAI 风格）：role + content，content 是字符串
  * 或 [{type, ...}] 数组，工具调用放在 tool_calls 里。各协议模块把规范视图直接
@@ -20,6 +21,22 @@
 #define AGENT_PROTOCOL_MAX_CONTENT_LEN    PKG_AGENT_MAX_CONTENT_LEN
 #define AGENT_PROTOCOL_MAX_TOOL_ARG_LEN   PKG_AGENT_MAX_TOOL_ARG_LEN
 
+/* 一轮回答里最多同时记录几个工具调用，超出部分丢弃并告警 */
+#define AGENT_PROTOCOL_MAX_TOOL_CALLS     8
+#define AGENT_PROTOCOL_TOOL_ID_LEN        64
+#define AGENT_PROTOCOL_TOOL_NAME_LEN      48
+
+/* 工具调用累积状态：id/name 定长，参数按需增长 */
+typedef struct agent_protocol_tool
+{
+    int index;                                      /* 协议里的调用序号 */
+    char id[AGENT_PROTOCOL_TOOL_ID_LEN];
+    char name[AGENT_PROTOCOL_TOOL_NAME_LEN];
+    char *args;                                     /* 参数 JSON，首次出现时分配 */
+    int args_len;
+    int args_cap;
+} agent_protocol_tool_t;
+
 /* 流式累积状态，两种协议共用 */
 typedef struct agent_protocol_stream
 {
@@ -28,7 +45,8 @@ typedef struct agent_protocol_stream
     char *content;                /* 回答正文 */
     int content_len;
     cJSON *tool_calls;            /* 归一化后的 tool_calls 数组 */
-    cJSON *tool_call_map;         /* 按 index 累积的分片 */
+    agent_protocol_tool_t *tools; /* 按 index 累积的调用分片 */
+    int tool_count;
     rt_bool_t is_answering;       /* 正文是否已经开始输出 */
     rt_bool_t content_lost;       /* 报文不完整或解析失败 */
     rt_bool_t saw_tool_call;      /* 本轮是否出现工具调用 */
@@ -49,8 +67,8 @@ typedef struct agent_protocol_ops
                               cJSON *tools, int max_tokens);
     /* 加鉴权与协议相关的请求头 */
     void (*add_headers)(struct webclient_session *session);
-    /* 解析一条 SSE 事件，返回 RT_TRUE 表示流已结束 */
-    rt_bool_t (*parse_event)(cJSON *json, agent_protocol_stream_t *stream);
+    /* 解析一条 SSE 事件的 JSON 文本，返回 RT_TRUE 表示流已结束 */
+    rt_bool_t (*parse_event)(const char *json, int len, agent_protocol_stream_t *stream);
 } agent_protocol_ops_t;
 
 /*
@@ -125,5 +143,16 @@ void agent_protocol_tool_args(agent_protocol_stream_t *stream, int index, const 
  * @param  stream 流状态
  */
 void agent_protocol_tool_finalize(agent_protocol_stream_t *stream);
+
+/*
+ * @brief  把一个字符串分片追加到定长缓冲
+ * @param  buf       目标缓冲
+ * @param  cap       缓冲容量
+ * @param  len       已写入长度，成功追加后更新
+ * @param  text      分片
+ * @param  text_len  分片长度
+ * @return RT_TRUE 放不下，发生了截断
+ */
+rt_bool_t agent_protocol_text_append(char *buf, int cap, int *len, const char *text, int text_len);
 
 #endif /* __AGENT_UTILS_PROTOCOL_H__ */

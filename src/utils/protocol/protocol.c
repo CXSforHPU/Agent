@@ -92,7 +92,8 @@ void agent_protocol_stream_init(agent_protocol_stream_t *stream,
     stream->reasoning = (char *)rt_malloc(AGENT_PROTOCOL_MAX_REASONING_LEN);
     stream->content = (char *)rt_malloc(AGENT_PROTOCOL_MAX_CONTENT_LEN);
     stream->tool_calls = cJSON_CreateArray();
-    stream->tool_call_map = cJSON_CreateObject();
+    stream->tools = (agent_protocol_tool_t *)rt_calloc(AGENT_PROTOCOL_MAX_TOOL_CALLS,
+                                                       sizeof(agent_protocol_tool_t));
 
     if (stream->reasoning)
     {
@@ -114,17 +115,27 @@ void agent_protocol_stream_init(agent_protocol_stream_t *stream,
  */
 void agent_protocol_stream_deinit(agent_protocol_stream_t *stream)
 {
+    int i;
+
     if (!stream) return;
 
     if (stream->reasoning) rt_free(stream->reasoning);
     if (stream->content) rt_free(stream->content);
     if (stream->tool_calls) cJSON_Delete(stream->tool_calls);
-    if (stream->tool_call_map) cJSON_Delete(stream->tool_call_map);
+    if (stream->tools)
+    {
+        for (i = 0; i < stream->tool_count; i++)
+        {
+            if (stream->tools[i].args) rt_free(stream->tools[i].args);
+        }
+        rt_free(stream->tools);
+    }
 
     stream->reasoning = RT_NULL;
     stream->content = RT_NULL;
     stream->tool_calls = RT_NULL;
-    stream->tool_call_map = RT_NULL;
+    stream->tools = RT_NULL;
+    stream->tool_count = 0;
 }
 
 /*
@@ -198,6 +209,40 @@ void agent_protocol_add_content(agent_protocol_stream_t *stream, const char *seg
 }
 
 /*
+ * @brief 按 index 找工具调用状态，没有就新开一个
+ * @param stream 流状态
+ * @param index  协议里的调用序号
+ * @return 调用状态，超过上限返回 NULL
+ */
+static agent_protocol_tool_t *__tool_slot(agent_protocol_stream_t *stream, int index)
+{
+    agent_protocol_tool_t *slot;
+    int i;
+
+    if (!stream->tools) return RT_NULL;
+
+    for (i = 0; i < stream->tool_count; i++)
+    {
+        if (stream->tools[i].index == index)
+        {
+            return &stream->tools[i];
+        }
+    }
+
+    if (stream->tool_count >= AGENT_PROTOCOL_MAX_TOOL_CALLS)
+    {
+        LOG_W("too many tool calls, index %d dropped\n", index);
+        return RT_NULL;
+    }
+
+    slot = &stream->tools[stream->tool_count++];
+    rt_memset(slot, 0, sizeof(*slot));
+    slot->index = index;
+
+    return slot;
+}
+
+/*
  * @brief 登记一个工具调用的 id 与函数名
  * @param stream 流状态
  * @param index  分片序号
@@ -206,44 +251,22 @@ void agent_protocol_add_content(agent_protocol_stream_t *stream, const char *seg
  */
 void agent_protocol_tool_begin(agent_protocol_stream_t *stream, int index, const char *id, const char *name)
 {
-    char key_buf[16] = {0};
-    cJSON *map_entry;
+    agent_protocol_tool_t *slot;
 
-    if (!stream || !stream->tool_call_map) return;
+    if (!stream || !stream->tools) return;
+    if ((!id || !id[0]) && (!name || !name[0])) return;
 
-    rt_snprintf(key_buf, sizeof(key_buf), "%d", index);
-
-    map_entry = cJSON_GetObjectItemCaseSensitive(stream->tool_call_map, key_buf);
-    if (!map_entry)
-    {
-        map_entry = cJSON_CreateObject();
-        if (!map_entry) return;
-        cJSON_AddNumberToObject(map_entry, "index", index);
-        cJSON_AddStringToObject(map_entry, "_id", "");
-        cJSON_AddStringToObject(map_entry, "_name", "");
-        cJSON_AddStringToObject(map_entry, "arguments", "");
-        cJSON_AddItemToObject(stream->tool_call_map, key_buf, map_entry);
-    }
+    slot = __tool_slot(stream, index);
+    if (!slot) return;
 
     /* 只有首个分片携带 id 与函数名，后续分片保持已有值 */
-    if (id && id[0] != '\0')
+    if (id && id[0] && !slot->id[0])
     {
-        cJSON *exist_id = cJSON_GetObjectItemCaseSensitive(map_entry, "_id");
-        if (!exist_id || exist_id->valuestring == NULL || exist_id->valuestring[0] == '\0')
-        {
-            cJSON_ReplaceItemInObjectCaseSensitive(
-                map_entry, "_id", cJSON_CreateString(id));
-        }
+        rt_strncpy(slot->id, id, sizeof(slot->id) - 1);
     }
-
-    if (name && name[0] != '\0')
+    if (name && name[0] && !slot->name[0])
     {
-        cJSON *exist_name = cJSON_GetObjectItemCaseSensitive(map_entry, "_name");
-        if (!exist_name || exist_name->valuestring == NULL || exist_name->valuestring[0] == '\0')
-        {
-            cJSON_ReplaceItemInObjectCaseSensitive(
-                map_entry, "_name", cJSON_CreateString(name));
-        }
+        rt_strncpy(slot->name, name, sizeof(slot->name) - 1);
     }
 }
 
@@ -255,60 +278,70 @@ void agent_protocol_tool_begin(agent_protocol_stream_t *stream, int index, const
  */
 void agent_protocol_tool_args(agent_protocol_stream_t *stream, int index, const char *fragment)
 {
-    char key_buf[16] = {0};
-    cJSON *map_entry;
-    cJSON *exist_args;
-    const char *old_str;
-    size_t old_len;
-    size_t append_len;
-    size_t total_len;
-    char *combine_buf;
+    agent_protocol_tool_t *slot;
+    int frag_len;
+    int need;
+    int cap;
+    char *grown;
 
-    if (!stream || !stream->tool_call_map || !fragment) return;
-    if (fragment[0] == '\0') return;
+    if (!stream || !stream->tools || !fragment || !fragment[0]) return;
 
-    rt_snprintf(key_buf, sizeof(key_buf), "%d", index);
+    slot = __tool_slot(stream, index);
+    if (!slot) return;
 
-    map_entry = cJSON_GetObjectItemCaseSensitive(stream->tool_call_map, key_buf);
-    if (!map_entry)
-    {
-        agent_protocol_tool_begin(stream, index, RT_NULL, RT_NULL);
-        map_entry = cJSON_GetObjectItemCaseSensitive(stream->tool_call_map, key_buf);
-        if (!map_entry) return;
-    }
-
-    exist_args = cJSON_GetObjectItemCaseSensitive(map_entry, "arguments");
-    if (!exist_args || exist_args->valuestring == NULL || exist_args->valuestring[0] == '\0')
-    {
-        cJSON_ReplaceItemInObjectCaseSensitive(
-            map_entry, "arguments", cJSON_CreateString(fragment));
-        return;
-    }
-
-    old_str = exist_args->valuestring;
-    old_len = rt_strlen(old_str);
-    append_len = rt_strlen(fragment);
-    total_len = old_len + append_len;
-
-    if (total_len >= AGENT_PROTOCOL_MAX_TOOL_ARG_LEN)
+    frag_len = (int)rt_strlen(fragment);
+    if (slot->args_len + frag_len >= AGENT_PROTOCOL_MAX_TOOL_ARG_LEN)
     {
         LOG_W("tool arguments exceed limit, skip append\n");
         return;
     }
 
-    combine_buf = rt_malloc(total_len + 1);
-    if (combine_buf == RT_NULL)
+    need = slot->args_len + frag_len + 1;
+    if (need > slot->args_cap)
     {
-        LOG_E("tool args combine malloc fail\n");
-        return;
+        cap = slot->args_cap > 0 ? slot->args_cap : 128;
+        while (cap < need)
+        {
+            cap *= 2;
+        }
+        grown = (char *)rt_realloc(slot->args, cap);
+        if (grown == RT_NULL)
+        {
+            LOG_E("tool args realloc fail\n");
+            return;
+        }
+        slot->args = grown;
+        slot->args_cap = cap;
     }
-    rt_memcpy(combine_buf, old_str, old_len);
-    rt_memcpy(combine_buf + old_len, fragment, append_len);
-    combine_buf[total_len] = '\0';
 
-    cJSON_ReplaceItemInObjectCaseSensitive(
-        map_entry, "arguments", cJSON_CreateString(combine_buf));
-    rt_free(combine_buf);
+    rt_memcpy(slot->args + slot->args_len, fragment, (rt_size_t)frag_len);
+    slot->args_len += frag_len;
+    slot->args[slot->args_len] = '\0';
+}
+
+rt_bool_t agent_protocol_text_append(char *buf, int cap, int *len, const char *text, int text_len)
+{
+    rt_bool_t truncated = RT_FALSE;
+    int remain;
+
+    if (!buf || !len || !text || text_len <= 0 || cap <= 0) return RT_FALSE;
+
+    remain = cap - 1 - *len;
+    if (remain <= 0)
+    {
+        return RT_TRUE;
+    }
+    if (text_len > remain)
+    {
+        text_len = remain;
+        truncated = RT_TRUE;
+    }
+
+    rt_memcpy(buf + *len, text, (rt_size_t)text_len);
+    *len += text_len;
+    buf[*len] = '\0';
+
+    return truncated;
 }
 
 /*
@@ -317,9 +350,9 @@ void agent_protocol_tool_args(agent_protocol_stream_t *stream, int index, const 
  */
 void agent_protocol_tool_finalize(agent_protocol_stream_t *stream)
 {
-    cJSON *map_key;
+    int i;
 
-    if (!stream || !stream->tool_call_map || !stream->tool_calls) return;
+    if (!stream || !stream->tools || !stream->tool_calls) return;
 
     /*
      * 归一化规则：
@@ -327,35 +360,26 @@ void agent_protocol_tool_finalize(agent_protocol_stream_t *stream)
      * - arguments 缺失或为空时用 "{}" 兜底，避免下游 cJSON_Parse 失败
      * - 无函数名的条目视为无效，直接丢弃
      */
-    for (map_key = stream->tool_call_map->child; map_key != NULL; map_key = map_key->next)
+    for (i = 0; i < stream->tool_count; i++)
     {
-        cJSON *entry = map_key;
-        cJSON *id_node = cJSON_GetObjectItemCaseSensitive(entry, "_id");
-        cJSON *name_node = cJSON_GetObjectItemCaseSensitive(entry, "_name");
-        cJSON *args_node = cJSON_GetObjectItemCaseSensitive(entry, "arguments");
-        cJSON *idx_node = cJSON_GetObjectItemCaseSensitive(entry, "index");
-        const char *func_name = (name_node && cJSON_IsString(name_node)) ? name_node->valuestring : RT_NULL;
-        const char *args_str;
-        const char *call_id;
+        agent_protocol_tool_t *slot = &stream->tools[i];
+        const char *func_name = slot->name;
+        const char *args_str = (slot->args && slot->args_len > 0) ? slot->args : "{}";
         char id_buf[32] = {0};
+        const char *call_id;
         cJSON *item;
         cJSON *func_obj;
 
-        if (func_name == RT_NULL || func_name[0] == '\0')
+        if (func_name[0] == '\0')
         {
             LOG_W("tool call without function name, dropped\n");
             continue;
         }
 
-        args_str = (args_node && cJSON_IsString(args_node) && args_node->valuestring[0] != '\0')
-                   ? args_node->valuestring : "{}";
-
-        call_id = (id_node && cJSON_IsString(id_node) && id_node->valuestring[0] != '\0')
-                  ? id_node->valuestring : RT_NULL;
+        call_id = slot->id[0] ? slot->id : RT_NULL;
         if (call_id == RT_NULL)
         {
-            rt_snprintf(id_buf, sizeof(id_buf), "call_%d",
-                        (idx_node && cJSON_IsNumber(idx_node)) ? idx_node->valueint : 0);
+            rt_snprintf(id_buf, sizeof(id_buf), "call_%d", slot->index);
             call_id = id_buf;
         }
 
@@ -380,7 +404,7 @@ void agent_protocol_tool_finalize(agent_protocol_stream_t *stream)
     {
         int tool_cnt = cJSON_GetArraySize(stream->tool_calls);
 
-        for (int i = 0; i < tool_cnt; i++)
+        for (i = 0; i < tool_cnt; i++)
         {
             cJSON *tool_item = cJSON_GetArrayItem(stream->tool_calls, i);
             char *tool_json = cJSON_PrintUnformatted(tool_item);
