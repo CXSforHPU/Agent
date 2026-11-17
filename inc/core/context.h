@@ -7,20 +7,23 @@
 #include "chat.h"
 #include "utils.h"
 
-/* 角色类型枚举 */
-typedef enum RoleType
-{
-    ROLE_SYSTEM,
-    ROLE_USER,
-    ROLE_ASSISTANT,
-    ROLE_TOOL
-} RoleType;
+#include "core/context_msg.h"
+
+/* 摘要正文上限：压缩指令要求模型写 1200 字节以内，这里留出余量 */
+#define AGENT_CONTEXT_SUMMARY_MAX 1536
 
 /* 上下文管理器结构 */
 typedef struct Context
 {
-    cJSON *message;  /* 消息列表 cJSON 数组 */
+    rt_uint8_t *arena;   /* 历史记录连续存储区 */
+    rt_size_t capacity;  /* arena 容量，字节 */
+    rt_size_t base;      /* 最旧记录的起点，前缀丢弃只改这个值 */
+    rt_size_t used;      /* 已用区末端 */
+    int count;           /* 历史记录条数，不含系统提示词与摘要 */
+
+    char *system_prompt; /* 系统提示词，单独分配 */
     rt_bool_t has_summary;
+    char summary[AGENT_CONTEXT_SUMMARY_MAX];
 
     rt_err_t (*build_system_prompt)(struct Context *self);
     rt_err_t (*append_user_message)(struct Context *self, Messages_t messages);
@@ -48,5 +51,13 @@ Context_t agent_context_create(void);
  * @param context 上下文句柄
  */
 void agent_context_destroy(Context_t context);
+
+/*
+ * @brief 丢掉最旧的若干条历史记录（摘要与会话状态保留）
+ * @param self  上下文
+ * @param count 丢弃条数
+ * @return RT_EOK 成功
+ */
+rt_err_t agent_context_drop_front(Context_t self, int count);
 
 #endif /* __AGENT_CONTEXT_H__ */

@@ -515,6 +515,18 @@ if PKG_USING_AGENT
                 in one extra request. Replace only with a complete, shorter
                 summary; on failure keep the original history without deletion.
                 A single long turn is kept intact even if it exceeds N.
+
+        config PKG_AGENT_CONTEXT_BYTES
+            int "History arena size in bytes"
+            default 32768
+            range 4096 262144
+            help
+                Size of the packed arena that stores the whole conversation
+                history. Messages are appended as records with offsets relative
+                to their own start; dropping old turns only slides a base index.
+                The arena is compacted in place when full, so the footprint
+                stays flat across long sessions. Keep this larger than the
+                biggest turn you expect (text plus image URLs).
     endmenu
 
     menu "Communication Channel"

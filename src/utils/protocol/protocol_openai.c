@@ -11,65 +11,40 @@
  */
 
 /*
- * @brief 把规范格式的 content 转成 OpenAI 的 content
- * @param content 规范格式的 content，字符串或块数组
- * @return content 副本
- */
-static cJSON *openai_format_content(cJSON *content)
-{
-    if (!content)
-    {
-        return cJSON_CreateString("");
-    }
-    return cJSON_Duplicate(content, cJSON_True);
-}
-
-/*
- * @brief 拼 OpenAI 请求体
- * @param payload    请求体对象
- * @param messages   消息数组
+ * @brief 直接写出 OpenAI 请求体
+ * @param writer     输出端（buf 为 NULL 时只累计长度）
+ * @param src        对话内容来源
  * @param tools      工具定义数组
  * @param max_tokens 最大输出 token
  * @return RT_EOK 成功
  */
-static rt_err_t openai_build_request(cJSON *payload, cJSON *messages, cJSON *tools, int max_tokens)
+static rt_err_t openai_write_request(agent_json_writer_t *writer, const agent_chat_src_t *src,
+                                     cJSON *tools, int max_tokens)
 {
-    cJSON *copy;
-
-    if (!payload || !messages)
+    if (!writer || !src)
     {
         return -RT_EINVAL;
     }
 
-    if (!cJSON_AddStringToObject(payload, "model", get_dynamic_agent_model_name()))
-    {
-        return -RT_ENOMEM;
-    }
+    agent_json_write_literal(writer, "{\"model\":");
+    agent_json_write_string(writer, get_dynamic_agent_model_name());
 
-    copy = cJSON_Duplicate(messages, cJSON_True);
-    if (!copy || !cJSON_AddItemToObject(payload, "messages", copy))
-    {
-        cJSON_Delete(copy);
-        return -RT_ENOMEM;
-    }
+    agent_json_write_literal(writer, ",\"messages\":");
+    agent_context_write_messages(writer, src);
 
     if (tools != RT_NULL)
     {
-        copy = cJSON_Duplicate(tools, cJSON_True);
-        if (!copy || !cJSON_AddItemToObject(payload, "tools", copy))
-        {
-            cJSON_Delete(copy);
-            return -RT_ENOMEM;
-        }
+        agent_json_write_literal(writer, ",\"tools\":");
+        agent_json_write_cjson(writer, tools);
     }
 
-    if (!cJSON_AddNumberToObject(payload, "max_tokens", max_tokens) ||
-        !cJSON_AddBoolToObject(payload, "stream", RT_TRUE))
-    {
-        return -RT_ENOMEM;
-    }
+    agent_json_write_literal(writer, ",\"max_tokens\":");
+    agent_json_write_int(writer, max_tokens);
+    agent_json_write_literal(writer, ",\"stream\":");
+    agent_json_write_bool(writer, RT_TRUE);
+    agent_json_write_literal(writer, "}");
 
-    return RT_EOK;
+    return agent_json_writer_ok(writer) ? RT_EOK : -RT_ENOMEM;
 }
 
 /*
@@ -235,10 +210,9 @@ static rt_bool_t openai_parse_event(cJSON *json, agent_protocol_stream_t *stream
 static const agent_protocol_ops_t g_openai_ops =
 {
     .name = "openai",
-    .build_request = openai_build_request,
+    .write_request = openai_write_request,
     .add_headers = openai_add_headers,
     .parse_event = openai_parse_event,
-    .format_content = openai_format_content,
 };
 
 /*

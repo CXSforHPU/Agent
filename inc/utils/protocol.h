@@ -6,14 +6,15 @@
  * protocol_openai.c 走 /chat/completions，protocol_anthropic.c 走 /v1/messages。
  *
  * 上下文里的消息一律用规范格式（OpenAI 风格）：role + content，content 是字符串
- * 或 [{type, ...}] 数组，工具调用放在 tool_calls 里。各协议模块负责转成自己的
- * 报文格式，解析时再转回规范格式。
+ * 或 [{type, ...}] 数组，工具调用放在 tool_calls 里。各协议模块把规范视图直接
+ * 写进请求缓冲，解析时再转回规范格式。
  */
 
 #include <rtthread.h>
 #include "cJSON.h"
 #include "webclient.h"
 #include "AgentConfig.h"
+#include "core/context_msg.h"
 
 #define AGENT_PROTOCOL_MAX_REASONING_LEN  PKG_AGENT_MAX_REASONING_LEN
 #define AGENT_PROTOCOL_MAX_CONTENT_LEN    PKG_AGENT_MAX_CONTENT_LEN
@@ -43,14 +44,13 @@ typedef struct agent_protocol_stream
 typedef struct agent_protocol_ops
 {
     const char *name;
-    /* 拼请求体：model / messages / tools / max_tokens / stream */
-    rt_err_t (*build_request)(cJSON *payload, cJSON *messages, cJSON *tools, int max_tokens);
+    /* 把完整请求体直接写进 writer：model / messages / tools / max_tokens / stream */
+    rt_err_t (*write_request)(agent_json_writer_t *writer, const agent_chat_src_t *src,
+                              cJSON *tools, int max_tokens);
     /* 加鉴权与协议相关的请求头 */
     void (*add_headers)(struct webclient_session *session);
     /* 解析一条 SSE 事件，返回 RT_TRUE 表示流已结束 */
     rt_bool_t (*parse_event)(cJSON *json, agent_protocol_stream_t *stream);
-    /* 规范格式的 content 数组转成本协议的 content 数组 */
-    cJSON *(*format_content)(cJSON *content);
 } agent_protocol_ops_t;
 
 /*

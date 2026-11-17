@@ -18,7 +18,7 @@ typedef struct ChatResponse
 
 /*
  * @brief 发送聊天请求并获取响应（流式）
- * @param messages   消息列表 cJSON 数组
+ * @param src        请求来源：上下文窗口，或独立系统/用户文本
  * @param tools      工具定义 cJSON 数组
  * @param max_tokens 最大 token 数
  * @param on_reasoning  思考过程回调
@@ -27,7 +27,7 @@ typedef struct ChatResponse
  * @return ChatResponse_t 响应结构体，失败返回 NULL
  */
 ChatResponse_t chat(
-    cJSON *messages,
+    const agent_chat_src_t *src,
     cJSON *tools,
     int max_tokens,
     void (*on_reasoning)(const char *text),

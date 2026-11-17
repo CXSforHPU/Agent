@@ -10,7 +10,11 @@
  * AgentLoop 通过 g_channel_ops（AgentChannelOps 函数指针）统一分发 init/reset，
  * 调用点不再出现通道相关 #ifdef。
  */
-#ifdef PKG_AGENT_LVGL_CHANNEL
+#if defined(AGENT_TEST_DEBUG_CHANNEL)
+    /* 离线回归固件在 A2A 配置上强制走调试通道，避免真实网络依赖 */
+    #include "AgentDebugChannel.h"
+    #define AGENT_CHANNEL_OPS  (&agent_debug_ops)
+#elif defined(PKG_AGENT_LVGL_CHANNEL)
     #include "AgentLvglChannel.h"
     #define AGENT_CHANNEL_OPS  (&agent_lvgl_ops)
 #elif defined(PKG_AGENT_CLI_CHANNEL)

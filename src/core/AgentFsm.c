@@ -212,13 +212,19 @@ static AgentFsmState_t agent_fsm_state_init(AgentFsm_t *fsm)
  */
 static AgentFsmState_t agent_fsm_state_think(AgentFsm_t *fsm)
 {
+    agent_chat_src_t src;
+
     fsm->loop_cnt++;
+
+    rt_memset(&src, 0, sizeof(src));
+    src.ctx = fsm->context;
+    src.count = -1;
 
     /* 请求失败重试：TLS/网络抖动（如 mbedtls NET_RECV_FAILED、对端重置）不应直接
        丢弃整轮对话；已流式输出的部分内容在重试时可能重复打印，属可接受的代价 */
     for (fsm->attempt = 1; fsm->attempt <= fsm->chat_retry_max; fsm->attempt++)
     {
-        fsm->resp = chat(fsm->context->message, fsm->tools, AGENT_CHAT_MAX_TOKENS,
+        fsm->resp = chat(&src, fsm->tools, AGENT_CHAT_MAX_TOKENS,
                          fsm->on_reasoning, fsm->on_tool_call, fsm->on_context);
         if (fsm->resp != RT_NULL)
         {
@@ -463,6 +469,8 @@ static AgentFsmState_t agent_fsm_state_guard(AgentFsm_t *fsm)
  */
 static AgentFsmState_t agent_fsm_state_finish(AgentFsm_t *fsm)
 {
+    agent_chat_src_t src;
+
     if (fsm->resp != RT_NULL && fsm->answered)
     {
         fsm->ops->emit_answer(fsm->context, fsm->resp, fsm->on_context);
@@ -479,7 +487,11 @@ static AgentFsmState_t agent_fsm_state_finish(AgentFsm_t *fsm)
        模型，逼出一段纯文本；再失败就给一句明确提示，保证这一轮有交代 */
     if (!fsm->answered)
     {
-        fsm->resp = chat(fsm->context->message, RT_NULL, AGENT_CHAT_MAX_TOKENS,
+        rt_memset(&src, 0, sizeof(src));
+        src.ctx = fsm->context;
+        src.count = -1;
+
+        fsm->resp = chat(&src, RT_NULL, AGENT_CHAT_MAX_TOKENS,
                          fsm->on_reasoning, RT_NULL, fsm->on_context);
         if (fsm->resp != RT_NULL)
         {

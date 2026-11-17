@@ -9,6 +9,38 @@
 #define STREAM_LINE_BUFSZ  PKG_AGENT_STREAM_LINE_BUFSZ
 
 /*
+ * 请求体在发送前一次成型，直接写进常驻缓冲区，再由一次 webclient_write 发出。
+ * 缓冲按上一次的报文长度留着，多数轮次不用重新分配，也不再为每条消息
+ * 单独建 cJSON 节点。
+ */
+static char *request_buf;
+static rt_size_t request_cap;
+
+static char *__request_reserve(rt_size_t need)
+{
+    rt_size_t cap = request_cap ? request_cap : 1024;
+    char *grown;
+
+    if (need <= request_cap)
+    {
+        return request_buf;
+    }
+    while (cap < need)
+    {
+        cap *= 2;
+    }
+    grown = (char *)rt_realloc(request_buf, cap);
+    if (grown == RT_NULL)
+    {
+        return RT_NULL;
+    }
+    request_buf = grown;
+    request_cap = cap;
+
+    return request_buf;
+}
+
+/*
  * @brief 释放聊天响应结构体
  * @param resp 要释放的响应
  */
@@ -25,7 +57,7 @@ void chat_response_free(ChatResponse_t resp)
  * @brief 发送聊天请求并流式读取 SSE 响应
  *
  * 报文格式由当前协议决定（OpenAI 或 Anthropic），见 utils/protocol.h。
- * @param messages       消息列表 JSON 数组
+ * @param src            对话内容来源（上下文、范围或临时文本）
  * @param tools          工具定义 JSON 数组
  * @param max_tokens     最大 token 数
  * @param on_reasoning   思考过程回调
@@ -34,7 +66,7 @@ void chat_response_free(ChatResponse_t resp)
  * @return ChatResponse_t 响应结构体，失败返回 NULL
  */
 ChatResponse_t chat(
-    cJSON *messages,
+    const agent_chat_src_t *src,
     cJSON *tools,
     int max_tokens,
     void (*on_reasoning)(const char *text),
@@ -44,16 +76,23 @@ ChatResponse_t chat(
     const agent_protocol_ops_t *ops = agent_protocol_get_ops();
     struct webclient_session *webSession = RT_NULL;
     unsigned char *buffer = RT_NULL;
-    cJSON *payload_json = RT_NULL;
-    char *payload = RT_NULL;
+    char *payload;
+    rt_size_t payload_len;
     ChatResponse_t response = RT_NULL;
     agent_protocol_stream_t stream;
+    agent_json_writer_t writer;
 
     int bytes_read, resp_status;
     rt_bool_t skip_line = RT_FALSE;
     rt_bool_t stream_done = RT_FALSE;
     char stream_buffer[STREAM_LINE_BUFSZ] = {0};
     int stream_len = 0;
+
+    if (src == RT_NULL)
+    {
+        LOG_E("chat: no request source\n");
+        return RT_NULL;
+    }
 
     agent_protocol_stream_init(&stream, on_reasoning, on_tool_call, on_context);
 
@@ -74,32 +113,34 @@ ChatResponse_t chat(
     }
     /* 超时在连上之后才设，见第 5 步 */
 
-    /* 3. 按协议构造请求体 */
-    payload_json = cJSON_CreateObject();
-    if (!payload_json)
-    {
-        goto __cleanup;
-    }
-    if (ops->build_request(payload_json, messages, tools, max_tokens) != RT_EOK)
+    /* 3. 按协议量出报文长度，再直写进请求缓冲 */
+    agent_json_writer_init(&writer, RT_NULL, 0);
+    if (ops->write_request(&writer, src, tools, max_tokens) != RT_EOK)
     {
         LOG_E("chat: build request fail\n");
         goto __cleanup;
     }
+    payload_len = agent_json_writer_len(&writer);
 
-    payload = cJSON_PrintUnformatted(payload_json);
-    cJSON_Delete(payload_json);
-    payload_json = RT_NULL;
-    if (!payload)
+    payload = __request_reserve(payload_len + 1);
+    if (payload == RT_NULL)
     {
-        LOG_E("chat: payload json print malloc fail\n");
+        LOG_E("chat: no memory for request body\n");
         goto __cleanup;
     }
-    int payload_len = rt_strlen(payload);
+    agent_json_writer_init(&writer, payload, request_cap);
+    if (ops->write_request(&writer, src, tools, max_tokens) != RT_EOK ||
+        !agent_json_writer_ok(&writer))
+    {
+        LOG_E("chat: request body overflow\n");
+        goto __cleanup;
+    }
+    payload_len = agent_json_writer_len(&writer);
 
     /* 4. 设置请求头 */
     webclient_header_fields_add(webSession, "Content-Type: application/json\r\n");
     ops->add_headers(webSession);
-    webclient_header_fields_add(webSession, "Content-Length: %d\r\n", payload_len);
+    webclient_header_fields_add(webSession, "Content-Length: %d\r\n", (int)payload_len);
 
     /* 5. 发送 POST 请求 */
     /*
@@ -227,13 +268,10 @@ __success:
     stream.tool_calls = RT_NULL;
 
 __cleanup:
-    cJSON_Delete(payload_json);
     if (webSession)
         webclient_close(webSession);
     if (buffer)
         web_free(buffer);
-    if (payload)
-        cJSON_free(payload);
 
     agent_protocol_stream_deinit(&stream);
 

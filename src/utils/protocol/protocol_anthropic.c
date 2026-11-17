@@ -28,45 +28,6 @@
  */
 
 /*
- * @brief 往动态缓冲区尾部追加文本
- * @param buf   缓冲区
- * @param len   当前长度
- * @param cap   容量
- * @param text  要追加的文本
- * @return RT_EOK 成功
- */
-static rt_err_t append_text(char **buf, rt_size_t *len, rt_size_t *cap, const char *text)
-{
-    rt_size_t text_len;
-    rt_size_t need;
-    char *new_buf;
-
-    if (!buf || !len || !cap || !text) return -RT_EINVAL;
-
-    text_len = rt_strlen(text);
-    need = *len + text_len + 1;
-    if (need > *cap)
-    {
-        rt_size_t new_cap = (*cap == 0) ? 256 : *cap;
-
-        while (new_cap < need)
-        {
-            new_cap *= 2;
-        }
-        new_buf = rt_realloc(*buf, new_cap);
-        if (!new_buf) return -RT_ENOMEM;
-        *buf = new_buf;
-        *cap = new_cap;
-    }
-
-    rt_memcpy(*buf + *len, text, text_len);
-    *len += text_len;
-    (*buf)[*len] = '\0';
-
-    return RT_EOK;
-}
-
-/*
  * @brief 取字符串字段
  * @param obj   对象
  * @param key   键名
@@ -84,412 +45,273 @@ static const char *get_string(cJSON *obj, const char *key)
 }
 
 /*
- * @brief 把规范格式的 content 块数组转成 Anthropic 的块数组
- * @param content 规范格式的 content，字符串或块数组
- * @return Anthropic 的 content 块数组
+ * @brief 在消息记录里找第一个指定类型的块
+ * @param item 消息项
+ * @param type 块类型
+ * @return 块指针，没有返回 NULL
  */
-static cJSON *anthropic_format_content(cJSON *content)
+static const agent_ctx_block_t *__find_block(const agent_ctx_item_t *item, int type)
 {
-    cJSON *blocks;
-    int size;
+    const agent_ctx_block_t *blocks;
     int i;
 
-    blocks = cJSON_CreateArray();
-    if (!blocks) return RT_NULL;
-
-    if (!content)
+    if (!item->view) return RT_NULL;
+    blocks = agent_ctx_view_blocks(item->view);
+    for (i = 0; i < item->view->block_count; i++)
     {
-        cJSON_AddItemToArray(blocks, cJSON_CreateString(""));
-        return blocks;
-    }
-
-    if (cJSON_IsString(content))
-    {
-        cJSON *text = cJSON_CreateObject();
-
-        if (text)
+        if (blocks[i].type == type)
         {
-            cJSON_AddStringToObject(text, "type", "text");
-            cJSON_AddStringToObject(text, "text", content->valuestring);
-            cJSON_AddItemToArray(blocks, text);
-        }
-        return blocks;
-    }
-
-    if (!cJSON_IsArray(content))
-    {
-        return blocks;
-    }
-
-    size = cJSON_GetArraySize(content);
-    for (i = 0; i < size; i++)
-    {
-        cJSON *item = cJSON_GetArrayItem(content, i);
-        const char *type;
-
-        if (!cJSON_IsObject(item)) continue;
-
-        type = get_string(item, "type");
-        if (type && rt_strcmp(type, "text") == 0)
-        {
-            const char *text = get_string(item, "text");
-            cJSON *block = cJSON_CreateObject();
-
-            if (block)
-            {
-                cJSON_AddStringToObject(block, "type", "text");
-                cJSON_AddStringToObject(block, "text", text ? text : "");
-                cJSON_AddItemToArray(blocks, block);
-            }
-        }
-        else if (type && rt_strcmp(type, "image_url") == 0)
-        {
-            /* 规范格式里图片是 {"type":"image_url","image_url":{"url":...}} */
-            cJSON *url_obj = cJSON_GetObjectItemCaseSensitive(item, "image_url");
-            const char *url = get_string(url_obj, "url");
-            cJSON *block;
-
-            if (!url || !url[0]) continue;
-
-            block = cJSON_CreateObject();
-            if (!block) continue;
-            cJSON_AddStringToObject(block, "type", "image");
-            {
-                cJSON *source = cJSON_CreateObject();
-
-                if (source)
-                {
-                    cJSON_AddStringToObject(source, "type", "url");
-                    cJSON_AddStringToObject(source, "url", url);
-                    cJSON_AddItemToObject(block, "source", source);
-                }
-            }
-            cJSON_AddItemToArray(blocks, block);
-        }
-        else if (type && (rt_strcmp(type, "audio_url") == 0 || rt_strcmp(type, "video_url") == 0))
-        {
-            /* Anthropic 的 Messages 接口不收内联音视频，换成一句说明 */
-            cJSON *block = cJSON_CreateObject();
-
-            LOG_W("anthropic: %s block not supported, replaced by a text note", type);
-            if (block)
-            {
-                cJSON_AddStringToObject(block, "type", "text");
-                cJSON_AddStringToObject(block, "text",
-                                        "[音视频内容在 Anthropic 协议下未发送]");
-                cJSON_AddItemToArray(blocks, block);
-            }
+            return &blocks[i];
         }
     }
-
-    return blocks;
+    return RT_NULL;
 }
 
 /*
- * @brief 把 OpenAI 风格的工具调用转成 Anthropic 的 tool_use 块
- * @param tool_call 工具调用对象
- * @return tool_use 块
+ * @brief 取 TEXT 块的正文
+ * @param item 消息项
+ * @return 正文，没有 TEXT 块返回空串
  */
-static cJSON *anthropic_tool_use_block(cJSON *tool_call)
+static const char *__view_text(const agent_ctx_item_t *item)
 {
-    cJSON *func = cJSON_GetObjectItemCaseSensitive(tool_call, "function");
-    const char *id = get_string(tool_call, "id");
-    const char *name = get_string(func, "name");
-    const char *arguments = get_string(func, "arguments");
-    cJSON *block = cJSON_CreateObject();
+    const agent_ctx_block_t *block;
 
-    if (!block) return RT_NULL;
+    if (!item->view) return item->text ? item->text : "";
+    block = __find_block(item, AGENT_CTX_BLOCK_TEXT);
 
-    cJSON_AddStringToObject(block, "type", "tool_use");
-    cJSON_AddStringToObject(block, "id", id ? id : "");
-    cJSON_AddStringToObject(block, "name", name ? name : "");
+    return block ? agent_ctx_view_slice(item->view, &block->first) : "";
+}
 
+/*
+ * @brief 写 user 消息的 content 块数组内容
+ * @param writer JSON 输出端
+ * @param item   消息项
+ */
+static void __write_user_blocks(agent_json_writer_t *writer, const agent_ctx_item_t *item)
+{
+    const agent_ctx_block_t *blocks;
+    rt_bool_t first = RT_TRUE;
+    int i;
+
+    /* 纯文本消息（system_override/user_text）没有记录视图，直接写一个 text 块 */
+    if (!item->view)
+    {
+        agent_json_write_literal(writer, "{\"type\":\"text\",\"text\":");
+        agent_json_write_string(writer, item->text ? item->text : "");
+        agent_json_write_literal(writer, "}");
+        return;
+    }
+
+    blocks = agent_ctx_view_blocks(item->view);
+    for (i = 0; i < item->view->block_count; i++)
+    {
+        const agent_ctx_block_t *block = &blocks[i];
+        const char *url = agent_ctx_view_slice(item->view, &block->first);
+
+        /* 空 URL 的图片发出去没有意义，也避免写出多余的逗号 */
+        if (block->type == AGENT_CTX_BLOCK_IMAGE && (!url || !url[0])) continue;
+        if (block->type != AGENT_CTX_BLOCK_TEXT &&
+            block->type != AGENT_CTX_BLOCK_IMAGE &&
+            block->type != AGENT_CTX_BLOCK_AUDIO &&
+            block->type != AGENT_CTX_BLOCK_VIDEO) continue;
+
+        if (!first) agent_json_write_literal(writer, ",");
+        first = RT_FALSE;
+
+        if (block->type == AGENT_CTX_BLOCK_TEXT)
+        {
+            agent_json_write_literal(writer, "{\"type\":\"text\",\"text\":");
+            agent_json_write_string(writer, url);
+            agent_json_write_literal(writer, "}");
+        }
+        else if (block->type == AGENT_CTX_BLOCK_IMAGE)
+        {
+            agent_json_write_literal(writer, "{\"type\":\"image\",\"source\":{\"type\":\"url\",\"url\":");
+            agent_json_write_string(writer, url);
+            agent_json_write_literal(writer, "}}");
+        }
+        else
+        {
+            /* Anthropic 的 Messages 接口不收内联音视频，换成一句说明 */
+            LOG_W("anthropic: %s block not supported, replaced by a text note",
+                  block->type == AGENT_CTX_BLOCK_AUDIO ? "audio_url" : "video_url");
+            agent_json_write_literal(writer, "{\"type\":\"text\",\"text\":");
+            agent_json_write_string(writer, "[音视频内容在 Anthropic 协议下未发送]");
+            agent_json_write_literal(writer, "}");
+        }
+    }
+}
+
+/*
+ * @brief 写 tool_use 块的 input 字段
+ * @param writer    JSON 输出端
+ * @param arguments 工具参数 JSON 文本
+ */
+static void __write_tool_input(agent_json_writer_t *writer, const char *arguments)
+{
     if (arguments && arguments[0])
     {
         cJSON *input = cJSON_Parse(arguments);
 
         if (input && cJSON_IsObject(input))
         {
-            cJSON_AddItemToObject(block, "input", input);
+            agent_json_write_cjson(writer, input);
+            cJSON_Delete(input);
+            return;
         }
-        else
-        {
-            if (input) cJSON_Delete(input);
-            cJSON_AddItemToObject(block, "input", cJSON_CreateObject());
-        }
+        cJSON_Delete(input);
     }
-    else
-    {
-        cJSON_AddItemToObject(block, "input", cJSON_CreateObject());
-    }
-
-    return block;
+    agent_json_write_literal(writer, "{}");
 }
 
 /*
- * @brief 判断数组最后一条是不是 tool_result 组成的 user 消息
- * @param messages Anthropic 消息数组
- * @return RT_TRUE 是
+ * @brief 判断 assistant 消息有没有可发送的内容
+ *
+ * 空正文又没有工具调用的 assistant 消息发出去会被接口拒绝，直接跳过。
+ * @param item 消息项
+ * @return RT_TRUE 有内容
  */
-static rt_bool_t last_is_tool_result_message(cJSON *messages)
+static rt_bool_t __assistant_has_output(const agent_ctx_item_t *item)
 {
-    cJSON *last = cJSON_GetArrayItem(messages, cJSON_GetArraySize(messages) - 1);
-    cJSON *content;
-    cJSON *first;
-    const char *type;
-
-    if (!last || !cJSON_IsObject(last)) return RT_FALSE;
-    if (!get_string(last, "role") || rt_strcmp(get_string(last, "role"), "user") != 0)
-    {
-        return RT_FALSE;
-    }
-
-    content = cJSON_GetObjectItemCaseSensitive(last, "content");
-    if (!cJSON_IsArray(content)) return RT_FALSE;
-
-    first = cJSON_GetArrayItem(content, 0);
-    type = get_string(first, "type");
-
-    return (type && rt_strcmp(type, "tool_result") == 0) ? RT_TRUE : RT_FALSE;
-}
-
-/*
- * @brief 把规范格式的消息数组转成 Anthropic 的消息数组
- * @param messages   规范格式的消息数组
- * @param system_out system 文本，调用者负责释放
- * @return Anthropic 消息数组
- */
-static cJSON *anthropic_translate_messages(cJSON *messages, char **system_out)
-{
-    cJSON *out = cJSON_CreateArray();
-    char *system_buf = RT_NULL;
-    rt_size_t system_len = 0;
-    rt_size_t system_cap = 0;
-    int size;
+    const agent_ctx_block_t *blocks = item->view ? agent_ctx_view_blocks(item->view) : RT_NULL;
     int i;
 
-    if (!out) return RT_NULL;
-    *system_out = RT_NULL;
-
-    if (!messages || !cJSON_IsArray(messages))
+    if (__view_text(item)[0]) return RT_TRUE;
+    if (!blocks) return RT_FALSE;
+    for (i = 0; i < item->view->block_count; i++)
     {
-        return out;
+        if (blocks[i].type == AGENT_CTX_BLOCK_TOOL_CALL) return RT_TRUE;
     }
-
-    size = cJSON_GetArraySize(messages);
-    for (i = 0; i < size; i++)
-    {
-        cJSON *msg = cJSON_GetArrayItem(messages, i);
-        const char *role;
-        cJSON *content;
-
-        if (!cJSON_IsObject(msg)) continue;
-
-        role = get_string(msg, "role");
-        content = cJSON_GetObjectItemCaseSensitive(msg, "content");
-
-        if (!role) continue;
-
-        if (rt_strcmp(role, "system") == 0)
-        {
-            const char *text = cJSON_IsString(content) ? content->valuestring : RT_NULL;
-
-            if (!text) continue;
-            if (system_len > 0)
-            {
-                append_text(&system_buf, &system_len, &system_cap, "\n\n");
-            }
-            append_text(&system_buf, &system_len, &system_cap, text);
-        }
-        else if (rt_strcmp(role, "user") == 0)
-        {
-            cJSON *item = cJSON_CreateObject();
-            cJSON *blocks = anthropic_format_content(content);
-
-            if (!item || !blocks)
-            {
-                if (item) cJSON_Delete(item);
-                if (blocks) cJSON_Delete(blocks);
-                continue;
-            }
-            cJSON_AddStringToObject(item, "role", "user");
-            cJSON_AddItemToObject(item, "content", blocks);
-            cJSON_AddItemToArray(out, item);
-        }
-        else if (rt_strcmp(role, "assistant") == 0)
-        {
-            cJSON *item = cJSON_CreateObject();
-            cJSON *blocks = cJSON_CreateArray();
-            cJSON *tool_calls;
-            int tc_size;
-            int j;
-
-            if (!item || !blocks) continue;
-
-            if (cJSON_IsString(content) && content->valuestring[0])
-            {
-                cJSON *text = cJSON_CreateObject();
-
-                if (text)
-                {
-                    cJSON_AddStringToObject(text, "type", "text");
-                    cJSON_AddStringToObject(text, "text", content->valuestring);
-                    cJSON_AddItemToArray(blocks, text);
-                }
-            }
-
-            tool_calls = cJSON_GetObjectItemCaseSensitive(msg, "tool_calls");
-            tc_size = cJSON_IsArray(tool_calls) ? cJSON_GetArraySize(tool_calls) : 0;
-            for (j = 0; j < tc_size; j++)
-            {
-                cJSON *tool_call = cJSON_GetArrayItem(tool_calls, j);
-                cJSON *block;
-
-                if (!cJSON_IsObject(tool_call)) continue;
-                block = anthropic_tool_use_block(tool_call);
-                if (block) cJSON_AddItemToArray(blocks, block);
-            }
-
-            if (cJSON_GetArraySize(blocks) == 0)
-            {
-                cJSON_Delete(blocks);
-                cJSON_Delete(item);
-                continue;
-            }
-            cJSON_AddStringToObject(item, "role", "assistant");
-            cJSON_AddItemToObject(item, "content", blocks);
-            cJSON_AddItemToArray(out, item);
-        }
-        else if (rt_strcmp(role, "tool") == 0)
-        {
-            const char *tool_use_id = get_string(msg, "tool_call_id");
-            const char *text = cJSON_IsString(content) ? content->valuestring : RT_NULL;
-            cJSON *block = cJSON_CreateObject();
-
-            if (!block) continue;
-
-            cJSON_AddStringToObject(block, "type", "tool_result");
-            cJSON_AddStringToObject(block, "tool_use_id", tool_use_id ? tool_use_id : "");
-            cJSON_AddStringToObject(block, "content", text ? text : "");
-
-            /* 连续的 tool 结果要合并进同一条 user 消息，Anthropic 不接受连续同角色消息 */
-            if (last_is_tool_result_message(out))
-            {
-                cJSON *last = cJSON_GetArrayItem(out, cJSON_GetArraySize(out) - 1);
-                cJSON *blocks_old = cJSON_GetObjectItemCaseSensitive(last, "content");
-
-                cJSON_AddItemToArray(blocks_old, block);
-            }
-            else
-            {
-                cJSON *blocks = cJSON_CreateArray();
-                cJSON *message = cJSON_CreateObject();
-
-                if (!blocks || !message)
-                {
-                    if (blocks) cJSON_Delete(blocks);
-                    if (message) cJSON_Delete(message);
-                    cJSON_Delete(block);
-                    continue;
-                }
-                cJSON_AddItemToArray(blocks, block);
-                cJSON_AddStringToObject(message, "role", "user");
-                cJSON_AddItemToObject(message, "content", blocks);
-                cJSON_AddItemToArray(out, message);
-            }
-        }
-    }
-
-    if (system_buf)
-    {
-        *system_out = system_buf;
-    }
-
-    return out;
+    return RT_FALSE;
 }
 
 /*
- * @brief 把 OpenAI 风格的工具定义转成 Anthropic 的工具定义
- * @param tools OpenAI 风格工具数组
- * @return Anthropic 工具数组
+ * @brief 写 assistant 消息的 content 块数组内容
+ * @param writer JSON 输出端
+ * @param item   消息项
  */
-static cJSON *anthropic_translate_tools(cJSON *tools)
+static void __write_assistant_blocks(agent_json_writer_t *writer, const agent_ctx_item_t *item)
 {
-    cJSON *out = cJSON_CreateArray();
-    int size;
+    const char *text = __view_text(item);
+    const agent_ctx_block_t *blocks;
+    rt_bool_t first = RT_TRUE;
     int i;
 
-    if (!out) return RT_NULL;
-    if (!tools || !cJSON_IsArray(tools))
+    if (text[0])
     {
-        return out;
+        agent_json_write_literal(writer, "{\"type\":\"text\",\"text\":");
+        agent_json_write_string(writer, text);
+        agent_json_write_literal(writer, "}");
+        first = RT_FALSE;
     }
 
-    size = cJSON_GetArraySize(tools);
+    if (!item->view) return;
+
+    blocks = agent_ctx_view_blocks(item->view);
+    for (i = 0; i < item->view->block_count; i++)
+    {
+        const agent_ctx_block_t *block = &blocks[i];
+
+        if (block->type != AGENT_CTX_BLOCK_TOOL_CALL) continue;
+        if (!first) agent_json_write_literal(writer, ",");
+        first = RT_FALSE;
+
+        agent_json_write_literal(writer, "{\"type\":\"tool_use\",\"id\":");
+        agent_json_write_string(writer, agent_ctx_view_slice(item->view, &block->first));
+        agent_json_write_literal(writer, ",\"name\":");
+        agent_json_write_string(writer, agent_ctx_view_slice(item->view, &block->second));
+        agent_json_write_literal(writer, ",\"input\":");
+        __write_tool_input(writer, agent_ctx_view_slice(item->view, &block->third));
+        agent_json_write_literal(writer, "}");
+    }
+}
+
+/*
+ * @brief 写一个 tool_result 块
+ * @param writer JSON 输出端
+ * @param item   消息项
+ */
+static void __write_tool_result(agent_json_writer_t *writer, const agent_ctx_item_t *item)
+{
+    const agent_ctx_block_t *block = __find_block(item, AGENT_CTX_BLOCK_TOOL_RESULT);
+
+    agent_json_write_literal(writer, "{\"type\":\"tool_result\",\"tool_use_id\":");
+    agent_json_write_string(writer, block ? agent_ctx_view_slice(item->view, &block->first) : "");
+    agent_json_write_literal(writer, ",\"content\":");
+    agent_json_write_string(writer, __view_text(item));
+    agent_json_write_literal(writer, "}");
+}
+
+/*
+ * @brief 把 OpenAI 风格的工具定义直接写成 Anthropic 的格式
+ * @param writer JSON 输出端
+ * @param tools  OpenAI 风格工具数组
+ */
+static void __write_tools(agent_json_writer_t *writer, cJSON *tools)
+{
+    int size = cJSON_GetArraySize(tools);
+    rt_bool_t first = RT_TRUE;
+    int i;
+
+    agent_json_write_literal(writer, ",\"tools\":[");
     for (i = 0; i < size; i++)
     {
         cJSON *tool = cJSON_GetArrayItem(tools, i);
-        cJSON *func = cJSON_GetObjectItemCaseSensitive(tool, "function");
-        cJSON *params = cJSON_GetObjectItemCaseSensitive(func, "parameters");
+        cJSON *func;
+        cJSON *params;
         const char *name;
         const char *description;
-        cJSON *item;
 
         if (!cJSON_IsObject(tool)) continue;
 
+        func = cJSON_GetObjectItemCaseSensitive(tool, "function");
+        params = cJSON_GetObjectItemCaseSensitive(func, "parameters");
         name = get_string(func, "name");
         description = get_string(func, "description");
-        item = cJSON_CreateObject();
-        if (!item) continue;
 
-        cJSON_AddStringToObject(item, "name", name ? name : "");
+        if (!first) agent_json_write_literal(writer, ",");
+        first = RT_FALSE;
+
+        agent_json_write_literal(writer, "{\"name\":");
+        agent_json_write_string(writer, name ? name : "");
         if (description)
         {
-            cJSON_AddStringToObject(item, "description", description);
+            agent_json_write_literal(writer, ",\"description\":");
+            agent_json_write_string(writer, description);
         }
+        agent_json_write_literal(writer, ",\"input_schema\":");
         if (params && cJSON_IsObject(params))
         {
-            cJSON_AddItemToObject(item, "input_schema", cJSON_Duplicate(params, cJSON_True));
+            agent_json_write_cjson(writer, params);
         }
         else
         {
-            cJSON *schema = cJSON_CreateObject();
-            cJSON *properties = cJSON_CreateObject();
-
-            if (schema && properties)
-            {
-                cJSON_AddStringToObject(schema, "type", "object");
-                cJSON_AddItemToObject(schema, "properties", properties);
-                cJSON_AddItemToObject(item, "input_schema", schema);
-            }
-            else
-            {
-                if (schema) cJSON_Delete(schema);
-                if (properties) cJSON_Delete(properties);
-            }
+            agent_json_write_literal(writer, "{\"type\":\"object\",\"properties\":{}}");
         }
-        cJSON_AddItemToArray(out, item);
+        agent_json_write_literal(writer, "}");
     }
-
-    return out;
+    agent_json_write_literal(writer, "]");
 }
 
 /*
- * @brief 拼 Anthropic 请求体
- * @param payload    请求体对象
- * @param messages   规范格式的消息数组
+ * @brief 直接写出 Anthropic 请求体
+ * @param writer     输出端（buf 为 NULL 时只累计长度）
+ * @param src        对话内容来源
  * @param tools      OpenAI 风格工具数组
  * @param max_tokens 最大输出 token
  * @return RT_EOK 成功
  */
-static rt_err_t anthropic_build_request(cJSON *payload, cJSON *messages, cJSON *tools, int max_tokens)
+static rt_err_t anthropic_write_request(agent_json_writer_t *writer, const agent_chat_src_t *src,
+                                        cJSON *tools, int max_tokens)
 {
-    char *system_text = RT_NULL;
-    cJSON *msg_array;
-    cJSON *tool_array;
+    agent_ctx_cursor_t cursor;
+    agent_ctx_item_t item;
+    const char *system_text;
+    rt_bool_t first_msg = RT_TRUE;
+    rt_bool_t open_tool_result = RT_FALSE;
     int limit = max_tokens;
 
-    if (!payload || !messages)
+    if (!writer || !src)
     {
         return -RT_EINVAL;
     }
@@ -504,50 +326,94 @@ static rt_err_t anthropic_build_request(cJSON *payload, cJSON *messages, cJSON *
         limit = 1;
     }
 
-    if (!cJSON_AddStringToObject(payload, "model", get_dynamic_agent_model_name()))
+    system_text = src->system_override;
+    if (!system_text)
     {
-        return -RT_ENOMEM;
-    }
-    if (!cJSON_AddNumberToObject(payload, "max_tokens", limit))
-    {
-        return -RT_ENOMEM;
-    }
-    if (!cJSON_AddBoolToObject(payload, "stream", RT_TRUE))
-    {
-        return -RT_ENOMEM;
+        system_text = agent_context_system_prompt(src->ctx);
     }
 
-    msg_array = anthropic_translate_messages(messages, &system_text);
-    if (!msg_array)
+    agent_json_write_literal(writer, "{\"model\":");
+    agent_json_write_string(writer, get_dynamic_agent_model_name());
+    agent_json_write_literal(writer, ",\"max_tokens\":");
+    agent_json_write_int(writer, limit);
+    agent_json_write_literal(writer, ",\"stream\":");
+    agent_json_write_bool(writer, RT_TRUE);
+
+    if (system_text && system_text[0])
     {
-        return -RT_ENOMEM;
+        agent_json_write_literal(writer, ",\"system\":");
+        agent_json_write_string(writer, system_text);
     }
-    if (system_text)
+
+    agent_json_write_literal(writer, ",\"messages\":[");
+    agent_ctx_cursor_init(&cursor, src);
+
+    while (agent_ctx_cursor_next(&cursor, &item))
     {
-        cJSON_AddStringToObject(payload, "system", system_text);
-        rt_free(system_text);
+        /* system 已写到顶层字段，消息数组里不再出现 */
+        if (item.role == ROLE_SYSTEM) continue;
+
+        if (item.role == ROLE_TOOL)
+        {
+            /*
+             * 连续的 tool 结果要合并进同一条 user 消息，
+             * Anthropic 不接受连续同角色消息。
+             */
+            if (open_tool_result)
+            {
+                agent_json_write_literal(writer, ",");
+            }
+            else
+            {
+                if (!first_msg) agent_json_write_literal(writer, ",");
+                first_msg = RT_FALSE;
+                agent_json_write_literal(writer, "{\"role\":\"user\",\"content\":[");
+                open_tool_result = RT_TRUE;
+            }
+            __write_tool_result(writer, &item);
+            continue;
+        }
+
+        if (open_tool_result)
+        {
+            agent_json_write_literal(writer, "]}");
+            open_tool_result = RT_FALSE;
+        }
+
+        if (item.role == ROLE_USER)
+        {
+            if (!first_msg) agent_json_write_literal(writer, ",");
+            first_msg = RT_FALSE;
+            agent_json_write_literal(writer, "{\"role\":\"user\",\"content\":[");
+            __write_user_blocks(writer, &item);
+            agent_json_write_literal(writer, "]}");
+        }
+        else
+        {
+            if (!__assistant_has_output(&item)) continue;
+
+            if (!first_msg) agent_json_write_literal(writer, ",");
+            first_msg = RT_FALSE;
+            agent_json_write_literal(writer, "{\"role\":\"assistant\",\"content\":[");
+            __write_assistant_blocks(writer, &item);
+            agent_json_write_literal(writer, "]}");
+        }
     }
-    if (!cJSON_AddItemToObject(payload, "messages", msg_array))
+
+    if (open_tool_result)
     {
-        cJSON_Delete(msg_array);
-        return -RT_ENOMEM;
+        agent_json_write_literal(writer, "]}");
     }
+    agent_json_write_literal(writer, "]");
 
     if (tools != RT_NULL)
     {
-        tool_array = anthropic_translate_tools(tools);
-        if (!tool_array)
-        {
-            return -RT_ENOMEM;
-        }
-        if (!cJSON_AddItemToObject(payload, "tools", tool_array))
-        {
-            cJSON_Delete(tool_array);
-            return -RT_ENOMEM;
-        }
+        __write_tools(writer, tools);
     }
 
-    return RT_EOK;
+    agent_json_write_literal(writer, "}");
+
+    return agent_json_writer_ok(writer) ? RT_EOK : -RT_ENOMEM;
 }
 
 /*
@@ -680,10 +546,9 @@ static rt_bool_t anthropic_parse_event(cJSON *json, agent_protocol_stream_t *str
 static const agent_protocol_ops_t g_anthropic_ops =
 {
     .name = "anthropic",
-    .build_request = anthropic_build_request,
+    .write_request = anthropic_write_request,
     .add_headers = anthropic_add_headers,
     .parse_event = anthropic_parse_event,
-    .format_content = anthropic_format_content,
 };
 
 /*

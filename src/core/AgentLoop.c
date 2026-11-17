@@ -179,9 +179,24 @@ static void main_loop(void *param)
             continue;
         }
 
-        g_context->append_user_message(g_context, messages);
-        /* 输入消息所有权在 main_loop（消费者），使用完毕后释放 */
         g_turn_spontaneous = messages->spontaneous;
+
+        /* 追加前先看占用：快满了就先压缩，给本轮输入腾地方。
+           压缩失败不拦本轮，追加失败才跳过 */
+        if (agent_context_arena_used(g_context) * 4 > agent_context_arena_capacity(g_context) * 3 &&
+            g_context->compress_context(g_context, PKG_AGENT_MESSAGE_TRIM) != RT_EOK)
+        {
+            LOG_W("Context nearly full and compression failed; trying to append anyway.");
+        }
+
+        if (g_context->append_user_message(g_context, messages) != RT_EOK)
+        {
+            LOG_E("Context is full, cannot append the user message; skipping this turn");
+            messages_destroy(messages);
+            continue;
+        }
+
+        /* 输入消息所有权在 main_loop（消费者），使用完毕后释放 */
         messages_destroy(messages);
 
         g_agent_busy = RT_TRUE;
