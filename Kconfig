@@ -663,6 +663,107 @@ if PKG_USING_AGENT
                 Changes require rebuilding firmware; no runtime filesystem is needed.
     endmenu
 
+    menu "Agent Memory"
+
+        config PKG_AGENT_MEMORY_ENABLE
+            bool "Enable layered memory"
+            default n
+            help
+                MemGPT-style memory on top of the conversation context.
+                Core memory is injected into every model request. Recall
+                memory is searched with keywords from the latest user
+                message and the top matches are appended after it.
+
+                The pool is static, no heap is used. Default sizes cost
+                about 8 KB of RAM: 8 core items and 32 recall items of
+                192 bytes, plus a 1 KB injection buffer. When disabled
+                the module compiles out and all call sites become no-ops.
+
+        if PKG_AGENT_MEMORY_ENABLE
+
+            config PKG_AGENT_MEMORY_TOOLS_ENABLE
+                bool "Expose memory tools to the model"
+                default y
+                help
+                    Register memory_store, memory_search and memory_delete
+                    so the model can edit its own memory and look up
+                    details that the conversation summary dropped.
+
+            config PKG_AGENT_MEMORY_CORE_ITEMS
+                int "Core memory slots"
+                default 8
+                range 1 32
+                help
+                    Core items are sent with every request, so keep this
+                    small. When full, the oldest item is overwritten.
+
+            config PKG_AGENT_MEMORY_RECALL_ITEMS
+                int "Recall memory slots"
+                default 32
+                range 1 64
+                help
+                    Recall items are only sent when keywords from the
+                    latest user message match. When full, the oldest item
+                    is overwritten.
+
+            config PKG_AGENT_MEMORY_ITEM_BYTES
+                int "Bytes per memory item"
+                default 192
+                range 64 512
+                help
+                    Longest stored text including the terminator. Longer
+                    input is truncated.
+
+            config PKG_AGENT_MEMORY_TOPK
+                int "Recall items injected per request"
+                default 3
+                range 1 8
+                help
+                    How many keyword matches are appended to each request.
+                    Raise it for chatty assistants, lower it to save tokens.
+
+            config PKG_AGENT_MEMORY_INJECT_BYTES
+                int "Injection buffer bytes"
+                default 1024
+                range 256 4096
+                help
+                    Upper bound for the memory block added to one request,
+                    including the header line. Items are added newest first
+                    until the buffer is full.
+
+            config PKG_AGENT_MEMORY_AUTO_STORE
+                bool "Keep compressed user turns in recall memory"
+                default n
+                help
+                    Before the context manager drops old history, store the
+                    last few user messages in recall memory. This is useful
+                    when summaries lose details, but it copies user text to
+                    a second place, so leave it off for privacy-sensitive
+                    deployments.
+
+            config PKG_AGENT_MEMORY_PERSIST
+                bool "Save memory to a file"
+                default n
+                depends on RT_USING_DFS
+                help
+                    Load memory at agent start and save it when the agent
+                    stops, so memory survives reboots. The write goes to a
+                    temporary file and is renamed into place. Needs a
+                    mounted filesystem, for example an SD card.
+
+            config PKG_AGENT_MEMORY_FILE
+                string "Memory file"
+                default "/agent_memory.dat"
+                depends on PKG_AGENT_MEMORY_PERSIST
+                help
+                    Absolute path on the mounted filesystem. The file is
+                    plain text, one item per line, and stays small because
+                    the item count is bounded by the slot settings.
+
+        endif
+
+    endmenu
+
     menu "Agent Tools Configuration"
 
         config PKG_AGENT_TOOL_LOOP_MAX
