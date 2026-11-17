@@ -749,8 +749,9 @@ if PKG_USING_AGENT
                 help
                     Load memory at agent start and save it when the agent
                     stops, so memory survives reboots. The write goes to a
-                    temporary file and is renamed into place. Needs a
-                    mounted filesystem, for example an SD card.
+                    temporary file and is renamed into place. You still need
+                    to enable and mount a read-write filesystem such as
+                    elmfat or littlefs; romfs is read-only.
 
             config PKG_AGENT_MEMORY_FILE
                 string "Memory file"
