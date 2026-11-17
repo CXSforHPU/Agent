@@ -91,6 +91,7 @@ static inline const char *agent_ctx_view_slice(const agent_ctx_view_t *view, con
 
 /*
  * 请求来源：命中上下文的历史窗口，或者两段独立文本（压缩请求用）。
+ * memory_text 非空时作为一条 user 消息放在系统提示词之后；
  * user_text 非空时追加在消息末尾，作为一条纯文本 user 消息。
  */
 typedef struct agent_chat_src
@@ -99,10 +100,11 @@ typedef struct agent_chat_src
     int first;
     int count;                 /* < 0 表示到末尾 */
     const char *system_override;
+    const char *memory_text;
     const char *user_text;
 } agent_chat_src_t;
 
-/* 规范消息迭代器：system -> 摘要 -> 历史窗口 -> 追加文本 */
+/* 规范消息迭代器：system -> 记忆 -> 摘要 -> 历史窗口 -> 追加文本 */
 typedef struct agent_ctx_cursor
 {
     const agent_chat_src_t *src;
@@ -148,6 +150,14 @@ rt_bool_t agent_context_get_message(const struct Context *self, int index, agent
 const char *agent_context_system_prompt(const struct Context *self);
 const char *agent_context_summary(const struct Context *self);
 rt_bool_t agent_context_has_summary(const struct Context *self);
+
+/*
+ * @brief  最近一条 user 消息的纯文本，用作记忆检索的查询
+ * @param  self 上下文
+ * @return 文本指针；没有 user 消息返回 NULL
+ */
+const char *agent_context_last_user_text(const struct Context *self);
+
 rt_size_t agent_context_arena_used(const struct Context *self);
 rt_size_t agent_context_arena_capacity(const struct Context *self);
 

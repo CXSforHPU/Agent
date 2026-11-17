@@ -1,5 +1,6 @@
 #include "AgentFsm.h"
 #include "MessageHub.h"
+#include "memory.h"
 #include "utils.h"
 
 #define LOG_TAG "Agent.Fsm"
@@ -219,6 +220,8 @@ static AgentFsmState_t agent_fsm_state_think(AgentFsm_t *fsm)
     rt_memset(&src, 0, sizeof(src));
     src.ctx = fsm->context;
     src.count = -1;
+    /* 核心记忆每轮注入，回忆层按用户这句话检索；没有命中时为 NULL */
+    src.memory_text = agent_memory_context(agent_context_last_user_text(fsm->context));
 
     /* 请求失败重试：TLS/网络抖动（如 mbedtls NET_RECV_FAILED、对端重置）不应直接
        丢弃整轮对话；已流式输出的部分内容在重试时可能重复打印，属可接受的代价 */

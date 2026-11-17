@@ -1,5 +1,6 @@
 #include "context.h"
 #include "skill.h"
+#include "memory.h"
 #include <ctype.h>
 
 #define LOG_TAG "Agent.context"
@@ -641,6 +642,37 @@ rt_bool_t agent_context_has_summary(const struct Context *self)
     return self ? self->has_summary : RT_FALSE;
 }
 
+const char *agent_context_last_user_text(const struct Context *self)
+{
+    int index;
+
+    if (!self) return RT_NULL;
+    for (index = self->count - 1; index >= 0; index--)
+    {
+        const agent_ctx_message_t *message = __message_at((Context_t)self, index);
+        agent_ctx_view_t view;
+        int i;
+
+        if (!message || message->role != ROLE_USER) continue;
+        if (message->block_count == 0) continue;
+
+        view.record = (const char *)message;
+        view.role = message->role;
+        view.flags = message->flags;
+        view.block_count = message->block_count;
+        for (i = 0; i < view.block_count; i++)
+        {
+            const agent_ctx_block_t *block = agent_ctx_view_blocks(&view) + i;
+
+            if (block->type == AGENT_CTX_BLOCK_TEXT && block->first.length > 0)
+            {
+                return agent_ctx_view_slice(&view, &block->first);
+            }
+        }
+    }
+    return RT_NULL;
+}
+
 rt_size_t agent_context_arena_used(const struct Context *self)
 {
     return self ? self->used - self->base : 0;
@@ -730,6 +762,15 @@ rt_bool_t agent_ctx_cursor_next(agent_ctx_cursor_t *cursor, agent_ctx_item_t *it
         }
         case 1:
             cursor->stage = 2;
+            if (src->memory_text)
+            {
+                item->role = ROLE_USER;
+                item->text = src->memory_text;
+                return RT_TRUE;
+            }
+            break;
+        case 2:
+            cursor->stage = 3;
             if (agent_context_has_summary(src->ctx))
             {
                 item->role = ROLE_ASSISTANT;
@@ -737,7 +778,7 @@ rt_bool_t agent_ctx_cursor_next(agent_ctx_cursor_t *cursor, agent_ctx_item_t *it
                 return RT_TRUE;
             }
             break;
-        case 2:
+        case 3:
             if (cursor->index < cursor->end &&
                 agent_context_get_message(src->ctx, cursor->index, &cursor->view))
             {
@@ -747,10 +788,10 @@ rt_bool_t agent_ctx_cursor_next(agent_ctx_cursor_t *cursor, agent_ctx_item_t *it
                 item->record = cursor->view.record;
                 return RT_TRUE;
             }
-            cursor->stage = 3;
-            break;
-        case 3:
             cursor->stage = 4;
+            break;
+        case 4:
+            cursor->stage = 5;
             if (src->user_text)
             {
                 item->role = ROLE_USER;
@@ -955,6 +996,45 @@ static rt_err_t __compress_context(Context_t self, int threshold)
     rt_strncpy(self->summary, text, sizeof(self->summary) - 1);
     self->summary[sizeof(self->summary) - 1] = '\0';
     self->has_summary = RT_TRUE;
+
+#ifdef PKG_AGENT_MEMORY_AUTO_STORE
+    {
+        /* 摘要可能写漏，把压缩边界前最近的几句用户原话留在回忆层备查 */
+        int index;
+        int stored = 0;
+
+        for (index = cut - 1; index >= 0 && stored < 3; index--)
+        {
+            const agent_ctx_message_t *message = __message_at(self, index);
+            agent_ctx_view_t view;
+            int i;
+
+            if (!message || message->role != ROLE_USER || message->block_count == 0)
+            {
+                continue;
+            }
+            view.record = (const char *)message;
+            view.role = message->role;
+            view.flags = message->flags;
+            view.block_count = message->block_count;
+            for (i = 0; i < view.block_count; i++)
+            {
+                const agent_ctx_block_t *block = agent_ctx_view_blocks(&view) + i;
+
+                if (block->type == AGENT_CTX_BLOCK_TEXT && block->first.length > 0)
+                {
+                    if (agent_memory_store(AGENT_MEMORY_RECALL,
+                                           agent_ctx_view_slice(&view, &block->first)) == RT_EOK)
+                    {
+                        stored++;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+#endif
+
     agent_context_drop_front(self, cut);
     LOG_I("Compressed %d history messages: %u -> %u bytes; kept %d recent messages",
           cut, (unsigned int)old_size, (unsigned int)new_size, self->count);

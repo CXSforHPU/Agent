@@ -1,5 +1,6 @@
 #include "chat.h"
 #include "context.h"
+#include "memory.h"
 #include "MessageHub.h"
 #include "tool_func.h"
 #include "utils.h"
@@ -88,6 +89,7 @@ static void init_agent(void)
     agent_report_init();
 
     init_tools();
+    agent_memory_init();
     g_message_hub = message_hub_create();
     g_context = agent_context_create();
 
@@ -270,7 +272,8 @@ static void cleanup_agent(void)
         message_hub_destroy(hub);
     }
 
-    /* 4. 销毁上下文 */
+    /* 4. 销毁上下文，落盘记忆（开了持久化时） */
+    agent_memory_deinit();
     if (g_context)
     {
         agent_context_destroy(g_context);
