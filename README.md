@@ -11,6 +11,7 @@
 - 设备框架工具：通用层 7 个工具统一走 `rt_device_*`，屏蔽具体驱动。GPIO、PWM、ADC、DAC、I2C、SPI、传感器、LED 八类各一个 `.c`，封装本类的专用 API。
 - 技能模块：`skills/*.md` 在构建时编进固件，目录注入系统提示词，模型按需加载正文。
 - 上下文管理：历史超过阈值时用滚动摘要压缩，压缩失败保留原始历史。
+- 分层记忆：核心记忆每轮注入，回忆层按关键词检索后注入，模型可用 `memory_store`、`memory_search`、`memory_delete` 自己维护。整块由 `PKG_AGENT_MEMORY_ENABLE` 控制，关闭时调用点变成空操作。
 - 多通道：CLI、WebNet、A2A、Debug、LVGL 五种通道，通过 `AgentChannelOps` 统一接入。
 - 自发上报：端侧 agent 自己得出的结论（MQTT 规则命中、传感器越限）直接推给控制台，不用等人来问。自发结论通过已认证的 A2A WebSocket 连接上报。
 - 多模态：图片、视频和未启用 STT 的音频上传到文件服务器，按 URL 交给模型。
@@ -357,6 +358,25 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 摘要请求不带工具。只有响应明确自然结束、正文完整、没有工具调用，并且确实变小了，才提交替换；任何一条不满足就保留原始历史。压缩后的摘要只留技能名，要继续用技能需重新加载。
 
+### 分层记忆
+
+记忆分两层，都是固定槽位的静态池，不占堆：
+
+| 层 | 什么时候进上下文 | 默认容量 |
+|---|---|---|
+| 核心记忆 | 每轮请求都注入 | 8 条 |
+| 回忆记忆 | 用最新一条 user 消息做关键词检索，命中前 3 条注入 | 32 条 |
+
+每条最多 192 字节，注入块整体不超过 1 KB。槽位满了覆盖最旧的一条；写入内容与已有条目完全相同时不重复占用。检索按 ASCII 单词和单个汉字打分，命中次数多的排前面，同分时新的排前面。
+
+注入内容放在系统提示词之后、历史之前，作为一条 user 消息，标题写明这是历史数据不是指令。开 `PKG_AGENT_MEMORY_TOOLS_ENABLE` 时模型可以用 `memory_store` 存一条、`memory_search` 按关键词查、`memory_delete` 按 id 删。工具返回的每条记忆带 `[id=12 core]` 前缀，删除时用这个 id。
+
+开 `PKG_AGENT_MEMORY_AUTO_STORE` 后，上下文压缩丢弃旧历史前会把最近几轮用户原话存进回忆层，摘要写漏的细节还能查回来。这个选项会把用户原话多留一份，隐私敏感的产品不要开。
+
+开 `PKG_AGENT_MEMORY_PERSIST` 后，agent 启动时从 `PKG_AGENT_MEMORY_FILE` 读记忆，停止时写回。写文件先写临时文件再改名，掉电不会留下半个文件。文件是纯文本，一行一条，例如 `c 3 User prefers Celsius.`。要挂载好文件系统，默认路径 `/agent_memory.dat`。
+
+整块记忆由 `PKG_AGENT_MEMORY_ENABLE` 控制，默认关闭。关闭时 `memory.h` 提供同名空实现，调用点不用写条件编译；槽位、每条长度、注入上限都在 `Agent Memory` 菜单里按 RAM 预算调。
+
 ### 日志
 
 诊断信息一律走 ulog：文件头写 `LOG_TAG`、`LOG_LVL LOG_LVL_INFO` 和 `#include <ulog.h>`，然后用 `LOG_I`、`LOG_W`、`LOG_E`。报错、告警、状态变化都要落日志，方便按 tag 过滤，后面要接文件或网络日志后端也能直接用。配置项因为超长被忽略之类的情况会告警，不会静默丢掉，见 `src/core/AgentConfig.c`。
@@ -533,6 +553,14 @@ a2a_activate 192.168.137.1 8080
 | `PKG_AGENT_MAX_TOOL_ARG_LEN` | 工具参数拼接上限 |
 | `PKG_AGENT_MESSAGE_TRIM` | 上下文压缩阈值，历史超过这个条数就尝试滚动摘要 |
 | `PKG_AGENT_SKILL_DIR` | 内嵌技能的 Markdown 目录，默认 `skills` |
+| `PKG_AGENT_MEMORY_ENABLE` | 分层记忆总开关，默认关闭 |
+| `PKG_AGENT_MEMORY_TOOLS_ENABLE` | 给模型提供 `memory_store`、`memory_search`、`memory_delete`，默认开 |
+| `PKG_AGENT_MEMORY_CORE_ITEMS` / `PKG_AGENT_MEMORY_RECALL_ITEMS` | 核心层与回忆层槽位数，默认 8 与 32 |
+| `PKG_AGENT_MEMORY_ITEM_BYTES` | 单条记忆上限，默认 192 字节 |
+| `PKG_AGENT_MEMORY_TOPK` | 每轮注入的回忆条数，默认 3 |
+| `PKG_AGENT_MEMORY_INJECT_BYTES` | 注入块上限，默认 1024 字节 |
+| `PKG_AGENT_MEMORY_AUTO_STORE` | 压缩前把用户原话存进回忆层，默认关闭 |
+| `PKG_AGENT_MEMORY_PERSIST` / `PKG_AGENT_MEMORY_FILE` | 记忆落盘开关与路径，默认路径 `/agent_memory.dat` |
 
 外部服务器地址单独放在 `External Server` 菜单里：
 
@@ -549,7 +577,7 @@ a2a_activate 192.168.137.1 8080
 
 下面的数字来自当前配置的完整构建和 QEMU 离线回归。统计口径、运行时堆明细和复现方法见 [存储与内存占用](./docs/resources.md)。
 
-当前配置开了 MQTT、设备框架工具、MCP、多模态、语音转写和音频驱动，技能是随包发布的 5 份，两份协议都编译。固件整体是 text 2,832,011 字节、data 35,248 字节、bss 276,944 字节。Agent 包占 218,138 字节，其中只读段 216,922 字节、data 1,216 字节，约为固件 text 加 data 的 7.6%。
+当前配置开了 MQTT、设备框架工具、MCP、多模态、语音转写、音频驱动与分层记忆，技能是随包发布的 5 份，两份协议都编译。固件整体是 text 2,843,475 字节、data 35,248 字节、bss 293,328 字节。Agent 包占 229,595 字节，其中只读段 228,375 字节、data 1,220 字节，约为固件 text 加 data 的 8.0%。
 
 | 模块 | 字节 | 怎么关 |
 |---|---|---|
@@ -559,6 +587,7 @@ a2a_activate 192.168.137.1 8080
 | 协议与 JSON | 25,076 | 两份协议都编；改 SConscript 只留一份可省 7,952 |
 | 内嵌技能 | 20,527 | `PKG_AGENT_SKILL_DIR` 指向只放要留的技能 |
 | 通道 | 15,309 | A2A 10,965，WebSocket 4,344 |
+| 分层记忆 | 10,925 | `PKG_AGENT_MEMORY_ENABLE` |
 | 多模态与语音 | 9,683 | 关多模态后 `file_op` 与 `stt` 一起消失 |
 | 工具注册与支撑 | 9,109 | 必编 |
 | MCP 客户端 | 8,408 | `PKG_AGENT_TOOL_MCP_ENABLE` |
@@ -571,11 +600,11 @@ a2a_activate 192.168.137.1 8080
 
 真正的大头是依赖。选上本包会带 HTTPS 客户端和 TLS，当前固件里 mbedTLS 约 832 KB，占 text 的 29%；lwIP 约 171 KB。Flash 紧张的器件要先算这一块。
 
-静态 RAM 是 26,206 字节（data 1,216 加 bss 24,990）。运行时，一轮纯文本对话新增约 4.1 KB 堆，带工具调用约 5.6 KB，清理后回到基线。`AgentLoop` 栈 10,240 字节，实测峰值占 32%～37%。
+静态 RAM 是 35,250 字节（data 1,220 加 bss 34,030），其中分层记忆的固定槽池占 9,040 字节，关掉总开关后这部分随之下线。记忆不额外占堆。运行时，一轮纯文本对话新增约 4.1 KB 堆，带工具调用约 5.6 KB，清理后回到基线。`AgentLoop` 栈 10,240 字节，实测峰值占 32%～37%。
 
 ## 验证
 
-包内自带 utest 用例 `agent.device_tools`，覆盖通用层工具、模块表注册与两个技能。BSP 工作区另有离线 QEMU 回归 `build/skill_qemu/`，在 webclient 边界替换模型，检查技能、上下文压缩、设备工具、MCP 客户端与端到端链路。
+包内自带两个 utest 用例：`agent.device_tools` 覆盖通用层工具、模块表注册与两个技能，`agent.memory` 覆盖分层记忆的存取、去重、淘汰、检索与注入顺序。BSP 工作区另有离线 QEMU 回归 `build/skill_qemu/`，在 webclient 边界替换模型，检查技能、上下文压缩、设备工具、分层记忆、MCP 客户端与端到端链路。
 
 ```bash
 scons -f build/skill_qemu/SConstruct

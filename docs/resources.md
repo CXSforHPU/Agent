@@ -18,6 +18,7 @@ Flash 数字取自 BSP 工作区根目录的 `rtthread.map` 和 `arm-none-eabi-s
 - 多模态、语音转写、音频驱动打开。
 - A2A 走 WebSocket 通道。
 - 技能用随包发布的 5 份。
+- 分层记忆打开，工具一起打开；自动入库与持久化都关闭。
 - OpenAI 与 Anthropic 两份协议都编译，运行时切换。
 
 几个影响内存的默认值：
@@ -28,12 +29,16 @@ Flash 数字取自 BSP 工作区根目录的 `rtthread.map` 和 `arm-none-eabi-s
 | `PKG_AGENT_MAX_CONTENT_LEN` | 2048 | 回答正文缓冲 |
 | `PKG_AGENT_STREAM_LINE_BUFSZ` | 1024 | SSE 行缓冲，在栈上 |
 | `PKG_AGENT_MAX_TOOL_ARG_LEN` | 512 | 单个工具参数上限 |
+| `PKG_AGENT_MEMORY_CORE_ITEMS` | 8 | 核心记忆槽位，每轮全量注入 |
+| `PKG_AGENT_MEMORY_RECALL_ITEMS` | 32 | 回忆记忆槽位，按关键词取前几条 |
+| `PKG_AGENT_MEMORY_ITEM_BYTES` | 192 | 单条记忆的文本上限 |
+| `PKG_AGENT_MEMORY_INJECT_BYTES` | 1024 | 每轮注入块的上限 |
 
 ## 3. Flash 占用
 
-固件整体：text 2,832,011 字节，data 35,248 字节，bss 276,944 字节。
+固件整体：text 2,843,475 字节，data 35,248 字节，bss 293,328 字节。
 
-Agent 包本身是 218,138 字节，其中只读段 216,922 字节、data 1,216 字节，占 firmware text 加 data 的 7.6%。
+Agent 包本身是 229,595 字节，其中只读段 228,375 字节、data 1,220 字节，占 firmware text 加 data 的 8.0%。
 
 | 模块 | 字节 | 怎么关 |
 |---|---|---|
@@ -43,6 +48,7 @@ Agent 包本身是 218,138 字节，其中只读段 216,922 字节、data 1,216 
 | 协议与 JSON | 25,076 | 两份协议都编；改 SConscript 只留一份可省 7,952 |
 | 内嵌技能 | 20,527 | `PKG_AGENT_SKILL_DIR` 指向只放要留的技能 |
 | 通道 | 15,309 | A2A 10,965，WebSocket 4,344 |
+| 分层记忆 | 10,925 | `PKG_AGENT_MEMORY_ENABLE`；只关工具省 3,940 |
 | 多模态与语音 | 9,683 | 关多模态后 `file_op` 与 `stt` 一起消失 |
 | 工具注册与支撑 | 9,109 | 必编 |
 | MCP 客户端 | 8,408 | `PKG_AGENT_TOOL_MCP_ENABLE` |
@@ -62,11 +68,12 @@ MQTT 工具是最大的一块，按文件分：`tool_mqtt_ops.o` 13,718 字节�
 1. MQTT 工具，省 48,809 字节。
 2. 不用的设备类模块，一个省 5,100～6,596 字节。
 3. 技能只留一份，省 16,000 字节上下。
-4. 关多模态与语音转写，省 9,683 字节。
-5. 关 MCP 客户端，省 8,408 字节。
-6. 只编一种协议，省 7,952 字节。现在两份协议都编，Kconfig 没有单协议开关，要自己改 SConscript。
+4. 分层记忆，省 10,925 字节。只要不带记忆工具，关 `PKG_AGENT_MEMORY_TOOLS_ENABLE` 省 3,940。
+5. 关多模态与语音转写，省 9,683 字节。
+6. 关 MCP 客户端，省 8,408 字节。
+7. 只编一种协议，省 7,952 字节。现在两份协议都编，Kconfig 没有单协议开关，要自己改 SConscript。
 
-按这张表相减，关掉 MQTT、设备工具、MCP、多模态与语音，技能只留一份，包体约 97 KB。这个数是算出来的，没有重新构建实测。
+按这张表相减，关掉 MQTT、设备工具、MCP、多模态与语音，技能只留一份，包体约 97 KB。这个数是算出来的，没有重新构建实测。分层记忆再关掉，还要少 10,925 字节。
 
 A2A 通道承载控制台连接和自发上报，关掉以后只剩 CLI 与 WebNet 通道，要确认你的产品不需要控制台。
 
@@ -78,11 +85,13 @@ A2A 通道承载控制台连接和自发上报，关掉以后只剩 CLI 与 WebN
 
 ## 4. 静态 RAM
 
-Agent 包的 data 是 1,216 字节，bss 是 24,990 字节，合计 26,206 字节，约 25.6 KB。
+Agent 包的 data 是 1,220 字节，bss 是 34,030 字节，合计 35,250 字节，约 34.4 KB。
 
 bss 里主要是工具描述表、通道状态和协议静态表。这部分随开关增减，例如关掉 MQTT 工具后对应的静态表一起消失。
 
-包需要 `RT_USING_HEAP`。除了下面的运行时堆，会话上下文、技能正文和历史摘要也占堆，大小由对话长度决定。空闲堆建议至少留 12 KB 起步，再按预期最大对话长度加余量。
+分层记忆是其中最大的一块固定开销，占 9,040 字节：8 个核心槽加 32 个回忆槽，一个槽 200 字节（编号、长度、状态加 192 字节正文），再加一个 1,024 字节的注入缓冲。关掉 `PKG_AGENT_MEMORY_ENABLE` 后整块下线；只改槽位数时按 200 字节一个槽增减。
+
+包需要 `RT_USING_HEAP`。记忆不用堆，全部走静态槽池。除了下面的运行时堆，会话上下文、技能正文和历史摘要也占堆，大小由对话长度决定。空闲堆建议至少留 12 KB 起步，再按预期最大对话长度加余量。
 
 ## 5. 运行时堆
 
@@ -139,5 +148,7 @@ arm-none-eabi-size rtthread.elf
 scons -f build/skill_qemu/SConstruct
 python -B build/skill_qemu/run.py
 ```
+
+回归里会跑两个 utest 用例：`utest_run -thread agent.device_tools` 和 `utest_run -thread agent.memory`。前者看设备工具与技能，后者看分层记忆的槽池、检索与注入顺序。
 
 串口日志里搜 `MEM_PROBE` 看堆增量，搜 `AgentLoop` 看栈水位。相关探针是 `json_reader_qemu_test` 与 `stack_probe` 两个 MSH 命令。
