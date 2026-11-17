@@ -9,30 +9,30 @@
 
 | 工具（LLM 可见名） | 作用 | 典型用户说法 |
 |---|---|---|
-| `mqtt_connect` | **连接 broker**（未启动则启动、未连上则等待）并报告连接状态 | "连上 MQTT"、"怎么发不出去了？检查一下连接" |
-| `mqtt_disconnect` | **断开连接**并释放工作线程/接收线程/队列（订阅意图保留） | "先断开 MQTT"、"别占用网络了" |
-| `mqtt_publish` | 向指定话题发布消息（下发命令），**发布前自动做连接检查** | "打开设备 1 的灯"、"给 agent/pub 发一条 hello" |
-| `mqtt_subscribe` | 订阅 / 退订 / 查看话题（**支持运行时动态增删**），**订阅前自动做连接检查**，并选择投递模式（默认 `filter`） | "订阅 device/+/data"、"别再监听这个话题了" |
-| `mqtt_rule` | 设置阈值规则：**只有越界才打扰 agent**（含冷却与边沿判定，支持嵌套路径） | "湿度超过 30 就告诉我"、"别每条都分析，异常再说" |
-| `mqtt_history` | **汇总近期情况**：最近消息（含原始 payload）+ 数值字段 min/max/avg/last + 计数；只读不消费 | "最近湿度怎么样"、"帮我评估一下最近情况"、"给个趋势" |
-| `mqtt_receive` | 取出并**消费**缓冲中的消息（取出即移除） | "把缓存的报文取出来" |
+| `mqtt_connect` | 连接 broker（未启动则启动、未连上则等待）并报告连接状态 | "连上 MQTT"、"怎么发不出去了？检查一下连接" |
+| `mqtt_disconnect` | 断开连接并释放工作线程/接收线程/队列（订阅意图保留） | "先断开 MQTT"、"别占用网络了" |
+| `mqtt_publish` | 向指定话题发布消息（下发命令），发布前自动做连接检查 | "打开设备 1 的灯"、"给 agent/pub 发一条 hello" |
+| `mqtt_subscribe` | 订阅 / 退订 / 查看话题（支持运行时动态增删），订阅前自动做连接检查，并选择投递模式（默认 `filter`） | "订阅 device/+/data"、"别再监听这个话题了" |
+| `mqtt_rule` | 设置阈值规则：只有越界才打扰 agent（含冷却与边沿判定，支持嵌套路径） | "湿度超过 30 就告诉我"、"别每条都分析，异常再说" |
+| `mqtt_history` | 汇总近期情况：最近消息（含原始 payload）+ 数值字段 min/max/avg/last + 计数；只读不消费 | "最近湿度怎么样"、"帮我评估一下最近情况"、"给个趋势" |
+| `mqtt_receive` | 取出并消费缓冲中的消息（取出即移除） | "把缓存的报文取出来" |
 
 **连接检查（connect-first）**：`mqtt_publish` / `mqtt_subscribe` 执行前都会走同一套前置检查
 `mqtt_tool_ensure_connected()`：
 
 1. 客户端未启动 → 自动 `mqtt_tool_start()`（建接收队列/接收线程 + paho 工作线程）
 2. 已启动但未连上 → 等待最多 `PKG_AGENT_TOOL_MQTT_CONNECT_WAIT_MS`（默认 3s）
-3. 仍未连上 → 结果里明确写出 `broker / 等待时长 / state / 建议动作`，并且**不执行**发布
+3. 仍未连上 → 结果里明确写出 `broker / 等待时长 / state / 建议动作`，并且不执行发布
 
 无论哪种情况，结果文本都会带上 `state=stopped|connecting|connected`，模型据此判断当前状态；
 订阅场景即使未连上也不会失败：订阅意图会登记，连上后自动生效（结果里显示 `pending`）。
 
-**默认行为（filter 模式）**：订阅到的话题**不会**每条都触发 LLM。只有满足下面任一条时才把消息交给 agent 做**简短总结或告警**：
+**默认行为（filter 模式）**：订阅到的话题不会每条都触发 LLM。只有满足下面任一条时才把消息交给 agent 做简短总结或告警：
 
 1. **需要咨询**：报文里出现问句/求助/异常类关键词（`?`、help、advice、alert、error、异常、故障、请问…）
 2. **超过阈值**：命中 `mqtt_rule` 设置的数值规则（由「未越界 → 越界」的边沿触发，且有冷却时间）
 
-其余例行数据在本地过滤掉：**原始 payload 会进「近期历史环形缓冲」**（每话题保留最近 N 条），
+其余例行数据在本地过滤掉：原始 payload 会进「近期历史环形缓冲」（每话题保留最近 N 条），
 需要时用 `mqtt_history` 读取并总结。这个过程不消耗 LLM 调用，不丢数据，读取也不影响后续读取。
 
 | 投递模式 | 行为 |
@@ -96,7 +96,7 @@ forward reason: threshold rule matched: hum=35 > 30
 Reply with a short summary or alert for the user. Keep it brief and do not restate routine data.
 ```
 
-`forward reason` 明确告诉模型「为什么这条消息被放行」（咨询类 / auto 模式 / 命中哪条阈值规则），并要求**简短总结**，避免长篇复述例行数据。
+`forward reason` 明确告诉模型「为什么这条消息被放行」（咨询类 / auto 模式 / 命中哪条阈值规则），并要求简短总结，避免长篇复述例行数据。
 
 ---
 
@@ -156,7 +156,7 @@ rules (forward only when matched):
 summary: active=1/4 rx_total=9 injected_total=3 suppressed_total=6 alerts=2 dropped=0 buffered=2 overwritten=3
 ```
 
-> `status`/`list` 同时可用于**按需总结**：`last payload` 给出最新读数，`suppressed` 给出被本地过滤的条数。
+> `status`/`list` 同时可用于按需总结：`last payload` 给出最新读数，`suppressed` 给出被本地过滤的条数。
 
 ### 4.3 `mqtt_rule`
 
@@ -191,7 +191,7 @@ you will only be notified when this condition becomes true (or after the cooldow
 - **回落复位**：数值回到阈值内即清除边沿标记，下次越界可再次告警
 - 报文里取不到该路径（非 JSON / 无此路径 / 非数值）时该规则不参与判定
 - 一条规则最多 4 条（`PKG_AGENT_TOOL_MQTT_MAX_RULES`），同一 `话题+路径+比较符` 重复设置视为更新阈值
-- **多条规则之间是「或」**：任一条命中即交给 agent（日志/`forward reason` 会写明是哪条命中）
+- 多条规则之间是「或」：任一条命中即交给 agent（日志/`forward reason` 会写明是哪条命中）
 
 #### 4.3.1 判定流程
 
@@ -201,7 +201,7 @@ draw.io 源文件：[mqtt-rule-flow.drawio](diagrams/mqtt-rule-flow.drawio)
 
 #### 4.3.2 复合（嵌套）数据的取值写法
 
-`field` 支持 **JSON 路径**，不再是只能取顶层字段：
+`field` 支持 JSON 路径，不再是只能取顶层字段：
 
 | payload 示例 | `field` 写法 | 说明 |
 |---|---|---|
@@ -209,9 +209,9 @@ draw.io 源文件：[mqtt-rule-flow.drawio](diagrams/mqtt-rule-flow.drawio)
 | `{"sensor":{"hum":35}}` | `sensor.hum` | 嵌套对象，`.` 逐层深入 |
 | `{"sensor":{"a":{"hum":35}}}` | `sensor.a.hum` | 多层嵌套，可继续加 `.` |
 | `{"readings":[{"t":10},{"t":45}]}` | `readings[1].t` | 数组下标（从 0 开始） |
-| `{"readings":[{"t":10},{"t":45}]}` | `readings[*].t` | **任一元素满足条件即命中**（45 > 40） |
+| `{"readings":[{"t":10},{"t":45}]}` | `readings[*].t` | 任一元素满足条件即命中（45 > 40） |
 | `{"readings":[20,22,45]}` | `readings` | 字段本身是数组时同样按「任一元素命中」 |
-| `{"hum":"35"}` | `hum` | **数值字符串**也按数值处理（设备常见写法） |
+| `{"hum":"35"}` | `hum` | 数值字符串也按数值处理（设备常见写法） |
 | `{"alarm":true}` | `alarm` | 布尔按 1/0 处理 |
 | `35` | 省略 `field` | 整条 payload 就是数值 |
 | `{"a":1,"b":2}` | 省略 `field` | 取不到数值 → 该规则不参与判定 |
@@ -261,7 +261,7 @@ total 2 message(s) fetched
 | `topic` | string | 要汇总的话题过滤器（支持通配）；省略则汇总全部已订阅话题 |
 | `max` | number | 每个话题最多列出多少条最近消息（默认/上限为 `HISTORY_DEPTH`，默认 8） |
 
-结果示例（**含原始 payload、时间、数值统计与计数**）：
+结果示例（含原始 payload、时间、数值统计与计数）：
 
 ```
 [topic=agent/sub] mode=filter want=1 received=5 forwarded=0 filtered=5 history=5
@@ -280,9 +280,9 @@ Summarize the trend above and give the user a short assessment of the recent sit
 
 要点：
 
-- **filter 模式下被本地拦截的例行数据也能被读到**：它们从未交给 LLM，但仍完整保留在每话题的历史环形缓冲里（含 payload），这正是「按需总结」的数据来源
+- filter 模式下被本地拦截的例行数据也能被读到：它们从未交给 LLM，但仍完整保留在每话题的历史环形缓冲里（含 payload），这正是「按需总结」的数据来源
 - **只读、不消费**：反复调用结果一致（`mqtt_receive` 才会移除缓冲）
-- 数值统计对**对象型 payload 的每个数值字段**分别统计（`min/max/avg/last/n`）；整条 payload 为数值时按 `payload` 统计；非 JSON 报文只列出原文
+- 数值统计对对象型 payload 的每个数值字段分别统计（`min/max/avg/last/n`）；整条 payload 为数值时按 `payload` 统计；非 JSON 报文只列出原文
 - 结果尾部附一句提示，引导模型给出「趋势 + 是否需要关注」的简短评估
 
 ---
@@ -319,7 +319,7 @@ Summarize the trend above and give the user a short assessment of the recent sit
 | `PKG_AGENT_TOOL_MQTT_LOCK_WAIT_MS` | 1000 | 状态锁最长等待时间，避免对端卡住时拖死 agent 循环或 MSH |
 | `PKG_AGENT_TOOL_MQTT_DEFAULT_MODE` | `"filter"` | 默认订阅话题的投递模式（filter/auto/poll） |
 | `PKG_AGENT_TOOL_MQTT_LAST_PAYLOAD_LEN` | 96 | 订阅记录缓存的"最近一条 payload"长度（供 status 查看） |
-| `PKG_AGENT_TOOL_MQTT_HISTORY_DEPTH` | 8 | **每话题保留的近期消息条数**（`mqtt_history` 的数据源） |
+| `PKG_AGENT_TOOL_MQTT_HISTORY_DEPTH` | 8 | 每话题保留的近期消息条数（`mqtt_history` 的数据源） |
 | `PKG_AGENT_TOOL_MQTT_HISTORY_PAYLOAD_LEN` | 128 | 近期历史中单条 payload 的保存长度 |
 | `PKG_AGENT_TOOL_MQTT_TOPIC_MAX_LEN` | 64 | 话题字符串缓冲长度 |
 | `PKG_AGENT_TOOL_MQTT_PAYLOAD_MAX_LEN` | 256 | 单条接收 payload 上限（超出截断并标记） |
@@ -346,7 +346,7 @@ Summarize the trend above and give the user a short assessment of the recent sit
 
 | 配置 | 说明 |
 |---|---|
-| `PKG_PAHOMQTT_SUBSCRIBE_HANDLERS` | paho(pipe 模式) 的订阅槽位数：**默认值 1 时只能订阅 1 个话题**，本项目已调整为 4（与 `PKG_AGENT_TOOL_MQTT_MAX_SUB_TOPICS` 匹配）。若改回 1，工具会自动把订阅上限收敛为 1，超出部分返回错误提示。 |
+| `PKG_PAHOMQTT_SUBSCRIBE_HANDLERS` | paho(pipe 模式) 的订阅槽位数：默认值 1 时只能订阅 1 个话题，本项目已调整为 4（与 `PKG_AGENT_TOOL_MQTT_MAX_SUB_TOPICS` 匹配）。若改回 1，工具会自动把订阅上限收敛为 1，超出部分返回错误提示。 |
 | `RT_PKG_MQTT_THREAD_STACK_SIZE` | paho 工作线程栈：**必须 ≥ 8192**。paho 启动时会 `open("/dev/MQTTn")` 创建发布管道，该路径走 DFS（`dfs_file_realpath` 会 `rt_malloc(DFS_PATH_MAX*3+3)`，DFS_PATH_MAX=4096 时即 12KB）。4KB 栈在线程内调用 DFS 时会栈溢出，溢出会踩坏堆内存（线程栈本身分配在堆上），表现为 `mqtt_tool start` 后系统卡死（详见 §9）。 |
 
 ### 5.4 `rt_vsnprintf` 与内核版本判断（Kconfig）
@@ -399,7 +399,7 @@ draw.io 源文件：[vsnprintf-select-flow.drawio](diagrams/vsnprintf-select-flo
 | 限速等待不阻塞 | 两次注入之间的间隔没到时，消息继续留在待注入队列，接收线程照常收下一条，不用 `rt_thread_mdelay` 干等 |
 | 本地门控 | `filter` 模式下由接收线程判定「是否值得打扰 agent」：命中咨询关键词或阈值规则才放行；其余只累加 `suppressed` 计数并进滚动窗口。门控在「agent 是否运行」判断之前执行，因此 agent 未运行时也能统计 |
 | 阈值告警语义 | 边沿触发 + 冷却：越界首次告警、持续越界不重复、回落复位、冷却到期可再告警；原因写进注入文本的 `forward reason` 字段 |
-| 按需总结 | 例行数据不丢：每话题保留最近 `HISTORY_DEPTH`(默认 8) 条原始报文，`mqtt_history` **只读**汇总「最近消息 + 数值 min/max/avg/last + 收发计数」，`mqtt_receive` 则取出并消费缓冲；`mqtt_tool status` 另给出每话题 `last payload`、`suppressed` 计数与规则状态 |
+| 按需总结 | 例行数据不丢：每话题保留最近 `HISTORY_DEPTH`(默认 8) 条原始报文，`mqtt_history` 只读汇总「最近消息 + 数值 min/max/avg/last + 收发计数」，`mqtt_receive` 则取出并消费缓冲；`mqtt_tool status` 另给出每话题 `last payload`、`suppressed` 计数与规则状态 |
 | 动态增删订阅 | 运行期可随时增删话题（LLM 工具 `mqtt_subscribe` / MSH `mqtt_tool sub|unsub` / 应用层 API `mqtt_tool_add_topic`、`mqtt_tool_remove_topic`）：已连接时立即发 SUBSCRIBE/UNSUBSCRIBE，未连接时先登记、连接后自动订阅；删除后 paho 槽位被释放并可被后续订阅复用 |
 | 请求失败重试 | 状态机的 `THINK` 节点对失败请求自动重试 3 次（间隔 1s/2s），因此 TLS 抖动（`mbedtls NET_RECV_FAILED`）不再直接丢弃整轮对话；已流式输出的部分内容在重试时可能重复打印 |
 | agent 未运行 | 收到的消息不注入，改存 poll 缓冲（日志 `agent not running, buffer mqtt message`），agent 启动后可用 `mqtt_receive` 取回 |
@@ -415,7 +415,7 @@ draw.io 源文件：[vsnprintf-select-flow.drawio](diagrams/vsnprintf-select-flo
 **已知限制**
 
 1. paho 的 `paho_mqtt_unsubscribe` 按“前缀匹配”释放槽位：同时存在 `a/#` 与 `a/b` 这类互相重叠的过滤器时，首次退订可能释放到另一个槽位。本工具在每次订阅/退订后都会以 paho 实际槽位为准重新同步状态，并在后续周期自动补齐，最终状态一致（可能有一两个同步周期延迟）。
-2. 未连接状态下 `mqtt_tool stop` 无法让 paho 工作线程退出（paho pipe 模式只提供 pipe 命令退出），此时该线程会继续后台重连；因此 `cleanup_agent` **不会**停止 MQTT 客户端，订阅关系与连接可跨 agent 重启保持。
+2. 未连接状态下 `mqtt_tool stop` 无法让 paho 工作线程退出（paho pipe 模式只提供 pipe 命令退出），此时该线程会继续后台重连；因此 `cleanup_agent` 不会停止 MQTT 客户端，订阅关系与连接可跨 agent 重启保持。
 
 ---
 
@@ -506,7 +506,7 @@ payload: {"temp":25}
 
 ### 8.1 应用层动态增删订阅（公开 API）
 
-工具内部按「订阅表 + paho 槽位」管理所有订阅，运行期可随时增删，**不需要重启客户端或重连 broker**：
+工具内部按「订阅表 + paho 槽位」管理所有订阅，运行期可随时增删，不需要重启客户端或重连 broker：
 
 | 函数（`inc/tools/tool_mqtt/tool_mqtt.h`） | 说明 |
 |---|---|
@@ -574,21 +574,21 @@ else
 
 | 现象 | 排查方向 |
 |---|---|
-| **模型反复调用 `mqtt_history`（十几轮不回复，像卡死）** | 三个原因都已修复，逐个对应：① 工具结果**曾经会被尾部提示语覆盖成空/只剩提示语**（`used` 没从实际内容长度续写，见 §9.3）；② 取锁失败的报错文本被覆盖后模型看不到原因；③ 框架侧没有重复调用保护。现在：工具结果永远非空且写清「为什么查不到 + 下一步 + 不要再重复调用」，框架侧对**参数完全相同**的重复调用直接跳过执行，连续两轮整轮重复就**强制生成文本回答**，达到轮次上限（6）也会强制收尾，保证这一轮一定有回复（见 §9.4） |
-| `mqtt_tool status` / `mqtt_history` 在**启动前**报 `error: mqtt state busy, retry later` | 状态锁原先只在 `mqtt_tool_start()` 里创建，未启动客户端时只读操作全部失败。已改为幂等懒创建（`mqtt_tool_lock_init()`，`lock_take()` 里兜底），未启动也能读订阅表（见 §9.3） |
+| 模型反复调用 `mqtt_history`（十几轮不回复，像卡死） | 三个原因都已修复，逐个对应：① 工具结果曾经会被尾部提示语覆盖成空/只剩提示语（`used` 没从实际内容长度续写，见 §9.3）；② 取锁失败的报错文本被覆盖后模型看不到原因；③ 框架侧没有重复调用保护。现在：工具结果永远非空且写清「为什么查不到 + 下一步 + 不要再重复调用」，框架侧对参数完全相同的重复调用直接跳过执行，连续两轮整轮重复就强制生成文本回答，达到轮次上限（6）也会强制收尾，保证这一轮一定有回复（见 §9.4） |
+| `mqtt_tool status` / `mqtt_history` 在启动前报 `error: mqtt state busy, retry later` | 状态锁原先只在 `mqtt_tool_start()` 里创建，未启动客户端时只读操作全部失败。已改为幂等懒创建（`mqtt_tool_lock_init()`，`lock_take()` 里兜底），未启动也能读订阅表（见 §9.3） |
 | 模型不调用 MQTT 工具 | 检查工具描述是否被裁剪；确认 `init_tools()` 已执行（MSH 执行 `init_tools`） |
-| 串口日志出现 `Warning: There is not enough buffer to output the log, please increase the ULOG_LINE_BUF_SIZE option` | 工具结果变长后超过 ulog 行缓冲（只影响**日志**，不影响交给模型的工具结果）。本项目 `ULOG_LINE_BUF_SIZE` 已由 512 提到 1024 |
+| 串口日志出现 `Warning: There is not enough buffer to output the log, please increase the ULOG_LINE_BUF_SIZE option` | 工具结果变长后超过 ulog 行缓冲（只影响日志，不影响交给模型的工具结果）。本项目 `ULOG_LINE_BUF_SIZE` 已由 512 提到 1024 |
 | `error: mqtt not connected` | 网络/域名解析不通、broker 地址或账号错误；看 `mqtt connecting/online/offline` 日志 |
 | `error: payload too long` | 缩短消息，或调大 `BUF_SIZE` / `MAX_PUB_LEN` / pipe 缓冲 |
 | 订阅返回 `pending` | 客户端尚未连上；连上后自动生效，可用 `mqtt_tool status` 观察 `subscribed=1` |
-| 收到消息但 agent 无反应 | **先确认投递模式**：`filter`（默认）下例行数据本来就不会打扰 agent，这是设计行为。看 `mqtt_tool status` 的 `suppressed` 计数是否在增长；需要每条都分析就 `mode=auto`。此外确认 agent 正在运行（`main_loop_entry`）；`status` 里的 `pending` 是等着注入的条数，agent 空闲后会合并投递。**想让 agent 总结这些被过滤的数据，用 `mqtt_history`（只读，能看到原始 payload）** |
+| 收到消息但 agent 无反应 | 先确认投递模式：`filter`（默认）下例行数据本来就不会打扰 agent，这是设计行为。看 `mqtt_tool status` 的 `suppressed` 计数是否在增长；需要每条都分析就 `mode=auto`。此外确认 agent 正在运行（`main_loop_entry`）；`status` 里的 `pending` 是等着注入的条数，agent 空闲后会合并投递。想让 agent 总结这些被过滤的数据，用 `mqtt_history`（只读，能看到原始 payload） |
 | `status`/`history` 等 MSH 输出被截断在 255 字节左右 | `rt_kprintf` 使用共享的 `rt_log_buf[RT_CONSOLEBUF_SIZE]`（默认 256），一次性打印超长文本会被静默截断。工具内部已改为按行分段打印；自己写 MSH 输出时同理需要分段 |
 | 阈值告警没触发 | 检查：规则字段名与报文 JSON 字段是否一致（大小写敏感）、话题过滤器是否匹配、payload 是否为合法 JSON（`{hum:35}` 少了引号不是合法 JSON，规则不参与判定）；`status` 里 `triggered_now` 可看当前是否处于越界状态 |
 | 想临时每条都看 | `mqtt_tool sub <topic> auto`（或让 agent 用 `mqtt_subscribe mode=auto`），验证完改回 `filter` |
 | 消息被截断 | payload 超过 `PAYLOAD_MAX_LEN`（256），`mqtt_receive` 会标注 `(truncated)` |
 | 只订阅成功 1 个话题 | `PKG_PAHOMQTT_SUBSCRIBE_HANDLERS` 被改回 1，改回 4 即可 |
-| **`mbedtls_client_read data error, return -0x4c` → `chat: POST failed, http status=-76` → `Chat request failed, terminating this case`** | `-0x4c` = `MBEDTLS_ERR_NET_RECV_FAILED`，即 HTTPS/TLS 连接在读取响应时被对端或网络重置，与 MQTT 消息内容无关。常见诱因是**请求过于密集**（设备周期性上报 → 每条消息触发一次 LLM 请求，容易被服务端/代理限流重置）。已在两侧缓解：① 注入侧错峰 + 合并（default 1s 间隔、批量 5 条、agent 忙时消息进待注入队列）；② 框架侧状态机 `THINK` 节点失败自动重试 3 次。若仍频繁出现，可调大 `PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS`，或在设备侧降低上报频率/只上报变化量 |
-| **`mqtt_tool start` 后整机卡死（shell 无响应）** | paho 工作线程栈不足：`RT_PKG_MQTT_THREAD_STACK_SIZE` 需 ≥ 8192。栈溢出会破坏堆元数据，导致后续 `rt_malloc` 在大块请求上死循环。已本项目中修复；排查方法见下 |
+| `mbedtls_client_read data error, return -0x4c` → `chat: POST failed, http status=-76` → `Chat request failed, terminating this case` | `-0x4c` = `MBEDTLS_ERR_NET_RECV_FAILED`，即 HTTPS/TLS 连接在读取响应时被对端或网络重置，与 MQTT 消息内容无关。常见诱因是请求过于密集（设备周期性上报 → 每条消息触发一次 LLM 请求，容易被服务端/代理限流重置）。已在两侧缓解：① 注入侧错峰 + 合并（default 1s 间隔、批量 5 条、agent 忙时消息进待注入队列）；② 框架侧状态机 `THINK` 节点失败自动重试 3 次。若仍频繁出现，可调大 `PKG_AGENT_TOOL_MQTT_INJECT_MIN_INTERVAL_MS`，或在设备侧降低上报频率/只上报变化量 |
+| `mqtt_tool start` 后整机卡死（shell 无响应） | paho 工作线程栈不足：`RT_PKG_MQTT_THREAD_STACK_SIZE` 需 ≥ 8192。栈溢出会破坏堆元数据，导致后续 `rt_malloc` 在大块请求上死循环。已本项目中修复；排查方法见下 |
 | 终端输入较长一句话后出现 `Function[_rt_mutex_take]: scheduler is not available` 断言（CLI 通道） | `CLI_THREAD_STACK_SIZE` 过小（原 1024）：CLI 线程栈上有 512 字节输入缓冲，且每敲一键都要经 `rt_kprintf` 重绘整行，长输入会栈溢出，溢出被内核栈检查捕获后又在调度器上下文中调用 ulog 进而断言。已调整为 4096（`inc/channels/CLI.h`） |
 
 ### 9.1 卡死问题的定位过程（真实案例）
@@ -617,9 +617,9 @@ gdb 给出的关键信息：
 #6  paho_mqtt_thread (...)                                      ← paho 工作线程（栈 4096）
 ```
 
-结论与修复：把 `RT_PKG_MQTT_THREAD_STACK_SIZE` 从 4096 提到 **8192**，问题消失（`mqtt_tool start` 稳定连上 broker，shell 保持响应）。
+结论与修复：把 `RT_PKG_MQTT_THREAD_STACK_SIZE` 从 4096 提到 8192，问题消失（`mqtt_tool start` 稳定连上 broker，shell 保持响应）。
 
-对比验证：同样的 DFS 路径解析（`ls /`、`ls /dev`）在 4KB 栈的 MSH 线程里正常，只有 paho 工作线程会触发，说明是**该线程栈溢出**，而非 DFS 或 MQTT 逻辑问题。同类问题在启用 paho pipe 模式 + DFS v2 的工程中都会出现，建议保持 ≥ 8192。
+对比验证：同样的 DFS 路径解析（`ls /`、`ls /dev`）在 4KB 栈的 MSH 线程里正常，只有 paho 工作线程会触发，说明是该线程栈溢出，而非 DFS 或 MQTT 逻辑问题。同类问题在启用 paho pipe 模式 + DFS v2 的工程中都会出现，建议保持 ≥ 8192。
 
 ### 9.2 相关连带修复
 
@@ -627,7 +627,7 @@ gdb 给出的关键信息：
 
 | 问题 | 现象 | 修复 |
 |---|---|---|
-| `PKG_AGENT_STREAM_LINE_BUFSZ` 仅 256 字节 | **模型不调用工具**：带 `tool_calls` 的 SSE 报文行实测 310+ 字节，超长整行被静默丢弃，框架认为模型没发起调用，直接把「我准备调用工具」的文本当成最终回答 | 该值提到 1024；同时改为「超长行告警并跳过」而非静默丢弃（`src/core/chat.c`） |
+| `PKG_AGENT_STREAM_LINE_BUFSZ` 仅 256 字节 | 模型不调用工具：带 `tool_calls` 的 SSE 报文行实测 310+ 字节，超长整行被静默丢弃，框架认为模型没发起调用，直接把「我准备调用工具」的文本当成最终回答 | 该值提到 1024；同时改为「超长行告警并跳过」而非静默丢弃（`src/core/chat.c`） |
 | 推理字段名不兼容 | 提供方返回 `reasoning_content`，而 `chat.c` 只认 `reasoning`，导致思考过程全丢（界面只剩空白回复） | 两个字段名都支持（`src/core/chat.c`） |
 | 工具调用分片字段为 `null` | 流式后续分片形如 `{"index":0,"id":null,"type":null,"function":{"name":"","arguments":"..."}}`，原实现按「字段必须齐全」判断并直接取 `valuestring`，会漏拼接/踩空指针 | 分片容错：`index` 缺失按 0、`id`/`name` 取首个非空分片、`arguments` 分片拼接；最终统一归一化（缺失 `id` 用 `call_<index>` 兜底、空 `arguments` 用 `{}` 兜底），保证下游 `tool_call_id` 与参数始终有效 |
 | CLI 通道线程栈 1024 字节 | 在 CLI 通道下输入较长的一句话后出现 `_rt_mutex_take: scheduler is not available` 断言 | `inc/channels/CLI.h` 的 `CLI_THREAD_STACK_SIZE` 改为 4096 |
@@ -647,26 +647,26 @@ Detected 1 tool invocation(s)
 Summarize the trend above and give the user a short assessment of the recent situation: ...
 ```
 
-工具结果**只剩尾部提示语**、正文全没了，模型以为没拿到数据就换着参数（`max=8/10`…）不停重试，最终既不回答也不结束（达到原 `loop_max=10` 后直接 `break`，不发任何回答）。
+工具结果只剩尾部提示语、正文全没了，模型以为没拿到数据就换着参数（`max=8/10`…）不停重试，最终既不回答也不结束（达到原 `loop_max=10` 后直接 `break`，不发任何回答）。
 
 三个独立缺陷叠加造成，已全部修复：
 
 | # | 缺陷 | 说明 | 修复 |
 |---|---|---|---|
-| 1 | **工具结果被自己的提示语覆盖** | `tool_mqtt_history` / `tool_mqtt_receive` 里 `used` 初值为 0，而 `mqtt_do_*` 内部用的是**各自的局部** `used`，并不回传长度。于是 `buf_append(result, ..., &used, "…提示语…")` 从**偏移 0** 开始写，把刚生成的工具正文整段覆盖（提示语 133 字节，短正文会被完全吃掉） | 追加前先 `used = rt_strlen(result)`（`tool_mqtt_tools.c` 两处），并把「必须从实际长度续写」写进注释 |
-| 2 | **只读查询在客户端启动前必然失败** | `s_lock` 只在 `mqtt_tool_start()` 里创建，未启动时 `lock_take()` 因 `s_lock == RT_NULL` 直接返回失败，`status`/`history`/`receive` 一律报 `error: mqtt state busy, retry later`；这条错误文本又被缺陷 1 覆盖，模型连「为什么失败」都看不到 | 新增幂等 `mqtt_tool_lock_init()`（`tool_mqtt.c`），`lock_take()` 兜底调用；`mqtt_tool_start()` 改为调用它。未启动也能读订阅表/历史/计数 |
-| 3 | **框架侧没有重复调用保护** | 模型可以无限重试同一个工具调用，且达到轮次上限时**不发任何回答**就结束（用户端表现为「卡死」） | `AgentLoop.c`：① 记录最近 6 次调用签名 `name|args`，**参数完全相同**的调用不再执行，改为回一条「结果不会变，请直接回答」；② 连续两轮整轮都是重复调用 → 强制收尾；③ `loop_max` 10 → 6；④ 收尾时**最后一次不带工具**询问模型逼出纯文本回答，失败则给明确提示文本，保证一定有回复 |
+| 1 | 工具结果被自己的提示语覆盖 | `tool_mqtt_history` / `tool_mqtt_receive` 里 `used` 初值为 0，而 `mqtt_do_*` 内部用的是各自的局部 `used`，并不回传长度。于是 `buf_append(result, ..., &used, "…提示语…")` 从偏移 0 开始写，把刚生成的工具正文整段覆盖（提示语 133 字节，短正文会被完全吃掉） | 追加前先 `used = rt_strlen(result)`（`tool_mqtt_tools.c` 两处），并把「必须从实际长度续写」写进注释 |
+| 2 | 只读查询在客户端启动前必然失败 | `s_lock` 只在 `mqtt_tool_start()` 里创建，未启动时 `lock_take()` 因 `s_lock == RT_NULL` 直接返回失败，`status`/`history`/`receive` 一律报 `error: mqtt state busy, retry later`；这条错误文本又被缺陷 1 覆盖，模型连「为什么失败」都看不到 | 新增幂等 `mqtt_tool_lock_init()`（`tool_mqtt.c`），`lock_take()` 兜底调用；`mqtt_tool_start()` 改为调用它。未启动也能读订阅表/历史/计数 |
+| 3 | 框架侧没有重复调用保护 | 模型可以无限重试同一个工具调用，且达到轮次上限时不发任何回答就结束（用户端表现为「卡死」） | `AgentLoop.c`：① 记录最近 6 次调用签名 `name|args`，参数完全相同的调用不再执行，改为回一条「结果不会变，请直接回答」；② 连续两轮整轮都是重复调用 → 强制收尾；③ `loop_max` 10 → 6；④ 收尾时最后一次不带工具询问模型逼出纯文本回答，失败则给明确提示文本，保证一定有回复 |
 
 顺带修掉的相邻问题：
 
-- `mqtt_history` 查不到话题时原来只说 `no matching subscription`，现在写明**话题名 + 原因（未订阅/未启动）+ 下一步动作 + 不要再重复调用**（`tool_mqtt_ops.c`）。
-- **CLI 通道会丢弃输出 mailbox 的内容**（`channels/CLI.c` 的 `CLI_run` 收到消息后只 `rt_kprintf("\n")`），所以「请求失败」「工具循环超限」这类模型不会流式输出的兜底文本，在 CLI 下用户根本看不到。现在兜底文本同时走流式打印路径（`agent_notify()`：mailbox + `on_context`），正常回答仍只投 mailbox，避免重复打印。
+- `mqtt_history` 查不到话题时原来只说 `no matching subscription`，现在写明话题名 + 原因（未订阅/未启动）+ 下一步动作 + 不要再重复调用（`tool_mqtt_ops.c`）。
+- CLI 通道会丢弃输出 mailbox 的内容（`channels/CLI.c` 的 `CLI_run` 收到消息后只 `rt_kprintf("\n")`），所以「请求失败」「工具循环超限」这类模型不会流式输出的兜底文本，在 CLI 下用户根本看不到。现在兜底文本同时走流式打印路径（`agent_notify()`：mailbox + `on_context`），正常回答仍只投 mailbox，避免重复打印。
 
-复现/回归脚本：`scripts/mqtt_test/qemu_chat_history_test.ps1`（启动 QEMU → **不启动 MQTT** → 直接问历史），修复前后对比：
+复现/回归脚本：`scripts/mqtt_test/qemu_chat_history_test.ps1`（启动 QEMU → 不启动 MQTT → 直接问历史），修复前后对比：
 
 | 指标 | 修复前 | 修复后 |
 |---|---|---|
-| 工具调用轮数 | 10+（直到轮次上限） | **1** |
+| 工具调用轮数 | 10+（直到轮次上限） | 1 |
 | 工具结果 | 只剩 133 字节提示语 | 完整正文（话题名/原因/下一步/counters） |
 | 启动前 `mqtt_tool status` | `warning: mqtt state busy, subscription table unavailable` | 正常输出订阅表与计数 |
 | 用户是否拿到回答 | 否（无任何输出） | 是（模型据实回答「该话题本会话未订阅，因此没有历史」） |
@@ -680,7 +680,7 @@ W/Agent.Fsm: duplicated tool call skipped: mqtt_history({"topic": "agent/sub"})
 W/Agent.Fsm: repeated tool calls detected, forcing a final answer
 ```
 
-之后模型输出了正常回答、本轮结束。另外脚本用「要求模型不停重试、不许回答」的对抗性提问验证过一次：模型直接拒绝该请求并反问用户（0 次工具调用），这条路已经很难再触发死循环。**按工具名计数（同一工具 >3 次即视为无效轮次）这条分支目前只有代码审查、未被运行现场触发**，如需更强验证，可以写一个返回固定 `tool_calls` 的假 endpoint 来构造。
+之后模型输出了正常回答、本轮结束。另外脚本用「要求模型不停重试、不许回答」的对抗性提问验证过一次：模型直接拒绝该请求并反问用户（0 次工具调用），这条路已经很难再触发死循环。按工具名计数（同一工具 >3 次即视为无效轮次）这条分支目前只有代码审查、未被运行现场触发，如需更强验证，可以写一个返回固定 `tool_calls` 的假 endpoint 来构造。
 
 ---
 
@@ -705,7 +705,7 @@ W/Agent.Fsm: repeated tool calls detected, forcing a final answer
 
 现象：串口里成片出现 `mqtt rx queue full, drop message on topic device/sensors/xxx`，六个话题一起被丢；紧跟着是 `agent busy, hold mqtt message ... until it is idle`。同时 `Context compression failed; original history retained.` 反复出现，历史越滚越大，每一轮 LLM 请求越来越慢，形成「越丢越忙、越忙越丢」的循环。
 
-原因：接收线程原来遇到 agent 正在处理上一轮时会**原地等待**它空闲（最长 `BUSY_WAIT_MS`，默认 3 分钟）。等待期间原始接收队列没人消费，而 paho 回调还在往里塞消息：六个话题每秒各一条，队列深度 16，零点几秒就满了。丢掉的正是例行数据，正是本来要走本地门控的那批。
+原因：接收线程原来遇到 agent 正在处理上一轮时会原地等待它空闲（最长 `BUSY_WAIT_MS`，默认 3 分钟）。等待期间原始接收队列没人消费，而 paho 回调还在往里塞消息：六个话题每秒各一条，队列深度 16，零点几秒就满了。丢掉的正是例行数据，正是本来要走本地门控的那批。
 
 修复：接收线程不再阻塞。放行的消息存进待注入队列（深度 6），线程继续收下一条；agent 空闲且过了最小注入间隔时，把攒着的消息合并成一次注入。原始接收队列始终在排空，队列深度 16 足够。两次注入之间也不再 `rt_thread_mdelay` 干等，消息留在队列里等下一个循环周期。队列满时丢最旧的一条并计数，日志 `mqtt pending queue full, drop the oldest alert on topic ...`；`mqtt_tool status` 的 `summary` 里新增 `pending=` 一列，可以直接看到攒着几条。原本的 `PKG_AGENT_TOOL_MQTT_BUSY_WAIT_MS` 配置项随行为一起删掉。
 
@@ -725,22 +725,22 @@ W/Agent.Fsm: repeated tool calls detected, forcing a final answer
 | 通配符路由 | `device/1/data`、`device/2/data` 均被 `device/+/data` 命中并进入 poll 缓冲 |
 | `auto` 模式自动交给 agent 分析 | agent 运行中收到 PC 端发布后打印 `mqtt -> agent: 1 message(s) delivered for analysis`，随后 LLM 输出分析 |
 | `poll` 模式 + `mqtt_receive` | 缓冲/过滤/计数正确（`buffered=` / `rx_total=` / `dropped=`） |
-| **filter 门控**（9 条消息：3 例行 + 3 越界 + 1 提问 + 2 恢复/再越界） | 结果 `rx=9 suppressed=6`：3 条例行全部本地拦截不调用 LLM；`hum=35` 首次越界放行；`hum=36/37` 冷却内不重复打扰；提问报文放行；回落复位后冷却到期 `hum=41` 再次放行 |
+| filter 门控（9 条消息：3 例行 + 3 越界 + 1 提问 + 2 恢复/再越界） | 结果 `rx=9 suppressed=6`：3 条例行全部本地拦截不调用 LLM；`hum=35` 首次越界放行；`hum=36/37` 冷却内不重复打扰；提问报文放行；回落复位后冷却到期 `hum=41` 再次放行 |
 | agent 忙时的接收线程（六个话题持续上报 + 阈值规则每分钟告警） | `dropped=0`，`summary` 的 `pending=` 在 0 与 1 之间变化，没有再出现 `mqtt rx queue full` |
-| **对话式建规则** | 用自然语言要求「盯着湿度超过 30 就提醒」时，模型自行调用 `mqtt_rule`：`[Local Tool mqtt_rule Execution Result] rule set: topic=agent/sub value=hum > 30` |
-| **请求失败自动重试** | 实测同一次对话中出现 `mbedtls ... -0x4c` → `W/Agent.Fsm: Chat request failed (attempt 1/3), retry in 1000 ms` → 重试后成功完成工具调用（不再 `terminating this case`） |
-| **近期汇总可读原始 payload** | `mqtt_tool sim agent/sub {"hum":41}` 等 4 条（全部被 filter 拦截，`forwarded=0 filtered=4`）后 `mqtt_tool history` 输出：逐条 `Ns ago: {"hum":47}` + `numeric summary: hum: n=4 min=38 max=47 avg=42.5 last=47`，只读、可重复读取 |
-| **动态增删订阅（运行期）** | `sub device/1/data poll` → `Subscribe #1 ... OK!`；`sub device/+/temp filter` → `Subscribe #2 ... OK!`；`unsub device/+/temp` → `Unsubscribe #2 ... OK!`；再 `sub device/2/data` 复用回 `Subscribe #2 ... OK!`（证明槽位被正确释放） |
+| 对话式建规则 | 用自然语言要求「盯着湿度超过 30 就提醒」时，模型自行调用 `mqtt_rule`：`[Local Tool mqtt_rule Execution Result] rule set: topic=agent/sub value=hum > 30` |
+| 请求失败自动重试 | 实测同一次对话中出现 `mbedtls ... -0x4c` → `W/Agent.Fsm: Chat request failed (attempt 1/3), retry in 1000 ms` → 重试后成功完成工具调用（不再 `terminating this case`） |
+| 近期汇总可读原始 payload | `mqtt_tool sim agent/sub {"hum":41}` 等 4 条（全部被 filter 拦截，`forwarded=0 filtered=4`）后 `mqtt_tool history` 输出：逐条 `Ns ago: {"hum":47}` + `numeric summary: hum: n=4 min=38 max=47 avg=42.5 last=47`，只读、可重复读取 |
+| 动态增删订阅（运行期） | `sub device/1/data poll` → `Subscribe #1 ... OK!`；`sub device/+/temp filter` → `Subscribe #2 ... OK!`；`unsub device/+/temp` → `Unsubscribe #2 ... OK!`；再 `sub device/2/data` 复用回 `Subscribe #2 ... OK!`（证明槽位被正确释放） |
 | 退订 | 日志 `Unsubscribe #2 device/+/data OK!`（真实 UNSUBSCRIBE 报文） |
-| **`disconnect`（未启动时）** | `disconnect: client already stopped (state=stopped), nothing to do`（幂等，不报错） |
-| **断开后发布 → 连接前置检查** | `pub` 在 `stopped` 状态自动 `start` + `ensure_connected`：先 `Subscribe #0 agent/sub OK!`，再 `publish ok: topic=agent/pub bytes=22 qos=1 (state=connected)` |
-| **断开后订阅 → 连接前置检查** | `sub device/1/data poll` → `subscribe ok: ... (state=connected)`（同样先补连接） |
-| **`disconnect`（已连接时）** | `disconnect ok: was_connected=1, state=stopped` + `2 subscription(s) kept ...`；paho 日志 `pub_sock recv 11 byte: DISCONNECT` / `MQTT server is disconnected.`；`status` 显示 `started=0 connected=0` |
-| **断开后重连自动重订阅** | `connect` → `connection ok` + 自动 `Subscribe #0 agent/sub OK!` / `Subscribe #1 device/1/data OK!`，随后发布再次成功（订阅意图跨断连保留） |
-| **LLM 调用断开工具** | 对话中要求断开 MQTT 时模型调用 `mqtt_disconnect`，工具返回结果文本（连接状态进入模型上下文） |
-| **Kconfig 判定逻辑** | `kconfiglib` 载入 `scripts/kconfig_check/` 的 Kconfig：5.x+klibc → 不 select `rt_vsnprintf_full`；4.x 无 klibc → select；显式选 `USE_KLIB`/`USE_PKG` 时以显式选择为准；51 个符号齐全、0 warning；现有 `.config` 的 49 个 `PKG_AGENT_*` 取值全部保留 |
-| **问「agent/sub 的历史」不再死循环**（`qemu_chat_history_test.ps1`，未启动 MQTT 直接问） | 工具调用轮数 **1**（原 10+）；工具结果完整含 `no history for topic 'agent/sub': ... (client started=0, connected=0) ... Do NOT call mqtt_history again`；模型正确回答「本会话未订阅该话题所以没有历史，是否要我订阅」；脚本 6/6 PASS（详见 §9.3） |
-| **启动前只读查询** | `mqtt_tool status` 在 `started=0` 时即输出订阅表/计数（原为 `warning: mqtt state busy, subscription table unavailable`） |
-| **MQTT 全链路回归**（`qemu_msh_test.ps1`，改动后重跑） | start → 4 话题订阅（含通配符）→ pub → 回调 → recv → sim → unsub → status 全部正常，`free` 无泄漏迹象 |
+| `disconnect`（未启动时） | `disconnect: client already stopped (state=stopped), nothing to do`（幂等，不报错） |
+| 断开后发布 → 连接前置检查 | `pub` 在 `stopped` 状态自动 `start` + `ensure_connected`：先 `Subscribe #0 agent/sub OK!`，再 `publish ok: topic=agent/pub bytes=22 qos=1 (state=connected)` |
+| 断开后订阅 → 连接前置检查 | `sub device/1/data poll` → `subscribe ok: ... (state=connected)`（同样先补连接） |
+| `disconnect`（已连接时） | `disconnect ok: was_connected=1, state=stopped` + `2 subscription(s) kept ...`；paho 日志 `pub_sock recv 11 byte: DISCONNECT` / `MQTT server is disconnected.`；`status` 显示 `started=0 connected=0` |
+| 断开后重连自动重订阅 | `connect` → `connection ok` + 自动 `Subscribe #0 agent/sub OK!` / `Subscribe #1 device/1/data OK!`，随后发布再次成功（订阅意图跨断连保留） |
+| LLM 调用断开工具 | 对话中要求断开 MQTT 时模型调用 `mqtt_disconnect`，工具返回结果文本（连接状态进入模型上下文） |
+| Kconfig 判定逻辑 | `kconfiglib` 载入 `scripts/kconfig_check/` 的 Kconfig：5.x+klibc → 不 select `rt_vsnprintf_full`；4.x 无 klibc → select；显式选 `USE_KLIB`/`USE_PKG` 时以显式选择为准；51 个符号齐全、0 warning；现有 `.config` 的 49 个 `PKG_AGENT_*` 取值全部保留 |
+| 问「agent/sub 的历史」不再死循环（`qemu_chat_history_test.ps1`，未启动 MQTT 直接问） | 工具调用轮数 1（原 10+）；工具结果完整含 `no history for topic 'agent/sub': ... (client started=0, connected=0) ... Do NOT call mqtt_history again`；模型正确回答「本会话未订阅该话题所以没有历史，是否要我订阅」；脚本 6/6 PASS（详见 §9.3） |
+| 启动前只读查询 | `mqtt_tool status` 在 `started=0` 时即输出订阅表/计数（原为 `warning: mqtt state busy, subscription table unavailable`） |
+| MQTT 全链路回归（`qemu_msh_test.ps1`，改动后重跑） | start → 4 话题订阅（含通配符）→ pub → 回调 → recv → sim → unsub → status 全部正常，`free` 无泄漏迹象 |
 | 稳定性 | 连续 `start → 订阅 → 发布 → 收消息 → 退订` 无卡死、无内存异常增长 |
-| **阻塞发布不再 data abort**（改动后重跑启动订阅流程） | 板端连上 broker、订阅六个话题、传感器线程每秒发布约 516 字节，跑过原来必崩的启动后 6 秒窗口并继续运行十分钟，全程无 abort（原因见 9.4） |
+| 阻塞发布不再 data abort（改动后重跑启动订阅流程） | 板端连上 broker、订阅六个话题、传感器线程每秒发布约 516 字节，跑过原来必崩的启动后 6 秒窗口并继续运行十分钟，全程无 abort（原因见 9.4） |
