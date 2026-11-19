@@ -525,7 +525,7 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 `PKG_AGENT_MEMORY_PERSIST` 打开后，记忆在 `agent_memory_init()` 时从 `PKG_AGENT_MEMORY_FILE`（默认 `/agent_memory.dat`）读回，退出时若改过就写回。格式每行 `<c|r> <id> <text>`。写入先落到 `<文件>.tmp`，再用 `dfs_file_rename` 替换。elmfat 的 rename 不覆盖同名目标，会返回 `FR_EXIST`，所以改名失败时先删旧文件再试一次。加载时主文件打不开会尝试 `.tmp`，接住掉电停在改名之前的现场。
 
-落盘在 QEMU vexpress-a9 的 SD 卡上做过两次启动回归：第一次写入两条并落盘，第二次读回两条，写入 14 项、读回 12 项检查全过。落盘代码多占 1,708 字节 Flash。步骤见 [testing.md](./testing.md) 3.8 节，注入与落盘的示意见 [diagrams/memory-layers.png](diagrams/memory-layers.png)。
+落盘在 QEMU vexpress-a9 的 SD 卡上做过两次启动回归：第一次写入两条并落盘，第二次读回两条，写入 14 项、读回 12 项检查全过。落盘代码多占约 1.7 KB Flash。步骤见 [testing.md](./testing.md) 3.8 节，注入与落盘的示意见 [diagrams/memory-layers.png](diagrams/memory-layers.png)。
 
 总开关是 `PKG_AGENT_MEMORY_ENABLE`。关闭时 `memory.h` 里的函数变成空操作，调用点不用加 `#ifdef`；`memory.c` 编成空文件，槽池与注入缓冲都不占空间。
 

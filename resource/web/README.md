@@ -28,12 +28,17 @@ resource/web/
 │           ├── application.yml
 │           └── schema.sql     建表语句
 ├── client/           Vue3 前端，naive-ui 组件库
+│   ├── public/
+│   │   └── agent-resource-baseline.json  资源评估页加载的基线
 │   ├── src/
 │   │   ├── App.vue       后台外壳：侧边菜单、页头
 │   │   ├── theme.js      品牌色与组件主题改写
 │   │   ├── style.css     全局基础样式与通用类
 │   │   ├── api.js        后端接口封装
-│   │   └── views/        八个页面
+│   │   ├── resourceModel.js  资源评估的默认数据与计算模型
+│   │   ├── resourceReport.js 报告解析、可信状态与校准
+│   │   ├── firmwareReport.js 在浏览器里解析 ELF、map 与 rtconfig.h
+│   │   └── views/        九个页面
 │   └── vite.config.js
 └── .run/             日志与运行产物，不进版本库
 ```
@@ -42,13 +47,14 @@ resource/web/
 
 Vue 3 加 Vite，组件库用 [naive-ui](https://www.naiveui.com/)，图标用 `@vicons/ionicons5`。naive-ui 按需引入，`<script setup>` 里直接 import 组件，不装额外的解析插件。
 
-页面骨架是一个左侧菜单加右侧内容区。登录页不套这个外壳，单独渲染。菜单七项对应七个页面：
+页面骨架是一个左侧菜单加右侧内容区。登录页不套这个外壳，单独渲染。菜单八项对应八个页面：
 
 | 页面 | 路径 | 内容 |
 |---|---|---|
 | 总览仪表盘 | `/dashboard` | 设备、能力卡、会话与事件的统计 |
 | 设备管理 | `/devices` | 设备增删改查、激活凭据、探活、配置下发。列表用表格，上面三块统计数字 |
 | 能力卡 | `/cards` | 能力卡增删改查，绑定或解绑设备。列表带每张卡绑了几台设备 |
+| 资源评估 | `/planner` | 按片内 Flash、RAM 与外部存储容量推荐模块组合，估算占用比例，可导出 Kconfig 与 JSON |
 | 对话 | `/chat` | 一个面板一个会话，一屏可以并排开多个。左边选对话对象与会话记录，右侧是面板区，每个面板有独立的对话对象、会话、消息流与输入框。回复一段段推过来，思考过程与工具调用实时显示 |
 | 会话历史 | `/history` | 左边会话列表，右边消息详情 |
 | 设置 | `/settings` | 网站侧 agent 的五个配置项 |
@@ -113,6 +119,54 @@ Windows 下双击或在 cmd 里跑 `setup.bat`，参数一样：`--install`、`-
 值存在 SQLite 的 `user_setting` 表里，数据库文件在 `.gitignore` 的 `server/data/` 下，**个人配置不会进版本库**。`AGENT_JWT_SECRET` 和 `AGENT_CONSOLE_DB` 不在设置页里，改它们要动环境变量并重启。
 
 这五项只影响网站侧 agent。端侧设备的 LLM 配置目前通过固件配置。
+
+## 资源评估页
+
+`/planner` 页面按设备容量估算 Agent 方案的资源占用，不连后端。默认数字写在 `client/src/resourceModel.js`，页面启动时再加载 `client/public/agent-resource-baseline.json`，覆盖固定体积、模块差值和线程栈默认值。基线加载失败就退回内置常量。
+
+基线由 `scripts/resource_report.py baseline` 从评测矩阵和基线 map 生成：
+
+```bash
+python scripts/resource_report.py baseline \
+  --matrix build/memeval/matrix.json \
+  --map build/memeval/map_M0.map
+```
+
+默认输出到 `client/public/agent-resource-baseline.json`。换版本重新构建、跑完矩阵后重跑一次，刷新页面就能拿到新数字。
+
+实测报告用同脚本的 `collect` 生成，读 ELF、map、`rtconfig.h` 和可选的运行时栈数据：
+
+```bash
+python scripts/resource_report.py collect \
+  --elf rtthread.elf --map rtthread.map --config rtconfig.h \
+  --runtime stacks.json -o agent-report.json
+```
+
+`--runtime` 是一个 JSON 文件，`stacks` 数组每项形如 `{"name": "AgentLoop", "bytes": 10240, "watermark": 0.31}`。报告只保留白名单里的开关和数值，不含地址、账号、密钥或模型名。
+
+不想跑脚本时，直接点「选择固件目录」，选工程根目录或 build 目录里带 `rtthread.elf`、`rtconfig.h` 的那一层。`rtthread.map` 与 `rtthread.bin` 在同一层就一起带进来，也可以点「选择固件文件」逐个选。页面会解析 ELF 节表、map 归属和 `rtconfig.h` 白名单，生成与 `collect` 同格式的报告，存在浏览器里。文件只在浏览器里读，不上传控制台。
+
+页面内解析拿不到运行时栈水位，要水位还是用 `collect --runtime` 生成报告再导入。
+
+拿到报告后，卡片右上角给出可信状态。模块开关、Kconfig 栈和运行时栈都对得上时是「当前配置实测」；只对上一部分时是「同环境估算」，并列出不一致项；没报告是「参考估算」。「用报告校准现有固件」把整机实测减去当前方案估算，填进现有固件两栏。报告与页面配置分别存在 `agent-console-planner-report-v1` 和 `agent-console-planner-v1` 里。
+
+输入分五组：
+
+| 输入 | 作用 |
+|---|---|
+| 片内 Flash、片内 RAM | 算占用比例和余量，不填或填 0 会提示 |
+| SPI Flash、SD 卡 | 估算 OTA 备份和记忆文件放不放得下 |
+| 现有固件 Flash、静态 RAM | 已有工程时填 Agent 之外的占用，避免从零重算 |
+| 已包含的依赖 | 勾上 mbedTLS、lwIP 或 newlib 后，对应体积从新增占用里扣除 |
+| 线程栈 | 按 KB 调 AgentLoop 上下文栈、A2A、文件操作、播报与录音、MQTT 收发线程的栈，直接计入 RAM 占用 |
+
+线程栈默认值来自基线，面板上同时显示实测水位。AgentLoop 上下文栈默认 10 KB，离线回归峰值 3.3～3.8 KB，长上下文或更大响应可以调高；调高后 RAM 占用和推荐档位立刻跟着变。文件操作与 MQTT 接收栈走 Kconfig，其余栈写死在源码的线程创建参数里，导出的 Kconfig 片段会带上当前值或改法注释。模块关闭时对应的栈输入置灰，不参与计算。导入报告后，峰值超过当前预算的行标「预算偏低」。
+
+模块开关按实测差值叠加，推荐区会按当前容量从完整功能、设备控制、记忆增强、最小对话四档里挑第一档放得下的。安全余量默认 Flash 15%、RAM 20%，超了就标红并给出差额。
+
+页面上的数字分两类：Flash 模块差值、静态 RAM、线程栈来自完整固件实测；技能只留 1 份、只编译一种协议、语音播报这三项是估算。数据口径和复现方法见 `docs/resources.md`。SPI Flash 与 SD 卡只放文件、记忆和 OTA 备份，不能直接扩容片内 Flash 或 RAM。
+
+「复制 Kconfig」给出与当前开关对应的配置片段；「导出 JSON」把输入、明细和推荐结果一起存下来。配置存在浏览器的 `agent-console-planner-v1` 里，刷新不丢。
 
 ## 运维页
 

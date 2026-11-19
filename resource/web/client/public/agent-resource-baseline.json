@@ -1,0 +1,100 @@
+{
+ "schema": "agent-resource-baseline",
+ "schemaVersion": 1,
+ "generatedAt": "2026-11-19T16:41:34Z",
+ "model": {
+  "version": "2026-11-20",
+  "source": "build/memeval/matrix.json 的 M0_mem_on 变体与 map_M0.map",
+  "defaultVariant": "M0_mem_on",
+  "baseline": "MQTT、设备工具、MCP、多模态、STT、音频驱动与分层记忆全开，记忆落盘关，A2A 通道"
+ },
+ "firmware": {
+  "variant": "M0_mem_on",
+  "channel": "A2A",
+  "size": {
+   "text": 2843475,
+   "data": 35248,
+   "bss": 293328,
+   "total": 3172051,
+   "bin": 2886052
+  },
+  "flashLoad": 2878723,
+  "staticRam": 328576,
+  "agentFlash": 232245,
+  "agentRam": 35274
+ },
+ "flash": {
+  "fixed": 110047,
+  "modules": {
+   "mqtt": 81544,
+   "mcp": 8400,
+   "device": 44156,
+   "multimodal": 11028,
+   "memory": 10784,
+   "memoryPersist": 1772,
+   "voice": 2200
+  }
+ },
+ "ram": {
+  "fixedStatic": 7568,
+  "modules": {
+   "memory": 9044,
+   "mqtt": 17266,
+   "device": 128,
+   "mcp": 76,
+   "multimodal": 1192,
+   "memoryPersist": 0
+  }
+ },
+ "stacks": {
+  "loop": {
+   "bytes": 10240,
+   "watermark": 0.24,
+   "thread": "AgentLoop",
+   "variant": "C0_full",
+   "estimated": false
+  },
+  "a2a": {
+   "bytes": 8192,
+   "watermark": 0.27,
+   "thread": "agenta2a",
+   "variant": "D1_no_mqtt",
+   "estimated": false
+  },
+  "fileOp": {
+   "bytes": 4096,
+   "watermark": 0.21,
+   "thread": "fileop_wk",
+   "variant": "C0_full",
+   "estimated": false
+  },
+  "mqttRx": {
+   "bytes": 3072,
+   "watermark": 0.18,
+   "thread": "mqtt_rx",
+   "variant": "C0_full",
+   "estimated": false
+  },
+  "mqttWorker": {
+   "bytes": 8192,
+   "watermark": 0.71,
+   "thread": "mqtt0",
+   "variant": "C0_full",
+   "estimated": false
+  },
+  "playback": {
+   "bytes": 8192,
+   "watermark": null,
+   "thread": null,
+   "variant": null,
+   "estimated": true
+  },
+  "record": {
+   "bytes": 1024,
+   "watermark": null,
+   "thread": null,
+   "variant": null,
+   "estimated": true
+  }
+ }
+}

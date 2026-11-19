@@ -7,6 +7,7 @@ const ChatView = () => import('./views/ChatView.vue')
 const HistoryView = () => import('./views/HistoryView.vue')
 const SettingsView = () => import('./views/SettingsView.vue')
 const OpsView = () => import('./views/OpsView.vue')
+const PlannerView = () => import('./views/PlannerView.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -16,6 +17,7 @@ const router = createRouter({
     { path: '/login', name: 'login', component: LoginView, meta: { public: true } },
     { path: '/devices', name: 'devices', component: DevicesView },
     { path: '/cards', name: 'cards', component: CardsView },
+    { path: '/planner', name: 'planner', component: PlannerView },
     { path: '/chat', name: 'chat', component: ChatView },
     { path: '/history', name: 'history', component: HistoryView },
     { path: '/settings', name: 'settings', component: SettingsView },

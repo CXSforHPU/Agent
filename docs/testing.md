@@ -269,7 +269,7 @@ MEM_PERSIST_READ RESULT checks=12 failures=0
 [I/Agent.memory] Loaded 2 memory items from /agent_memory.dat
 ```
 
-落盘代码占 1708 字节 Flash，`.data` 与 `.bss` 不变。`result.json` 里记着 `boots`、`persist_file`、`write`、`read` 四个字段。
+落盘代码占 1,708 字节 Flash，`.data` 与 `.bss` 不变。`result.json` 里记着 `boots`、`persist_file`、`write`、`read` 四个字段。
 
 存盘先写 `*.tmp` 再改名。elmfat 的 `f_rename` 遇到同名目标返回 `FR_EXIST`，所以改名失败时先删旧文件再试一次。加载时主文件打不开会去读 `.tmp`，掉电停在改名之前也能恢复。改名回退这条路径第二轮写盘时跑到了；`.tmp` 恢复要构造第一次改名后掉电，回归里没有覆盖。
 
