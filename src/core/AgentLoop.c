@@ -158,6 +158,45 @@ static void agent_loop(Context_t context,
 }
 
 /*
+ * @brief 估算本轮待写入输入与工具定义占用的字节数
+ * @note  两者都要进下一轮请求，压缩预算必须算上；工具定义每次都从
+ *        当前注册表序列化，避免注册变化后预算失真
+ */
+static rt_size_t pending_message_bytes(Messages_t messages)
+{
+    rt_size_t bytes = 0;
+    int i;
+
+    if (!messages)
+    {
+        return 0;
+    }
+    for (i = 0; i < messages->current_size; i++)
+    {
+        const char *content = messages_get_content_idx(messages, i);
+
+        if (content)
+        {
+            bytes += rt_strlen(content);
+        }
+    }
+    return bytes;
+}
+
+static rt_size_t tool_definition_bytes(void)
+{
+    cJSON *tools = get_agent_tools();
+    char *json = tools ? cJSON_PrintUnformatted(tools) : RT_NULL;
+    rt_size_t bytes = json ? rt_strlen(json) : 0;
+
+    if (json)
+    {
+        cJSON_free(json);
+    }
+    return bytes;
+}
+
+/*
  * @brief 主循环线程：接收消息 -> 调用 LLM -> 执行工具 -> 返回结果
  * @param param 线程参数（未使用）
  */
@@ -183,12 +222,19 @@ static void main_loop(void *param)
 
         g_turn_spontaneous = messages->spontaneous;
 
-        /* 追加前先看占用：快满了就先压缩，给本轮输入腾地方。
+        /* 追加前先看 arena 占用：快满了就强制压缩，给本轮输入腾地方。
            压缩失败不拦本轮，追加失败才跳过 */
-        if (agent_context_arena_used(g_context) * 4 > agent_context_arena_capacity(g_context) * 3 &&
-            g_context->compress_context(g_context, PKG_AGENT_MESSAGE_TRIM) != RT_EOK)
+        if (agent_context_arena_used(g_context) * 4 > agent_context_arena_capacity(g_context) * 3)
         {
-            LOG_W("Context nearly full and compression failed; trying to append anyway.");
+            agent_context_pressure_t pressure;
+
+            pressure.pending_bytes = pending_message_bytes(messages);
+            pressure.tools_bytes = tool_definition_bytes();
+            pressure.near_arena_limit = RT_TRUE;
+            if (g_context->compress_context(g_context, &pressure) != RT_EOK)
+            {
+                LOG_W("Context is near its arena limit and compression failed; trying to append anyway.");
+            }
         }
 
         if (g_context->append_user_message(g_context, messages) != RT_EOK)
@@ -203,9 +249,16 @@ static void main_loop(void *param)
 
         g_agent_busy = RT_TRUE;
         agent_loop(g_context, get_agent_tools(), print_reasoning, print_tool_call, print_context);
-        if (g_context->compress_context(g_context, PKG_AGENT_MESSAGE_TRIM) != RT_EOK)
         {
-            LOG_W("Context compression failed; original history retained.");
+            agent_context_pressure_t pressure;
+
+            pressure.pending_bytes = 0;
+            pressure.tools_bytes = tool_definition_bytes();
+            pressure.near_arena_limit = RT_FALSE;
+            if (g_context->compress_context(g_context, &pressure) != RT_EOK)
+            {
+                LOG_W("Context compression failed; original history retained.");
+            }
         }
         g_agent_busy = RT_FALSE;
     }

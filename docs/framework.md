@@ -58,7 +58,8 @@ AgentAudio 由应用直接调用，不参与对话主循环。
 
 - 启动时调用 `init_agent()` 创建工具、MessageHub、Context，并调用通道的 `init`。
 - 阻塞等待输入邮箱。收到消息后追加为 user 消息，释放消息对象，再调用 `agent_loop`。
-- 一次请求结束后调用 `compress_context(g_context, PKG_AGENT_MESSAGE_TRIM)`。排除 system 和已有摘要后的消息数超过阈值时，尝试压缩旧历史，保留策略见 3.3。
+- 追加输入前先看 arena 占用。超过 75% 时带上待写入输入和工具定义调用 `compress_context()`，强制清出空间；压缩失败不拦本轮，追加失败才跳过。
+- 一次请求结束后再调用 `compress_context()`，这次同样带上工具定义字节数。估算输入达到预算触发线时压缩旧历史，保留策略见 3.3。
 - 处理期间 `g_agent_busy` 为真，摘要请求期间也保持为真。`agent_is_busy()` 在此期间返回 `RT_TRUE`，等待新消息时返回 `RT_FALSE`。MQTT 注入等外部模块可据此错峰。
 
 `agent_loop` 只做两件事：组装全局状态（`AgentFsm_t`），把状态机跑完。工具循环的流转规则在 `src/core/AgentFsm.c`，每个节点做完本状态的事就返回下一个节点，也就是状态图里的一条边。
@@ -127,15 +128,19 @@ MSH 命令：
   - 有工具调用时，写入 `content` 为空的 assistant 消息，并复制 `tool_calls`。
 - `append_tool_message`：把工具结果拼成一个字符串，写入 `content`。只拼接 `TYPE_TEXT` 项，多模态数组不适用于 `role=tool`。
 - `clear_message`：删除全部消息并新建空数组，复位 `has_summary`。调用方需先重建 system 提示词，再追加新消息。
-- `compress_context(self, threshold)` 替代 `trim_context`，用滚动摘要压缩旧历史。主循环传入 `PKG_AGENT_MESSAGE_TRIM`，沿用原配置名。
+- `compress_context(self, pressure)` 替代 `trim_context`，按输入 token 预算用滚动摘要压缩旧历史。
 
-压缩只在消息数严格大于阈值时触发，计数排除 system 和已有摘要。先保留最近 `threshold / 2` 条消息，除法向下取整，再向前扩到 user 消息边界。这样会保留完整轮次，不拆开 `assistant(tool_calls)` 与对应的 tool 结果；实际保留条数可能超过半阈值。若只有一轮超长对话，或没有可压缩的完整旧轮次，则跳过。
+预算以 `PKG_AGENT_MODEL_CONTEXT_TOKENS` 为上限，先减 `AGENT_CHAT_MAX_TOKENS` 的输出预留，再乘 `(100 - PKG_AGENT_CONTEXT_RESERVE_PERCENT)%` 留安全余量。不可压缩部分 fixed 包括 system、旧摘要、工具定义、待写入输入和 96 字节协议头，token 按序列化字节数除以 3 估算。预算最终取模型窗口预算与 `fixed + arena 容量 / 3` 的较小值；arena 只装历史，换算成总输入预算时把 fixed 加回来。
 
-压缩会额外请求一次模型。旧历史前缀（含上一份摘要，不含 system）先序列化为 JSON，作为 user 数据提交给专用摘要 system 提示词。请求的 `tools` 和三个回调均为 `RT_NULL`，`max_tokens` 为 2048；不会调用工具或流式输出摘要。
+输入达到预算的 `PKG_AGENT_CONTEXT_TRIGGER_PERCENT`（默认 85%）时触发，`pressure->near_arena_limit` 为真时强制压缩。目标降到 `PKG_AGENT_CONTEXT_TARGET_PERCENT`（默认 65%）：先给摘要消息留位置，保留后缀不超过 `PKG_AGENT_CONTEXT_RECENT_PERCENT`（默认 30%）。裁剪边界只落在 user 消息上，不拆工具调用与结果，最新一轮整轮保留。fixed 自己就达到总预算时返回 `-RT_EFULL`，压缩历史救不了。
+
+压缩会额外请求一次模型。旧历史前缀（含上一份摘要，不含 system）先序列化为 JSON，作为 user 数据提交给专用摘要 system 提示词。请求前检查转录 token 加 2048 输出不超过模型窗口的 95%，放不下就不发请求。请求的 `tools` 和三个回调均为 `RT_NULL`，`max_tokens` 为 2048；不会调用工具或流式输出摘要。
 
 摘要提示词要求「只回摘要本身，控制在指定字节数内」，字节上限取旧前缀的四分之一、最多 1200 字节，保证摘要一定比原文短。要求写得越长，模型思考得越久，token 全花在思考上、正文一个字都没有（实测摘要请求返回空正文就是这种情况），所以提示词刻意保持简短。
 
-只有正文非空白且没有工具调用的摘要才可提交。摘要被 `max_tokens` 截断时仍然采用，截断的半句对后续轮次仍然有用，比整段历史留着强。带历史标记的摘要消息还必须减少序列化后的历史字节数。所有检查通过后才替换旧前缀：system 留在索引 0，assistant 摘要放在索引 1，最近消息保持原样，并设置 `has_summary`。任何失败都保留全部原历史，不回退到直接裁剪，失败原因会打印在 `Agent.context` 日志里（请求失败、正文为空、被截断、摘要不比原文短）。
+只有正文非空白且没有工具调用的摘要才可提交。摘要被 `max_tokens` 截断时仍然采用，截断的半句对后续轮次仍然有用，比整段历史留着强。带历史标记的摘要消息还必须减少序列化后的历史字节数。所有检查通过后才替换旧前缀：system 留在索引 0，assistant 摘要放在索引 1，最近消息保持原样，并设置 `has_summary`。
+
+摘要失败、请求放不下或校验不通过时先看输入是否仍在触发线以内：在以内就保留全部原历史；超出则丢弃最旧的完整轮次，降到目标以内。`near_arena_limit` 强制压缩失败同样走这条兜底。失败原因打印在 `Agent.context` 日志里（请求失败、正文为空、放不下、摘要不比原文短）。
 
 摘要是语义压缩，不是逐字记录，可能遗漏细节。它只作为历史数据，不能当作新指令或当前设备状态的证明。摘要提示词要求记录已加载的技能名，不保留完整技能说明；需要使用时应重新加载技能。
 
@@ -694,10 +699,14 @@ A2A 的选项在 `A2A Channel - board connects to Web` 菜单里。
 | `PKG_AGENT_MAX_CONTENT_LEN` | 正文上限，默认 2048 |
 | `PKG_AGENT_STREAM_LINE_BUFSZ` | SSE 单行缓冲，默认 1024 |
 | `PKG_AGENT_MAX_TOOL_ARG_LEN` | 工具参数上限，默认 1024 |
-| `PKG_AGENT_MESSAGE_TRIM` | 上下文压缩触发阈值，默认 6；排除 system 和摘要后，消息数严格大于此值才尝试压缩 |
+| `PKG_AGENT_MODEL_CONTEXT_TOKENS` | 模型上下文窗口，默认 65536，范围 4096～1048576；压缩预算的上限 |
+| `PKG_AGENT_CONTEXT_TRIGGER_PERCENT` | 估算输入达到预算的百分之多少触发压缩，默认 85，范围 50～95 |
+| `PKG_AGENT_CONTEXT_TARGET_PERCENT` | 压缩后要降到预算的百分之多少，默认 65，范围 30～90 |
+| `PKG_AGENT_CONTEXT_RECENT_PERCENT` | 最近完整轮次最多保留的预算占比，默认 30，范围 10～50 |
+| `PKG_AGENT_CONTEXT_RESERVE_PERCENT` | 计算输入预算时预留的安全余量，默认 10，范围 0～30 |
 | `PKG_AGENT_TOOL_LOOP_MAX` | 一次请求最多跑几轮工具调用，默认 6，取值范围 1～32 |
 
-沿用 `PKG_AGENT_MESSAGE_TRIM` 配置名，帮助说明已改为摘要压缩语义。它不再表示固定保留条数，最近消息的保留范围见 3.3。
+输出预留由 `AGENT_CHAT_MAX_TOKENS`（32K）固定，不单独暴露成选项；模型窗口和几个百分比共同决定触发线和目标线，预算算法见 3.3。
 
 请求地址由两份 base URL 加协议路径拼出，拼接规则见 3.6 的表。
 
@@ -796,7 +805,7 @@ LVGL 通道的实现不在包内，由应用工程编译。
 - `cleanup_agent_entry` 不停止 MQTT 客户端。需要断开连接时，先执行 `mqtt_tool stop`。
 - LVGL 通道只提供接口，包内不包含聊天界面。
 - `utils.h` 中下载函数的声明名与实际定义不一致，详见 [api.md](./api.md) 的“已知差异”。
-- 上下文摘要会增加一次模型请求的耗时和 token 消耗，期间 agent 保持忙碌。压缩失败或仅有一轮超长对话时保留全部历史，后续对话可能使历史继续增长。`PKG_AGENT_MESSAGE_TRIM` 不是硬性容量上限。
+- 上下文摘要会增加一次模型请求的耗时和 token 消耗，期间 agent 保持忙碌。token 按字节数除以 3 估算，与真实分词器有偏差：中文偏保守，英文可能估高。估算值超过触发线才会压缩，所以预算不是硬性容量上限；arena 字节上限仍是硬限，追加前超过 75% 会强制压缩，追加失败则跳过本轮。
 - 本项目当前选中 A2A 通道，`rtconfig.h` 里定义了 `PKG_AGENT_A2A_CHANNEL`。LVGL 通道暂时没开，它的 ops 要由应用工程实现。
 - A2A 只支持明文 `ws`，没有 `wss`。只放在可信网络里用。
 - 一台设备只能激活一次。控制台删掉设备行以后才能重新登记并激活。

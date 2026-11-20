@@ -365,7 +365,7 @@ python build/skill_qemu/run_llm_live.py
 回归覆盖了框架逻辑，但有六条硬边界。
 
 - **模型是假的。** `mock_chat.c` 把模型换成固定 SSE 夹具。请求怎么写、参数怎么选、总结写得好不好，真实模型的行为没有被验证。端到端测试里的工具调用是夹具写死的，不是模型自己决定的。真正打到 DeepSeek 的只有 `run_llm_live.py` 那一条，它只发一次普通提问，不带工具，所以模型挑工具的能力仍然没有被验证。
-- **夹具只有 OpenAI 一种格式。** 上下文压缩和端到端这两组用的是 OpenAI 格式的 SSE 夹具，回归开始前用 `agent_protocol openai` 把协议钉死。Anthropic 报文只有 `protocol_qemu_test` 覆盖，它检查请求体形态、鉴权头和事件式 SSE 解析，但不跑完整的压缩与工具循环。
+- **夹具只有 OpenAI 和 Anthropic 文本流两种。** 上下文压缩、端到端和网络回归用的是 OpenAI 格式的 SSE 夹具，回归开始前用 `agent_protocol openai` 把协议钉死。`test_context.c` 里另有一条 Anthropic 文本流的压缩用例，验证事件式 SSE 能产出摘要并替换历史。Anthropic 的工具调用与多轮工具循环仍只在 `protocol_qemu_test` 里验证请求体形态、鉴权头和报文翻译。`protocol_qemu_test` 自己会切到 Anthropic 再切回来。
 - **外设是假的。** `utst0`、`utblk0`、`utrtc0` 以及端到端用的虚拟设备都是内存里的桩。真实驱动的时序、中断、DMA、掉电行为没有被覆盖。块设备不会真的擦写介质。
 - **环境是隔离的。** 离线回归的网络是关的，SD 卡是快照。MQTT、TTS、文件上传这类需要外网的路径在离线回归里跑不到。真链路回归只开了 MCP 一条路，MQTT 和 TTS 仍不参与。
 - **落盘只在 QEMU 的 SD 卡上验证过。** 落盘回归用 FAT 文件系统加 `cache=writethrough`，验证的是正常重启。写 `*.tmp` 与改名之间掉电的窗口没有构造。真实介质（SPI Flash、eMMC）的擦写时序、坏块和磨损也没有覆盖。主回归仍是 `snapshot=on`，跑完不留记忆文件。

@@ -7,6 +7,9 @@
 #define AGENT_CFG_MODEL_MAX       128
 #define AGENT_CFG_BASE_URL_MAX    128
 
+/* 单次请求的输出 token 上限；上下文压缩预算按它预留输出空间 */
+#define AGENT_CHAT_MAX_TOKENS (32 * 1024)
+
 /* LLM 服务协议 */
 typedef enum
 {

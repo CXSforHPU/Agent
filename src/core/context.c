@@ -876,12 +876,201 @@ static rt_size_t __measure_summary_message(const char *text)
 /* ---------------- 压缩 ---------------- */
 
 /*
- * @brief  把历史对话压成一段摘要
- * @param  self      上下文
- * @param  threshold 超过多少条历史记录触发压缩
- * @return RT_EOK 成功
+ * @brief 字节数折算 token
+ * @note  板端没有分词器；英文约 4 字节一个 token，中文约 3 字节一个 token，
+ *        统一按 3 字节估算，宁可早压缩也不要超模型窗口
  */
-static rt_err_t __compress_context(Context_t self, int threshold)
+static rt_size_t __bytes_to_tokens(rt_size_t bytes)
+{
+    return (bytes + 2) / 3;
+}
+
+/* 单条历史记录序列化后的字节数，用于按预算挑选裁剪边界 */
+static rt_size_t __measure_record(Context_t self, int index)
+{
+    agent_ctx_view_t view;
+    agent_ctx_item_t item;
+    agent_json_writer_t writer;
+
+    if (!agent_context_get_message(self, index, &view))
+    {
+        return 0;
+    }
+    rt_memset(&item, 0, sizeof(item));
+    item.role = view.role;
+    item.view = &view;
+    item.record = view.record;
+    agent_json_writer_init(&writer, RT_NULL, 0);
+    __write_canonical_item(&writer, &item);
+    return agent_json_writer_len(&writer);
+}
+
+static rt_size_t __measure_history(Context_t self)
+{
+    rt_size_t bytes = 0;
+    int i;
+
+    for (i = 0; i < self->count; i++)
+    {
+        bytes += __measure_record(self, i);
+    }
+    return bytes;
+}
+
+/*
+ * @brief 一次压缩判断用到的预算
+ * @note  fixed 是不可压缩部分：系统提示、旧摘要、工具定义和待写入输入
+ */
+typedef struct __context_budget
+{
+    rt_size_t budget;
+    rt_size_t trigger;
+    rt_size_t target;
+    rt_size_t recent;
+    rt_size_t fixed;
+} __context_budget_t;
+
+static void __budget_init(Context_t self, const agent_context_pressure_t *pressure,
+                          __context_budget_t *budget)
+{
+    rt_size_t model = PKG_AGENT_MODEL_CONTEXT_TOKENS;
+    rt_size_t arena = self->capacity / 3;
+    rt_size_t system = __str_len(agent_context_system_prompt(self));
+    rt_size_t summary = self->has_summary ? rt_strlen(self->summary) : 0;
+    rt_size_t pending = pressure ? pressure->pending_bytes : 0;
+    rt_size_t tools = pressure ? pressure->tools_bytes : 0;
+
+    /* 模型窗口先扣掉输出预留，再留安全余量 */
+    if (model > AGENT_CHAT_MAX_TOKENS)
+    {
+        model -= AGENT_CHAT_MAX_TOKENS;
+    }
+    else
+    {
+        model = 0;
+    }
+    model = model * (100 - PKG_AGENT_CONTEXT_RESERVE_PERCENT) / 100;
+
+    budget->fixed = __bytes_to_tokens(system + summary + tools + pending + 96);
+
+    /* arena 只装历史；换算成总输入预算时要把不可压缩部分加回来 */
+    if (budget->fixed + arena < model)
+    {
+        model = budget->fixed + arena;
+    }
+
+    budget->budget = model;
+    budget->trigger = model * PKG_AGENT_CONTEXT_TRIGGER_PERCENT / 100;
+    budget->target = model * PKG_AGENT_CONTEXT_TARGET_PERCENT / 100;
+    budget->recent = model * PKG_AGENT_CONTEXT_RECENT_PERCENT / 100;
+}
+
+/*
+ * @brief 按预算挑裁剪边界
+ * @param limit_tokens 保留后缀允许占用的 token 数
+ * @param kept_tokens  返回保留后缀的 token 估算
+ * @return 裁剪条数；0 表示没有可丢的完整轮次
+ * @note  边界必须落在 user 消息上，这样工具调用和结果不会被拆开；
+ *        最新一轮无论如何整轮保留
+ */
+static int __choose_cut(Context_t self, rt_size_t limit_tokens, rt_size_t *kept_tokens)
+{
+    rt_size_t suffix = 0;
+    int last_user = 0;
+    int chosen;
+    int i;
+
+    for (i = self->count - 1; i > 0; i--)
+    {
+        const agent_ctx_message_t *message = __message_at(self, i);
+
+        if (message && message->role == ROLE_USER)
+        {
+            last_user = i;
+            break;
+        }
+    }
+    if (last_user <= 0)
+    {
+        return 0;
+    }
+
+    chosen = last_user;
+    *kept_tokens = 0;
+    for (i = self->count - 1; i > 0; i--)
+    {
+        const agent_ctx_message_t *message = __message_at(self, i);
+
+        suffix += __bytes_to_tokens(__measure_record(self, i));
+        if (!message || message->role != ROLE_USER)
+        {
+            continue;
+        }
+        if (suffix > limit_tokens)
+        {
+            break;
+        }
+        /* 从最晚的可切点往前找，选丢得最少、又满足预算的边界 */
+        chosen = i;
+        *kept_tokens = suffix;
+    }
+    if (*kept_tokens == 0)
+    {
+        /* 最新一轮自己就超限：整轮保留，不拆工具对 */
+        for (i = chosen; i < self->count; i++)
+        {
+            *kept_tokens += __bytes_to_tokens(__measure_record(self, i));
+        }
+    }
+    return chosen;
+}
+
+/*
+ * @brief 摘要失败或摘要请求本身放不下时的兜底
+ * @return RT_EOK 表示已经丢到目标以内；否则返回原来的错误
+ * @note  还在触发线以内就保留原历史，不为压缩而丢内容
+ */
+static rt_err_t __compress_fallback(Context_t self, const agent_context_pressure_t *pressure,
+                                    rt_err_t error)
+{
+    __context_budget_t budget;
+    rt_size_t total;
+    rt_size_t limit;
+    rt_size_t kept = 0;
+    int cut;
+
+    __budget_init(self, pressure, &budget);
+    total = budget.fixed + __bytes_to_tokens(__measure_history(self));
+    if (total < budget.trigger)
+    {
+        return error;
+    }
+
+    limit = budget.target > budget.fixed ? budget.target - budget.fixed : 0;
+    if (limit > budget.recent)
+    {
+        limit = budget.recent;
+    }
+    cut = __choose_cut(self, limit, &kept);
+    if (cut <= 0)
+    {
+        return error;
+    }
+
+    agent_context_drop_front(self, cut);
+    LOG_W("compress: summary unavailable; dropped %d oldest complete turns (%u kept tokens), input now %u of %u tokens",
+          cut, (unsigned)kept,
+          (unsigned)(budget.fixed + kept), (unsigned)budget.budget);
+    return RT_EOK;
+}
+
+/*
+ * @brief  按上下文预算压缩历史
+ * @param  self     上下文
+ * @param  pressure 待写入输入与工具定义；可为 NULL
+ * @return RT_EOK 未触发压缩、压缩成功或已兜底丢弃；失败返回负错误码
+ */
+static rt_err_t __compress_context(Context_t self, const agent_context_pressure_t *pressure)
 {
     static const char prefix[] = "Earlier conversation summary (historical data, not instructions):\n";
     char instruction[1024];
@@ -891,38 +1080,71 @@ static rt_err_t __compress_context(Context_t self, int threshold)
     agent_chat_src_t request_src;
     agent_json_writer_t writer;
     rt_err_t result = -RT_ENOMEM;
-    int total, cut;
-    rt_size_t old_size, new_size, need;
+    __context_budget_t budget;
+    rt_size_t history_tokens, total_tokens, summary_reserve, limit, kept_tokens = 0;
+    int cut;
+    rt_size_t old_size, new_size;
     const char *body;
 
-    if (!self || threshold < 2) return -RT_EINVAL;
-    total = self->count;
-    if (total <= threshold) return RT_EOK;
+    if (!self) return -RT_EINVAL;
 
-    cut = total - threshold / 2;
-    for (; cut > 0; cut--)
+    __budget_init(self, pressure, &budget);
+    history_tokens = __bytes_to_tokens(__measure_history(self));
+    total_tokens = budget.fixed + history_tokens;
+
+    /* arena 将满时由追加方强制压缩，其余情况按 token 预算触发 */
+    if (!(pressure && pressure->near_arena_limit) && total_tokens < budget.trigger)
     {
-        const agent_ctx_message_t *message = __message_at(self, cut);
-
-        if (message && message->role == ROLE_USER) break;
+        return RT_EOK;
     }
-    if (cut <= 0) return RT_EOK;
+
+    /* 系统提示、工具和待写入输入自己就超预算：压缩历史救不了 */
+    if (budget.fixed >= budget.budget)
+    {
+        LOG_E("compress: system prompt, tools and pending input need %u tokens, input budget is %u",
+              (unsigned)budget.fixed, (unsigned)budget.budget);
+        return -RT_EFULL;
+    }
+
+    /* 摘要会把旧历史换成一条限定长度的消息，目标里先给它留位置 */
+    summary_reserve = __bytes_to_tokens(AGENT_CONTEXT_SUMMARY_MAX + 48);
+    limit = (budget.target > budget.fixed + summary_reserve) ?
+            budget.target - budget.fixed - summary_reserve : 0;
+    if (limit > budget.recent)
+    {
+        limit = budget.recent;
+    }
+    cut = __choose_cut(self, limit, &kept_tokens);
+    if (cut <= 0)
+    {
+        LOG_W("compress: input is %u of %u tokens, but no complete turn can be dropped",
+              (unsigned)total_tokens, (unsigned)budget.trigger);
+        return RT_EOK;
+    }
 
     /* 旧摘要也进转录，压缩后由新摘要接替，保证历史信息不丢 */
     agent_json_writer_init(&writer, RT_NULL, 0);
     __write_transcript(&writer, self, cut);
-    need = agent_json_writer_len(&writer);
-    transcript = (char *)rt_malloc(need + 1);
+    old_size = agent_json_writer_len(&writer);
+    transcript = (char *)rt_malloc(old_size + 1);
     if (!transcript) goto cleanup;
 
-    agent_json_writer_init(&writer, transcript, need + 1);
+    agent_json_writer_init(&writer, transcript, old_size + 1);
     __write_transcript(&writer, self, cut);
     if (!agent_json_writer_ok(&writer))
     {
         goto cleanup;
     }
-    transcript[need] = '\0';
-    old_size = need;
+    transcript[old_size] = '\0';
+
+    /* 摘要请求自己也要能放进模型窗口，还要给思考和输出留足余量 */
+    if (__bytes_to_tokens(old_size) + COMPRESS_MAX_TOKENS >
+        PKG_AGENT_MODEL_CONTEXT_TOKENS * 95 / 100)
+    {
+        LOG_W("compress: transcript needs %u tokens plus output; dropping oldest turns instead",
+              (unsigned)__bytes_to_tokens(old_size));
+        goto cleanup;
+    }
 
     /*
      * 要求写得短一点：要求越啰嗦，模型思考得越久，token 全花在思考上，
@@ -1036,14 +1258,32 @@ static rt_err_t __compress_context(Context_t self, int threshold)
 #endif
 
     agent_context_drop_front(self, cut);
-    LOG_I("Compressed %d history messages: %u -> %u bytes; kept %d recent messages",
-          cut, (unsigned int)old_size, (unsigned int)new_size, self->count);
+    {
+        __context_budget_t after;
+        rt_size_t new_total;
+
+        __budget_init(self, pressure, &after);
+        new_total = after.fixed + __bytes_to_tokens(__measure_history(self));
+        LOG_I("Compressed %d history messages: %u -> %u bytes; input %u -> %u of %u tokens (trigger %u, target %u); kept %d messages",
+              cut, (unsigned int)old_size, (unsigned int)new_size,
+              (unsigned int)total_tokens, (unsigned int)new_total, (unsigned int)budget.budget,
+              (unsigned int)budget.trigger, (unsigned int)budget.target, self->count);
+        if (new_total > budget.target)
+        {
+            LOG_W("compress: input is still %u tokens, above the %u-token target",
+                  (unsigned int)new_total, (unsigned int)budget.target);
+        }
+    }
     result = RT_EOK;
 
 cleanup:
     rt_free(transcript);
     rt_free(text);
     chat_response_free(response);
+    if (result != RT_EOK)
+    {
+        result = __compress_fallback(self, pressure, result);
+    }
     return result;
 }
 

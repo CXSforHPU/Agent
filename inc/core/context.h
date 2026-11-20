@@ -12,6 +12,37 @@
 /* 摘要正文上限：压缩指令要求模型写 1200 字节以内，这里留出余量 */
 #define AGENT_CONTEXT_SUMMARY_MAX 1536
 
+/* 板端没有分词器，按 UTF-8 字节数估算 token：
+   英文约 4 字节一个 token，中文约 3 字节一个 token，取 3 偏保守 */
+#ifndef PKG_AGENT_MODEL_CONTEXT_TOKENS
+#define PKG_AGENT_MODEL_CONTEXT_TOKENS 65536
+#endif
+#ifndef PKG_AGENT_CONTEXT_TRIGGER_PERCENT
+#define PKG_AGENT_CONTEXT_TRIGGER_PERCENT 85
+#endif
+#ifndef PKG_AGENT_CONTEXT_TARGET_PERCENT
+#define PKG_AGENT_CONTEXT_TARGET_PERCENT 65
+#endif
+#ifndef PKG_AGENT_CONTEXT_RECENT_PERCENT
+#define PKG_AGENT_CONTEXT_RECENT_PERCENT 30
+#endif
+#ifndef PKG_AGENT_CONTEXT_RESERVE_PERCENT
+#define PKG_AGENT_CONTEXT_RESERVE_PERCENT 10
+#endif
+
+/*
+ * @brief 一次压缩判断的额外输入
+ * @note  待写入的用户消息与工具定义不在 Context 里，但都会进入下一轮请求，
+ *        估算预算时必须算上。near_arena_limit 由追加前的硬限检查置位，
+ *        此时不论 token 预算是否到线都要压缩。
+ */
+typedef struct agent_context_pressure
+{
+    rt_size_t pending_bytes;      /* 下一轮待写入的用户输入字节数 */
+    rt_size_t tools_bytes;        /* 工具定义 JSON 字节数 */
+    rt_bool_t near_arena_limit;   /* arena 接近容量上限 */
+} agent_context_pressure_t;
+
 /* 上下文管理器结构 */
 typedef struct Context
 {
@@ -30,7 +61,7 @@ typedef struct Context
     rt_err_t (*append_assistant_message)(struct Context *self, ChatResponse_t resp);
     rt_err_t (*append_tool_message)(struct Context *self, const char *tool_call_id, Messages_t messages);
     rt_err_t (*clear_message)(struct Context *self);
-    rt_err_t (*compress_context)(struct Context *self, int threshold);
+    rt_err_t (*compress_context)(struct Context *self, const agent_context_pressure_t *pressure);
 } Context, *Context_t;
 
 /*

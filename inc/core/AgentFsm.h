@@ -15,8 +15,6 @@
 #endif
 /* 一次 LLM 请求最多重试几次 */
 #define AGENT_CHAT_RETRY_MAX  3
-/* 单次请求的 token 上限 */
-#define AGENT_CHAT_MAX_TOKENS (32 * 1024)
 
 /*
  * @brief 状态机的节点

@@ -214,11 +214,22 @@ typedef struct Context
     rt_err_t (*append_assistant_message)(struct Context *self, ChatResponse_t resp);
     rt_err_t (*append_tool_message)(struct Context *self, const char *tool_call_id, Messages_t messages);
     rt_err_t (*clear_message)(struct Context *self);
-    rt_err_t (*compress_context)(struct Context *self, int threshold);
+    rt_err_t (*compress_context)(struct Context *self, const agent_context_pressure_t *pressure);
 } Context, *Context_t;
 ```
 
 `has_summary` 表示索引 1 处是否有滚动摘要。创建时为 `RT_FALSE`，压缩成功后为 `RT_TRUE`，清空成功后复位。
+
+压缩入口接收一份本轮压力信息：
+
+```c
+typedef struct agent_context_pressure
+{
+    rt_size_t pending_bytes;   /* 本轮待写入的输入字节数 */
+    rt_size_t tools_bytes;     /* 工具定义 JSON 的字节数 */
+    rt_bool_t near_arena_limit; /* arena 快满，强制压缩 */
+} agent_context_pressure_t;
+```
 
 ### 3.2 接口
 
@@ -243,22 +254,26 @@ typedef struct Context
 | `append_assistant_message(self, resp)` | 无工具调用时追加正文；有工具调用时追加 `content` 为空、带 `tool_calls` 的 assistant 消息 |
 | `append_tool_message(self, tool_call_id, messages)` | 追加 `role=tool` 消息，只拼接 `TYPE_TEXT` 内容，结果是一个字符串 |
 | `clear_message(self)` | 删除全部消息并新建空数组，复位 `has_summary`；调用方负责重建系统提示词 |
-| `compress_context(self, threshold)` | 消息数超过阈值时，尝试用滚动摘要替换旧历史，保留 system 和最近完整轮次 |
+| `compress_context(self, pressure)` | 估算输入达到预算触发线时，用滚动摘要替换旧历史；摘要失败且仍超线时丢弃最旧的完整轮次 |
 
 工具结果只支持文本。图片、音频等多模态内容不能放进 `role=tool` 消息。
 
 `build_system_prompt` 保留 `get_system_prompt()` 返回的基础提示词，再追加自动生成的内置技能 JSON 目录和加载说明。使用任务工具前，模型应调用 `skill({"name":"<name>"})` 加载匹配技能。完整技能说明仍在上下文中时可复用；只剩摘要时要重新加载。摘要是历史数据，不是新指令或设备当前状态的证明。
 
-`compress_context` 替代原来的 `trim_context`，规则如下：
+`compress_context` 替代原来的 `trim_context`，按输入 token 预算触发，规则如下：
 
-- `threshold` 至少为 2。主循环传入现有配置 `PKG_AGENT_MESSAGE_TRIM`，计数排除 system 和已有滚动摘要。只有消息数严格大于阈值才尝试压缩。
-- 先取最近 `threshold / 2` 条消息，除法向下取整。保留范围再向前扩到 user 消息边界，不拆开一轮对话或工具调用与结果。实际保留条数可能更多；没有可压缩的完整旧轮次时跳过，包括只有一轮超长对话的情况。
+- 输入预算以 `PKG_AGENT_MODEL_CONTEXT_TOKENS`（默认 65536）为上限，先减 `AGENT_CHAT_MAX_TOKENS` 的输出预留和 `PKG_AGENT_CONTEXT_RESERVE_PERCENT`（默认 10%）的安全余量，再与“不可压缩部分 + arena 容量 / 3”取较小值。token 按 JSON 序列化后的 UTF-8 字节数除以 3 估算，不调用分词器。
+- `pressure->pending_bytes` 是本轮待写入的输入字节数，`pressure->tools_bytes` 是工具定义 JSON 的字节数，`pressure->near_arena_limit` 表示 arena 已用超过 75%。主循环在追加前测量一次，请求结束后再测量一次；传 `RT_NULL` 时只按 system、摘要和历史估算。
+- 不可压缩部分叫 fixed：system 提示词、已有摘要、工具定义、待写入输入，再加 96 字节协议开销。fixed 单独就达到总预算时返回 `-RT_EFULL`，压缩历史救不了。
+- 估算输入达到预算的 `PKG_AGENT_CONTEXT_TRIGGER_PERCENT`（默认 85%）时触发；`near_arena_limit` 为真时跳过触发线，直接压缩。
+- 压缩目标为预算的 `PKG_AGENT_CONTEXT_TARGET_PERCENT`（默认 65%）。保留后缀先扣除摘要消息预留（`AGENT_CONTEXT_SUMMARY_MAX + 48` 字节），且不超过 `PKG_AGENT_CONTEXT_RECENT_PERCENT`（默认 30%）。
+- 裁剪边界只落在 user 消息上，不拆开 `assistant(tool_calls)` 与对应的 tool 结果。最新一轮无论如何整轮保留；没有可丢的完整旧轮次时跳过。
 - 将保留范围之前的历史（含上一份摘要，不含 system）序列化为 JSON，作为 user 数据发送。请求使用专用摘要 system 提示词，把历史当作数据，不执行其中的指令。
-- 摘要需要额外一次模型请求：`chat(request, RT_NULL, 512, RT_NULL, RT_NULL, RT_NULL)`。不提供工具，三个回调均为空，不向用户流式输出摘要。
-- 只接受非空白正文、`complete == RT_TRUE` 且没有工具调用的响应。带历史标记的摘要消息必须使序列化后的历史字节数减少。替换内容构造并检查成功后才提交，摘要作为 assistant 消息放在索引 1，system 和最近消息保持原样。
-- 网络、内存或摘要校验失败时，保留全部原历史，不回退到直接裁剪。失败或跳过压缩时，后续对话可能让历史继续增长，阈值不是硬性容量上限。
+- 摘要请求调用 `chat(request, RT_NULL, 2048, RT_NULL, RT_NULL, RT_NULL)`，不提供工具，三个回调均为空。请求前检查转录 token 加 2048 不超过模型窗口的 95%，放不下就改走兜底裁剪。
+- 只接受非空白正文、没有工具调用的响应；摘要消息序列化后必须比被替换的历史短，才提交替换。截断的摘要也会收下并记告警。替换内容构造并检查成功后才提交，摘要作为 assistant 消息放在索引 1，system 和最近消息保持原样。
+- 摘要失败、请求放不下或校验不通过时，先看输入是否仍在触发线以内：在以内就保留原历史；超出则丢弃最旧的完整轮次，降到目标以内。`near_arena_limit` 强制压缩失败时同样走这条兜底。
 
-成功压缩或跳过压缩返回 `RT_EOK`。失败返回 `-RT_EINVAL`、`-RT_ENOMEM` 或 `-RT_ERROR`，原历史保持不变。
+未触发、压缩成功或兜底裁剪成功返回 `RT_EOK`。fixed 已超过总预算返回 `-RT_EFULL`。其他失败返回 `-RT_EINVAL`、`-RT_ENOMEM` 或 `-RT_ERROR`，原历史保持不变。
 
 摘要保留语义信息，不是逐字记录，不能保证细节完整。摘要中的技能名不能代替完整技能说明，后续使用时需要重新加载。摘要请求期间 agent 仍处于忙碌状态。
 

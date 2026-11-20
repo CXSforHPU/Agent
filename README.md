@@ -10,7 +10,7 @@
 - 工具调用：内置 `add`、`mul`、`compare` 三个示例工具、设备框架工具与 7 个 MQTT 工具，工具循环轮数由 Kconfig 选项 `PKG_AGENT_TOOL_LOOP_MAX` 决定，默认 6 轮。设备框架工具分通用层（7 个）与 8 个设备类模块（22 个），按 Kconfig 取舍。
 - 设备框架工具：通用层 7 个工具统一走 `rt_device_*`，屏蔽具体驱动。GPIO、PWM、ADC、DAC、I2C、SPI、传感器、LED 八类各一个 `.c`，封装本类的专用 API。
 - 技能模块：`skills/*.md` 在构建时编进固件，目录注入系统提示词，模型按需加载正文。
-- 上下文管理：历史超过阈值时用滚动摘要压缩，压缩失败保留原始历史。
+- 上下文管理：按输入 token 预算自动滚动摘要压缩，压缩失败保留原始历史。
 - 分层记忆：核心记忆每轮注入，回忆层按关键词检索后注入，模型可用 `memory_store`、`memory_search`、`memory_delete` 自己维护。整块由 `PKG_AGENT_MEMORY_ENABLE` 控制，关闭时调用点变成空操作。
 - 多通道：CLI、WebNet、A2A、Debug、LVGL 五种通道，通过 `AgentChannelOps` 统一接入。
 - 自发上报：端侧 agent 自己得出的结论（MQTT 规则命中、传感器越限）直接推给控制台，不用等人来问。自发结论通过已认证的 A2A WebSocket 连接上报。
@@ -354,9 +354,13 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 ### 上下文压缩
 
-一次请求结束后调用 `compress_context()`。历史条数超过 `PKG_AGENT_MESSAGE_TRIM` 时，把旧历史交给模型做滚动摘要，用摘要替换原始消息，保留 system 与最近完整轮次。
+输入预算按 `PKG_AGENT_MODEL_CONTEXT_TOKENS` 计算：先扣掉 `AGENT_CHAT_MAX_TOKENS` 的输出预留，再留 `PKG_AGENT_CONTEXT_RESERVE_PERCENT` 的安全余量，总和不超过 system、工具定义和 arena 能装下的部分。token 在板端按 JSON 字节数除以 3 估算，不依赖分词器，对中文偏保守。
 
-摘要请求不带工具。只有响应明确自然结束、正文完整、没有工具调用，并且确实变小了，才提交替换；任何一条不满足就保留原始历史。压缩后的摘要只留技能名，要继续用技能需重新加载。
+请求结束后调用 `compress_context()`。估算输入达到预算的 `PKG_AGENT_CONTEXT_TRIGGER_PERCENT`（默认 85%）时，把旧历史交给模型做滚动摘要，用摘要替换原始消息。压缩目标降到预算的 `PKG_AGENT_CONTEXT_TARGET_PERCENT`（默认 65%）；保留的最近后缀最多占 `PKG_AGENT_CONTEXT_RECENT_PERCENT`（默认 30%），至少保留最新一轮。
+
+裁剪边界只落在 user 消息上，不拆开 `assistant(tool_calls)` 与对应的 tool 结果，最新一轮整轮保留。system、工具定义、当前输入和已有摘要不参与压缩；它们自己就超过总预算时报错，压缩历史救不了。
+
+摘要请求不带工具，并把摘要输出预算和模型窗口余量一起算进去。摘要正文非空、没有工具调用、并且确实比原文短才提交替换，截断的摘要会收下并记一条告警；否则保留原始历史。若此时输入仍超过触发线，兜底丢掉最旧的完整轮次；还在触发线以内就原样保留。压缩后的摘要只留技能名，要继续用技能需重新加载。
 
 ### 分层记忆
 
@@ -557,7 +561,11 @@ a2a_activate 192.168.137.1 8080
 | `PKG_AGENT_RESP_BUFSZ` / `PKG_AGENT_WEB_SOCKET_BUFSZ` | HTTP 响应与会话缓冲 |
 | `PKG_AGENT_STREAM_LINE_BUFSZ` | SSE 单行缓冲，默认 1024 |
 | `PKG_AGENT_MAX_TOOL_ARG_LEN` | 工具参数拼接上限 |
-| `PKG_AGENT_MESSAGE_TRIM` | 上下文压缩阈值，历史超过这个条数就尝试滚动摘要 |
+| `PKG_AGENT_MODEL_CONTEXT_TOKENS` | 模型的上下文窗口，默认 65536，用于计算压缩预算 |
+| `PKG_AGENT_CONTEXT_TRIGGER_PERCENT` | 输入达到预算的百分之多少触发压缩，默认 85 |
+| `PKG_AGENT_CONTEXT_TARGET_PERCENT` | 压缩后要降到预算的百分之多少，默认 65 |
+| `PKG_AGENT_CONTEXT_RECENT_PERCENT` | 最近完整轮次最多保留多少预算占比，默认 30 |
+| `PKG_AGENT_CONTEXT_RESERVE_PERCENT` | 输入预算里预留的安全余量，默认 10 |
 | `PKG_AGENT_SKILL_DIR` | 内嵌技能的 Markdown 目录，默认 `skills` |
 | `PKG_AGENT_MEMORY_ENABLE` | 分层记忆总开关，默认关闭 |
 | `PKG_AGENT_MEMORY_TOOLS_ENABLE` | 给模型提供 `memory_store`、`memory_search`、`memory_delete`，默认开 |
