@@ -3,6 +3,18 @@
 
 #include <stddef.h>
 
+/*
+ * 旧配置没有后加的 PKG_AGENT_SKILL_EMBED，视为技能模块默认开启；
+ * 新配置关闭总开关后 EMBED 仍在，用它区分“显式关闭”和“旧配置”。
+ */
+#if defined(PKG_AGENT_SKILL_ENABLE) || !defined(PKG_AGENT_SKILL_EMBED)
+#define AGENT_SKILL_MODULE_ENABLED 1
+#else
+#define AGENT_SKILL_MODULE_ENABLED 0
+#endif
+
+#if AGENT_SKILL_MODULE_ENABLED
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,5 +55,7 @@ const char *agent_skill_list(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* AGENT_SKILL_MODULE_ENABLED */
 
 #endif

@@ -121,7 +121,7 @@ MSH 命令：
 
 发给模型的请求按固定顺序拼装：system → 记忆 → 摘要 → 历史窗口 → 追加文本。`agent_ctx_cursor_*` 按这个顺序逐条给出，协议模块不再自己决定顺序。记忆块用 ROLE_USER，两个协议都适用，因为 Anthropic 会跳过 ROLE_SYSTEM。`agent_context_last_user_text()` 取最近一条非空用户原话，给回忆层做关键词检索用。
 
-- 创建时调用 `build_system_prompt`。保留 `src/core/prompt.c` 中 `get_system_prompt()` 的内容，再追加自动生成的内置技能 JSON 目录和加载说明。
+- 创建时调用 `build_system_prompt`。保留 `src/core/prompt.c` 中 `get_system_prompt()` 的内容，再追加自动生成的内置技能 JSON 目录和加载说明。没有编入技能时跳过这两段。
 - 技能加载说明要求模型在使用任务工具前调用 `skill({"name":"<name>"})`。完整说明仍在上下文中时可复用；只剩摘要时要重新加载。
 - `append_assistant_message`：
   - 没有工具调用时，写入 assistant 的正文。
@@ -450,13 +450,16 @@ webclient v2.2.0 的超时接口有两个坑，包内统一走 `src/utils/webcli
 
 文件：`skills/`、`skills/SConscript`、`skills/embed_skills.py`、`src/core/skill.c`、`inc/core/skill.h`、`src/tools/tool_skill.c`
 
-技能是放在 `skills/` 目录下的 Markdown 文件。文件名去掉 `.md` 就是技能名，例如 `device-commands.md` 的技能名是 `device-commands`。随包发布的有 `math`、`mqtt`、`device`、`device-commands`。
+技能是放在 `skills/` 目录下的 Markdown 文件。文件名去掉 `.md` 就是技能名，例如 `device-commands.md` 的技能名是 `device-commands`。随包发布的有 `math`、`mqtt`、`device`、`device-commands`、`mcp`。
 
-构建过程：
+`PKG_AGENT_SKILL_ENABLE` 是整模块总开关，默认打开。关掉后 `src/core/skill.c`、`src/tools/tool_skill.c` 和整个 `skills/SConscript` 都不参与编译，技能目录也不再注入系统提示词，资源不足的 MCU 可以直接关。
+
+模块打开时，构建过程：
 
 1. `skills/SConscript` 调用 `skills/embed_skills.py`，递归收集目录里的 `.md` 文件。
 2. `embed_skills.py` 生成 `skill_data.c`，里面有三份数据：`agent_skill_table[]` 是技能正文，`agent_skill_table_count` 是技能个数，`agent_skill_catalog` 是目录的 JSON。
 3. 技能目录可以改。menuconfig 选项 `PKG_AGENT_SKILL_DIR` 默认是 `skills`，相对路径按包目录解析，也支持绝对路径。SCons 参数 `agent_skill_dir` 只影响这一次构建。
+4. 编入哪些技能由 `PKG_AGENT_SKILL_EMBED` 决定。默认 `*` 编全部；填逗号分隔的名字只编这些，例如 `math,device`；填 `none` 或留空不编技能。名单里有不存在的名字时构建报错。
 
 目录是 JSON 数组，每项包含 `name`、`title`、`size`。`title` 取 Markdown 里第一个 `# ` 标题，没有标题就用技能名。
 

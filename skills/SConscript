@@ -16,11 +16,15 @@ if not os.path.isabs(skill_dir):
     skill_dir = os.path.join(package_dir, skill_dir)
 skill_dir = os.path.abspath(skill_dir)
 
+configured_embed = GetConfigValue('PKG_AGENT_SKILL_EMBED')
+embed = ast.literal_eval(configured_embed) if configured_embed else '*'
+
 generator = os.path.join(cwd, 'embed_skills.py')
 spec = importlib.util.spec_from_file_location('agent_embed_skills', generator)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 paths, names = module.collect_skills(skill_dir)
+paths, names = module.select_skills(paths, names, embed)
 
 skill_env = env.Clone(AGENT_SKILL_NAMES=names)
 src = skill_env.Command(
@@ -28,8 +32,8 @@ src = skill_env.Command(
     [File(str(path)) for path in paths],
     Action(module.generate, 'Embedding Agent skills -> $TARGET'),
 )
-# Track the input list as well as contents so removals and directory switches rebuild.
+# Track the input list as well as contents so removals and directory/selection switches rebuild.
 skill_env.Depends(src, [File(generator), File(os.path.join(cwd, 'SConscript')),
-                        Value((skill_dir, names))])
+                        Value((skill_dir, names, embed))])
 
 Return('src')

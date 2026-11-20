@@ -344,7 +344,7 @@ AGENT_TOOL_MODULE_EXPORT(word_count, word_count_tools)
 - `agent_tool_register_modules()` 遍历模块表，把每个工具挂上链表。`init_flag` 保证 `init_tools()` 只执行一次。
 - `cleanup_agent()` 调用 `agent_tools_cleanup()`，释放工具链表、工具定义 JSON 与残留结果，并复位注册标志。
 - 再次进入对话时会重新注册。模块表是静态数据，不需要清理，也不会残留堆内存。工具代码不需要自己管理这些内存。
-- 注册哪些工具取决于哪些模块参与了编译：MQTT 模块看 `PKG_AGENT_TOOL_MQTT_ENABLE`，设备模块看 `PKG_AGENT_TOOL_DEVICE_*` 和对应的内核宏，运算与技能模块始终在表里。关掉一个模块不用改任何中心文件。
+- 注册哪些工具取决于哪些模块参与了编译：MQTT 模块看 `PKG_AGENT_TOOL_MQTT_ENABLE`，设备模块看 `PKG_AGENT_TOOL_DEVICE_*` 和对应的内核宏，技能模块看 `PKG_AGENT_SKILL_ENABLE`，运算模块始终在表里。关掉一个模块不用改任何中心文件。
 
 ## 7. 执行函数约定
 

@@ -511,6 +511,7 @@ static void unit_error_paths(void)
     uassert_true(invoke(close, "{\"name\":\"utst0\"}") != RT_NULL);
 }
 
+#if AGENT_SKILL_MODULE_ENABLED
 static void unit_skill_catalog(void)
 {
     const struct agent_skill *skill = agent_skill_find("device");
@@ -538,6 +539,7 @@ static void unit_skill_catalog(void)
     uassert_true(node->ret.ret == RT_EOK && text != RT_NULL);
     if (text) uassert_str_equal(text, commands->content);
 }
+#endif
 
 static rt_err_t utest_tc_init(void)
 {
@@ -569,6 +571,8 @@ static void testcase(void)
     UTEST_UNIT_RUN(unit_control_commands);
     UTEST_UNIT_RUN(unit_console_guards);
     UTEST_UNIT_RUN(unit_error_paths);
+#if AGENT_SKILL_MODULE_ENABLED
     UTEST_UNIT_RUN(unit_skill_catalog);
+#endif
 }
 UTEST_TC_EXPORT(testcase, "agent.device_tools", utest_tc_init, utest_tc_cleanup, 60);

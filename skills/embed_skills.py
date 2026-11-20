@@ -16,6 +16,21 @@ def collect_skills(directory):
     return paths, names
 
 
+def select_skills(paths, names, embed):
+    wanted = embed.strip()
+    if wanted == "*":
+        return list(paths), list(names)
+    if not wanted or wanted.lower() == "none":
+        return [], []
+    selected = {name.strip() for name in wanted.split(",") if name.strip()}
+    unknown = sorted(selected - set(names))
+    if unknown:
+        raise ValueError("Unknown skill names in PKG_AGENT_SKILL_EMBED: {}".format(
+            ", ".join(unknown)))
+    kept = [(path, name) for path, name in zip(paths, names) if name in selected]
+    return [path for path, _ in kept], [name for _, name in kept]
+
+
 def c_string(data):
     escaped = {9: r"\t", 10: r"\n", 13: r"\r", 34: r'\"', 63: r"\077", 92: r"\\"}
     lines = []

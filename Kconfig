@@ -686,6 +686,17 @@ if PKG_USING_AGENT
     endmenu
 
     menu "Agent Skills Configuration"
+        config PKG_AGENT_SKILL_ENABLE
+            bool "Enable built-in skills"
+            default y
+            help
+                Compile the skill registry, the skill tool, and the embedded
+                Markdown catalog into firmware. Turn this off on MCUs without
+                room for the skill module; the sources are excluded entirely
+                and the system prompt gets no skill catalog.
+
+                The two options below are ignored when this is disabled.
+
         config PKG_AGENT_SKILL_DIR
             string "Markdown skill directory"
             default "skills"
@@ -696,6 +707,21 @@ if PKG_USING_AGENT
                 The relative path without .md is the skill name.
                 Override for one build with scons agent_skill_dir=<directory>.
                 Changes require rebuilding firmware; no runtime filesystem is needed.
+
+        config PKG_AGENT_SKILL_EMBED
+            string "Skills to embed"
+            default "*"
+            help
+                Selects which Markdown skills are compiled into firmware.
+                An asterisk (default) embeds every .md file found under the
+                skill directory. A comma-separated list embeds only those
+                names, for example "device,math". "none" or an empty value
+                embeds no skill content.
+
+                Trimmed skills take no Flash space and are absent from the
+                skill catalog in the system prompt. A listed name that does
+                not exist stops the build, so typos do not silently drop a
+                skill. Rebuild firmware after changing this value.
     endmenu
 
     menu "Agent Memory"

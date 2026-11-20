@@ -9,7 +9,7 @@
 - 流式对话：解析 SSE 响应，分别处理思考过程、回答正文与工具调用。
 - 工具调用：内置 `add`、`mul`、`compare` 三个示例工具、设备框架工具与 7 个 MQTT 工具，工具循环轮数由 Kconfig 选项 `PKG_AGENT_TOOL_LOOP_MAX` 决定，默认 6 轮。设备框架工具分通用层（7 个）与 8 个设备类模块（22 个），按 Kconfig 取舍。
 - 设备框架工具：通用层 7 个工具统一走 `rt_device_*`，屏蔽具体驱动。GPIO、PWM、ADC、DAC、I2C、SPI、传感器、LED 八类各一个 `.c`，封装本类的专用 API。
-- 技能模块：`skills/*.md` 在构建时编进固件，目录注入系统提示词，模型按需加载正文。
+- 技能模块：`skills/*.md` 在构建时编进固件，可用 Kconfig 总开关整模块裁掉，也可按白名单只留部分；目录注入系统提示词，模型按需加载正文。
 - 上下文管理：按输入 token 预算自动滚动摘要压缩，压缩失败保留原始历史。
 - 分层记忆：核心记忆每轮注入，回忆层按关键词检索后注入，模型可用 `memory_store`、`memory_search`、`memory_delete` 自己维护。整块由 `PKG_AGENT_MEMORY_ENABLE` 控制，关闭时调用点变成空操作。
 - 多通道：CLI、WebNet、A2A、Debug、LVGL 五种通道，通过 `AgentChannelOps` 统一接入。
@@ -350,6 +350,10 @@ menuconfig 路径是 Agent 包 → `Agent Tool: Device Framework`。内核条件
 
 `skills/` 下的 Markdown 在构建时由 `skills/embed_skills.py` 转成 C 字符串，编成 `skill_data.c`。技能名就是文件名去掉 `.md`。随包发布的有 `math`、`mqtt`、`device`、`device-commands`、`mcp`。
 
+`PKG_AGENT_SKILL_ENABLE` 是总开关，默认打开。关掉后 `src/core/skill.c`、`src/tools/tool_skill.c` 和技能数据都不参与编译，`skill` 工具不会注册，系统提示词里也没有技能目录，适合没有空间放技能模块的 MCU。
+
+模块打开时，`PKG_AGENT_SKILL_EMBED` 决定编哪些技能。默认 `*`，编入目录下全部 `.md`；填 `math,device` 只编列出的技能；填 `none` 或留空则不编技能内容，但工具和注册表仍在。列出的名字不存在时构建直接报错，避免拼错后悄悄少一个技能。没编入的技能不占 Flash，也不出现在系统提示词的目录里。
+
 技能目录以 JSON 形式注入系统提示词，模型用 `skill` 工具按名字取正文：不带 `name` 列目录，带 `name` 返回全文。这样正文不必常驻上下文，模型只在需要时加载。
 
 ### 上下文压缩
@@ -566,7 +570,9 @@ a2a_activate 192.168.137.1 8080
 | `PKG_AGENT_CONTEXT_TARGET_PERCENT` | 压缩后要降到预算的百分之多少，默认 65 |
 | `PKG_AGENT_CONTEXT_RECENT_PERCENT` | 最近完整轮次最多保留多少预算占比，默认 30 |
 | `PKG_AGENT_CONTEXT_RESERVE_PERCENT` | 输入预算里预留的安全余量，默认 10 |
+| `PKG_AGENT_SKILL_ENABLE` | 技能模块总开关，默认开；关闭后技能源码与数据都不编译 |
 | `PKG_AGENT_SKILL_DIR` | 内嵌技能的 Markdown 目录，默认 `skills` |
+| `PKG_AGENT_SKILL_EMBED` | 模块打开时编进固件的技能，默认 `*` 表示全部；也可填逗号分隔的名字或 `none` |
 | `PKG_AGENT_MEMORY_ENABLE` | 分层记忆总开关，默认关闭 |
 | `PKG_AGENT_MEMORY_TOOLS_ENABLE` | 给模型提供 `memory_store`、`memory_search`、`memory_delete`，默认开 |
 | `PKG_AGENT_MEMORY_CORE_ITEMS` / `PKG_AGENT_MEMORY_RECALL_ITEMS` | 核心层与回忆层槽位数，默认 8 与 32 |
@@ -601,20 +607,20 @@ a2a_activate 192.168.137.1 8080
 | 设备框架工具 | 42,036 | `PKG_AGENT_TOOL_DEVICE` 与八个类模块开关 |
 | 核心（状态机、上下文、对话） | 35,181 | 必编 |
 | 协议与 JSON | 25,076 | 两份协议都编；改 SConscript 只留一份可省 7,952 |
-| 内嵌技能 | 20,527 | `PKG_AGENT_SKILL_DIR` 指向只放要留的技能 |
+| 内嵌技能 | 20,527 | `PKG_AGENT_SKILL_ENABLE` 关掉整块，或用 `PKG_AGENT_SKILL_EMBED` 只留要用的 |
 | 通道 | 15,309 | A2A 10,965，WebSocket 4,344 |
 | 分层记忆 | 10,925 | `PKG_AGENT_MEMORY_ENABLE`；再开落盘多 1,772 |
 | 多模态与语音 | 9,683 | 关多模态后 `file_op` 与 `stt` 一起消失 |
 | 工具注册与支撑 | 9,109 | 必编 |
 | MCP 客户端 | 8,408 | `PKG_AGENT_TOOL_MCP_ENABLE` |
-| 运算与技能工具 | 4,000 | 必编 |
+| 运算与技能工具 | 4,000 | 技能工具由 `PKG_AGENT_SKILL_ENABLE` 关闭，运算工具仍编 |
 | 音频驱动 | 0 | `PKG_AGENT_DRIVER_AUDIO` |
 
 这张表按包内 `.o` 统计，不含依赖代码。关掉开关后链接器还会丢掉只被这个模块引用的代码，固件实际减少量看本节开头的实测差值。
 
 音频驱动一项是 0，因为当前配置编了源码但没有代码引用，链接时整段被丢掉。
 
-包里放不下时，先关 MQTT，再关用不到的设备类模块，每类 5,100～6,596 字节。还能再砍就考虑技能只留一份（省 16,000 字节上下）、关 MCP（8,408 字节）、关多模态与语音（9,683 字节）、改 SConscript 只编一种协议（省 7,952 字节）。技能目录可以另建一个目录，只放要留的 Markdown，再把 `PKG_AGENT_SKILL_DIR` 指过去；也可以单次构建时用 `scons agent_skill_dir=<目录>` 覆盖。
+包里放不下时，先关 MQTT，再关用不到的设备类模块，每类 5,100～6,596 字节。还能再砍就考虑技能只留一份（省 16,000 字节上下）、关 MCP（8,408 字节）、关多模态与语音（9,683 字节）、改 SConscript 只编一种协议（省 7,952 字节）。空间特别紧就直接关 `PKG_AGENT_SKILL_ENABLE`，技能源码、技能工具和 Markdown 一起消失；只裁内容就用 `PKG_AGENT_SKILL_EMBED`，例如填 `math` 只编这一份，填 `none` 全不编。也可以另建目录放要留的 Markdown，再把 `PKG_AGENT_SKILL_DIR` 指过去，或单次构建时用 `scons agent_skill_dir=<目录>` 覆盖。
 
 真正的大头是依赖。选上本包会带 HTTPS 客户端和 TLS，当前固件里 mbedTLS 约 832 KB，占 text 的 29%；lwIP 约 171 KB。Flash 紧张的器件要先算这一块。
 
@@ -622,7 +628,7 @@ a2a_activate 192.168.137.1 8080
 
 ## 验证
 
-包内自带两个 utest 用例：`agent.device_tools` 覆盖通用层工具、模块表注册与两个技能，`agent.memory` 覆盖分层记忆的存取、去重、淘汰、检索与注入顺序。BSP 工作区另有离线 QEMU 回归 `build/skill_qemu/`，在 webclient 边界替换模型，检查技能、上下文压缩、设备工具、分层记忆、MCP 客户端与端到端链路。
+包内自带两个 utest 用例：`agent.device_tools` 覆盖通用层工具、模块表注册与两个技能（技能模块关闭时技能用例跳过），`agent.memory` 覆盖分层记忆的存取、去重、淘汰、检索与注入顺序。BSP 工作区另有离线 QEMU 回归 `build/skill_qemu/`，在 webclient 边界替换模型，检查技能、上下文压缩、设备工具、分层记忆、MCP 客户端与端到端链路。
 
 ```bash
 scons -f build/skill_qemu/SConstruct

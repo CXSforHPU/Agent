@@ -401,7 +401,7 @@ LED 设备注册成 class 为 char，名字是 `led` 加数字。工具走 LED �
 
 加载方式：先调用 `skill` 不带参数列出技能名，再调用 `skill({"name":"device-commands"})` 读全文。技能正文进上下文后会被模型当作操作指令。
 
-技能目录也写进了系统提示词，位置在 `src/core/context.c` 的 `__build_system_prompt()`。提示词要求模型在使用任务工具前先加载匹配的技能。
+技能模块打开时，技能目录也写进系统提示词，位置在 `src/core/context.c` 的 `__build_system_prompt()`。提示词要求模型在使用任务工具前先加载匹配的技能。
 
 上下文被压缩后，摘要里只留技能名，不留正文。要继续做设备操作，先重新加载技能。
 
@@ -437,6 +437,6 @@ LED 设备注册成 class 为 char，名字是 `led` 加数字。工具走 LED �
 
 ## 12. 验证
 
-包内自带 utest 用例 `tests/utest_device_tools.c`，导出名 `agent.device_tools`。它覆盖通用层 7 个工具、模块表与工具链表的一致性，以及两个技能。
+包内自带 utest 用例 `tests/utest_device_tools.c`，导出名 `agent.device_tools`。它覆盖通用层 7 个工具、模块表与工具链表的一致性，以及两个技能。技能模块关闭时，涉及技能的断言整段跳过。
 
 类模块的覆盖分两种。当前 BSP 打开了 GPIO、I2C、SPI 三个类模块，它们在 QEMU 回归里跟着固件一起跑。PWM、ADC、DAC、传感器、LED 五类在这份配置里没有驱动，模块不参与链接，只做编译检查：把缺失的 `RT_USING_*` 与 `PKG_AGENT_TOOL_DEVICE_*` 补成命令行宏，逐个编译 `src/tools/tool_device/` 下的文件。跑法见 [testing.md](./testing.md) 第 3.3 节。

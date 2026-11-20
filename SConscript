@@ -48,22 +48,26 @@ INC_DRIVER_AUDIO = os.path.join(INC_ROOT, "driver", "audio")
 src = []
 CPPPATH = []
 
-def module_sources(directory):
+def module_sources(directory, exclude=()):
     """Return a module's direct C sources in stable build order."""
     return [
         entry.path
         for entry in sorted(os.scandir(directory), key=lambda entry: entry.name)
-        if entry.name.endswith(".c") and entry.is_file()
+        if entry.name.endswith(".c") and entry.is_file() and entry.name not in exclude
     ]
+
+# 技能模块总开关。EMBED 是后加的配置项：旧配置没有它，按开启处理。
+skill_configured = bool(GetConfigValue("PKG_AGENT_SKILL_EMBED"))
+skill_enabled = not skill_configured or GetDepend(["PKG_AGENT_SKILL_ENABLE"])
 
 # ---------------------- Core 核心源码 ----------------------
 # 遍历src/core目录下所有.c文件
-src.extend(module_sources(SRC_CORE))
+src.extend(module_sources(SRC_CORE, () if skill_enabled else ("skill.c",)))
 # 添加核心头文件目录
 CPPPATH.append(INC_ROOT)
 CPPPATH.append(INC_CORE)
 
-if GetDepend(["PKG_USING_AGENT"]):
+if GetDepend(["PKG_USING_AGENT"]) and skill_enabled:
     src += list(SConscript("skills/SConscript"))
 
 # ---------------------- Utils 工具模块 ----------------------
@@ -94,7 +98,7 @@ CPPPATH.append(INC_CHANNELS)
 
 # ---------------------- Tools 工具集模块 ----------------------
 # 基础工具：自动遍历tools目录下所有c文件
-src.extend(module_sources(SRC_TOOLS))
+src.extend(module_sources(SRC_TOOLS, () if skill_enabled else ("tool_skill.c",)))
 CPPPATH.append(INC_TOOLS)
 
 # MQTT工具（Kconfig开关控制，模块拆分为多个c文件：引擎/订阅生命周期/路由/过滤/业务/工具入口/MSH）

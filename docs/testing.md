@@ -9,7 +9,7 @@
 
 | 手段 | 位置 | 覆盖范围 | 需要硬件 |
 |---|---|---|---|
-| 包内 utest 用例 | `packages/Agent-latest/tests/utest_device_tools.c`、`utest_memory.c` | 通用层设备工具、模块表注册、两个技能；分层记忆的存取、检索与注入 | 否，虚拟设备 |
+| 包内 utest 用例 | `packages/Agent-latest/tests/utest_device_tools.c`、`utest_memory.c` | 通用层设备工具、模块表注册、两个技能（技能模块关闭时跳过）；分层记忆的存取、检索与注入 | 否，虚拟设备 |
 | 离线 QEMU 回归 | BSP 工作区 `build/skill_qemu/` | 技能、上下文压缩、设备工具、协议、MCP、端到端链路与两个 utest | 否，QEMU 模拟机 |
 | 记忆落盘回归 | BSP 工作区 `build/mem_persist/` | 打开 `PKG_AGENT_MEMORY_PERSIST`，第一次启动写入，重启后读回 | 否，QEMU 模拟机 |
 | 真链路 QEMU 回归 | BSP 工作区 `build/skill_qemu/run_live.py` | MCP 客户端经网口连到 PC 上的网关，调桌面工具和联网搜索 | 否，但要 PC 上有网关 |

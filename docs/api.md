@@ -258,7 +258,7 @@ typedef struct agent_context_pressure
 
 工具结果只支持文本。图片、音频等多模态内容不能放进 `role=tool` 消息。
 
-`build_system_prompt` 保留 `get_system_prompt()` 返回的基础提示词，再追加自动生成的内置技能 JSON 目录和加载说明。使用任务工具前，模型应调用 `skill({"name":"<name>"})` 加载匹配技能。完整技能说明仍在上下文中时可复用；只剩摘要时要重新加载。摘要是历史数据，不是新指令或设备当前状态的证明。
+`build_system_prompt` 保留 `get_system_prompt()` 返回的基础提示词，再追加自动生成的内置技能 JSON 目录和加载说明。没有编入任何技能时，这两段都不追加。使用任务工具前，模型应调用 `skill({"name":"<name>"})` 加载匹配技能。完整技能说明仍在上下文中时可复用；只剩摘要时要重新加载。摘要是历史数据，不是新指令或设备当前状态的证明。
 
 `compress_context` 替代原来的 `trim_context`，按输入 token 预算触发，规则如下：
 
@@ -920,6 +920,8 @@ typedef struct agent_runtime_config
 头文件：`inc/core/skill.h` 实现：`src/core/skill.c`
 工具：`src/tools/tool_skill.c`，文件末尾用 `AGENT_TOOL_MODULE_EXPORT(skill, skill_tools)` 登记，工具名是 `skill`
 
+`PKG_AGENT_SKILL_ENABLE` 是整模块总开关，默认打开。关掉后这两个源文件和构建生成的技能数据都不参与编译，第 12.1 至 12.3 节的类型、接口和工具都不存在，系统提示词里也没有技能目录。资源不足的 MCU 可以整块关掉。
+
 ### 12.1 类型
 
 ```c
@@ -952,7 +954,7 @@ struct agent_skill
 
 ### 12.4 内嵌过程
 
-技能文件放在 `skills/` 目录，文件名去掉 `.md` 就是技能名。`skills/SConscript` 调用 `skills/embed_skills.py`，在构建时生成 `skill_data.c`，里面是 `agent_skill_table[]`、`agent_skill_table_count` 和 `agent_skill_catalog` 三份数据。技能目录由 menuconfig 选项 `PKG_AGENT_SKILL_DIR` 决定，默认 `skills`；SCons 参数 `agent_skill_dir` 可以只改这一次构建。
+技能文件放在 `skills/` 目录，文件名去掉 `.md` 就是技能名。`skills/SConscript` 调用 `skills/embed_skills.py`，在构建时生成 `skill_data.c`，里面是 `agent_skill_table[]`、`agent_skill_table_count` 和 `agent_skill_catalog` 三份数据。技能目录由 menuconfig 选项 `PKG_AGENT_SKILL_DIR` 决定，默认 `skills`；SCons 参数 `agent_skill_dir` 可以只改这一次构建。`PKG_AGENT_SKILL_EMBED` 决定编入哪些技能，默认 `*` 表示全部，也可以填逗号分隔的名字或 `none`；名单里有不存在的名字时构建报错。
 
 目录会注入系统提示词，见第 3 节 `build_system_prompt`。上下文被压缩后摘要里只留技能名，要继续用某个技能，先重新调用 `skill` 加载。
 
